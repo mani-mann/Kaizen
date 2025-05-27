@@ -33,14 +33,13 @@ add_action('template_redirect', 'sudoku_template_redirect');
 // Function to send the enrollment email by calling the Express.js endpoint (runs asynchronously via WP-Cron)
 function send_enrollment_email($name, $email) {
     $api_endpoint = 'https://email-wyl0.onrender.com/send-email';
-
     // Construct the email content as per your Express server's expectation
-    $email_content = "Hello {$name},\nThank you for enrolling! This is a confirmation email.\nBest regards,\nThe Sudoku Team";
     $email_subject = 'Welcome to Sudoku Enrollments!';
 
     $body = json_encode([
         'email'   => $email,
-        'content' => $email_content,
+        'name'    => $name,
+        'template' => 'welcome',
         'subject' => $email_subject,
     ]);
 
@@ -1387,15 +1386,15 @@ function sudoku_display() {
             <h2>Enroll Now</h2>
             <form class="popup-form" id="enrollForm">
             <div class="form-group">
-                <label for="name">Name:</label>
+                <label for="name">Child's Name:</label>
                 <input type="text" id="name" name="name" required />
             </div>
             <div class="form-group">
-                <label for="email">Email:</label>
+                <label for="email">Parent's Email:</label>
                 <input type="email" id="email" name="email" required />
             </div>
             <div class="form-group">
-                <label for="phone">Phone Number:</label>
+                <label for="phone">Parent's Phone Number:</label>
                 <input type="tel" id="phone" name="phone" />
             </div>
             <div class="error-message" id="errorMessage"></div>

@@ -1,6 +1,8 @@
 const express = require('express');
 const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -16,27 +18,29 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Test Gmail SMTP connection
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('SMTP connection failed:', error);
-  } else {
-    console.log('SMTP connection successful!');
-  }
+// Health check
+app.get('/', (req, res) => {
+  res.status(200).send('Server is up and running!');
 });
 
+// Send email
 app.post('/send-email', async (req, res) => {
-  const { email, subject, content } = req.body;
-
-  if (!email || !subject || !content) {
-    return res.status(400).json({ error: 'Email, subject, and content are required.' });
+  const { email, name } = req.body;
+  const subject = "🎉 Welcome to the 7-Day Sudoku Challenge!";
+  if (!email || !name ) {
+    return res.status(400).json({ error: 'Email, name, and subject are required.' });
   }
 
+  // Read and personalize HTML
+  const templatePath = path.join(__dirname, 'emailTemplates', 'welcome.html');
+  let htmlTemplate = fs.readFileSync(templatePath, 'utf8');
+  htmlTemplate = htmlTemplate.replace('{{name}}', name);
+
   const mailOptions = {
-    from: `Kaizen Lessons <${process.env.EMAIL_USER}>`,
+    from: `"Sudoku Team" <${process.env.EMAIL_USER}>`,
     to: email,
-    subject: subject,
-    text: content,
+    subject,
+    html: htmlTemplate,
     headers: {
       'X-Mailer': 'Node.js Gmail Express Server',
       'Reply-To': process.env.EMAIL_USER,
@@ -45,7 +49,7 @@ app.post('/send-email', async (req, res) => {
 
   try {
     await transporter.sendMail(mailOptions);
-    res.status(200).json({ message: 'Email sent successfully!' });
+    res.status(200).json({ message: 'HTML email sent successfully!' });
   } catch (error) {
     console.error('Email send error:', error);
     res.status(500).json({ error: 'Failed to send email.' });
