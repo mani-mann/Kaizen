@@ -37,7 +37,7 @@ app.post('/send-email', async (req, res) => {
   htmlTemplate = htmlTemplate.replace('{{name}}', name);
 
   const mailOptions = {
-    from: `"Sudoku Team" <${process.env.EMAIL_USER}>`,
+    from: `"Kaizen MicroLessons" <${process.env.EMAIL_USER}>`,
     to: email,
     subject,
     html: htmlTemplate,
