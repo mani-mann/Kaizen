@@ -32,7 +32,7 @@ add_action('template_redirect', 'sudoku_template_redirect');
 
 // Function to send the enrollment email by calling the Express.js endpoint (runs asynchronously via WP-Cron)
 function send_enrollment_email($name, $email) {
-    $api_endpoint = 'https://email-wyl0.onrender.com/send-email';
+    $api_endpoint = 'https://kaizen-pq9y.onrender.com/send-email';
     // Construct the email content as per your Express server's expectation
     $email_subject = 'Welcome to Sudoku Enrollments!';
 
@@ -1637,40 +1637,64 @@ function sudoku_display() {
         }
     });
     // JavaScript to handle popup functionality
-    document.addEventListener("DOMContentLoaded", function () {
-        const popup = document.getElementById("enrollmentPopup");
-        const closeButton = document.getElementById("closePopup");
-        const enrollButtons = document.querySelectorAll(
-        '.enroll-button',
-        ); // Select all buttons that should open the popup
+    document.addEventListener('DOMContentLoaded', function () {
+    const popup = document.getElementById('enrollmentPopup');
+    const closeButton = document.getElementById('closePopup');
+    const enrollButtons = document.querySelectorAll('.enroll-button');
 
-        // Function to open the popup
-        function openPopup() {
-        popup.classList.add("show");
-        }
+    let startX = 0;
+    let startY = 0;
 
-        // Attach event listeners to all enroll buttons
-        enrollButtons.forEach(function (button) {
-        button.addEventListener("click", function (event) {
-            event.preventDefault(); // Prevent the button from navigating
-            openPopup(); // Open the popup
+    // Function to open the popup
+    function openPopup() {
+        popup.classList.add('show');
+    }
+
+    // Attach event listeners to all enroll buttons
+    enrollButtons.forEach(function (button) {
+        button.addEventListener('click', function (event) {
+        event.preventDefault(); // Prevent the button from navigating
+        openPopup(); // Open the popup
         });
-        });
+    });
 
-        // Function to close the popup
-        function closePopup() {
-        popup.classList.remove("show");
+    // Function to close the popup
+    function closePopup() {
+        popup.classList.remove('show');
+    }
+
+    // Event listener to close the popup when clicking the close button
+    closeButton.addEventListener('click', closePopup);
+
+    // Record the starting position on mousedown
+    document.addEventListener('mousedown', function (event) {
+        startX = event.pageX;
+        startY = event.pageY;
+    });
+
+    // Check the distance on mouseup to differentiate a click from a swipe
+    document.addEventListener('mouseup', function (event) {
+        const endX = event.pageX;
+        const endY = event.pageY;
+
+        // Calculate the distance moved
+        const distance = Math.sqrt(
+        Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2),
+        );
+
+        // If the target is the popup overlay and the distance moved is small, close the popup
+        if (event.target === popup && distance < 10) { // 10px threshold
+        closePopup();
         }
+    });
 
-        // Event listener to close the popup when clicking the close button
-        closeButton.addEventListener("click", closePopup);
-
-        // Close the popup if the user clicks outside the popup content
-        window.addEventListener("click", function (event) {
+    // Optional: Prevent the default window click behavior for the popup closing
+    // We are now handling this in the mouseup event
+    window.addEventListener('click', function (event) {
         if (event.target === popup) {
-            closePopup();
+        event.preventDefault();
         }
-        });
+    });
     });
     </script>
     </body>
