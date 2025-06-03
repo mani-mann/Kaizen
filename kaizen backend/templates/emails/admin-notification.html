@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New User Registration - Sudoku Challenge</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .email-container {
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            color: #2c3e50;
+            margin: 0;
+            font-size: 24px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 10px;
+            margin: 20px 0;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #495057;
+        }
+        .info-value {
+            color: #212529;
+        }
+        .status-badge {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .footer {
+            margin-top: 25px;
+            padding-top: 15px;
+            border-top: 1px solid #dee2e6;
+            color: #6c757d;
+            font-size: 14px;
+        }
+        @media only screen and (max-width: 600px) {
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1>🆕 New User Registration</h1>
+            <span class="status-badge">NEW SIGNUP</span>
+        </div>
+
+        <div class="content">
+            <p>A new user has signed up for the 7-Day Sudoku Challenge through the chatbot system.</p>
+            
+            <div class="info-grid">
+                <div class="info-label">Email:</div>
+                <div class="info-value">{{userEmail}}</div>
+                
+                <div class="info-label">Phone:</div>
+                <div class="info-value">{{userPhone}}</div>
+                
+                <div class="info-label">Registration Date:</div>
+                <div class="info-value">{{timestamp}}</div>
+                
+                <div class="info-label">Source:</div>
+                <div class="info-value">Chatbot Contact Collection</div>
+                
+                <div class="info-label">User ID:</div>
+                <div class="info-value">{{userId}}</div>
+            </div>
+
+            <h3>Next Steps:</h3>
+            <ul>
+                <li>✅ Welcome email has been automatically sent to the user</li>
+                <li>📝 User contact information saved to database</li>
+                <li>📧 Consider adding to mailing list for challenge updates</li>
+                <li>📊 Review user engagement metrics</li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            <p><strong>Chatbot Admin Notification System</strong><br>
+            Generated automatically when new users provide contact information</p>
+            
+            <p style="font-size: 12px; color: #adb5bd;">
+                This is an automated notification. Please do not reply to this email.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
