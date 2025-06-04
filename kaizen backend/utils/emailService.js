@@ -37,6 +37,49 @@ class EmailService {
     isAvailable() {
         return this.transporter !== null;
     }    // Send welcome email to user
+    async sendResourceEmail(email, subject, url) {
+        if (!this.isAvailable()) {
+            console.log('Email service not available, skipping welcome email');
+            return { success: false, message: 'Email service not configured' };
+        }
+
+        try {
+            console.log(subject);
+            
+            // Load HTML template from file
+            const htmlTemplate = await this.loadEmailTemplate('resource.html', {
+                url: url,
+                currentDate: new Date().toLocaleDateString()
+            });
+
+            const mailOptions = {
+                from: `"Kaizen MicroLessons" <${process.env.EMAIL_USER}>`,
+                to: email,
+                subject,
+                html: htmlTemplate,
+                headers: {
+                    'X-Mailer': 'Node.js Chatbot Email Service',
+                    'Reply-To': process.env.EMAIL_USER,
+                },
+            };
+
+            const result = await this.transporter.sendMail(mailOptions);
+            console.log(`email sent successfully to ${email}`);
+            
+            return { 
+                success: true, 
+                message: 'email sent successfully!',
+                messageId: result.messageId 
+            };
+        } catch (error) {
+            console.error('Failed to send welcome email:', error);
+            return { 
+                success: false, 
+                message: 'Failed to send welcome email',
+                error: error.message 
+            };
+        }
+    }    
     async sendWelcomeEmail(email, name = 'User') {
         if (!this.isAvailable()) {
             console.log('Email service not available, skipping welcome email');
@@ -81,7 +124,10 @@ class EmailService {
                 error: error.message 
             };
         }
-    }    // Load email template from file and replace placeholders
+    }   
+    
+    // Load email template from file and replace placeholders
+
     async loadEmailTemplate(templateName, variables = {}) {
         try {
             const templatePath = path.join(__dirname, '../templates/emails', templateName);
