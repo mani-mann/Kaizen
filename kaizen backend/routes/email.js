@@ -35,6 +35,39 @@ router.post('/send-email', async (req, res) => {
     }
 });
 
+router.post('/send-email-resource', async (req, res) => {
+    const { email, subject, url } = req.body;
+    console.log('email', email, subject, url);
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    try {
+        console.log(subject)
+        const result = await emailService.sendResourceEmail(email, subject, url);
+        
+        if (result.success) {
+            res.json({ 
+                message: result.message,
+                success: true,
+                messageId: result.messageId 
+            });
+        } else {
+            res.status(500).json({ 
+                error: result.message,
+                success: false 
+            });
+        }
+    } catch (error) {
+        console.error('Error sending welcome email:', error);
+        res.status(500).json({ 
+            error: 'Failed to send welcome email',
+            success: false 
+        });
+    }
+});
+
+
 // Send bulk welcome emails to all collected contacts
 router.post('/send-bulk-welcome', async (req, res) => {
     try {
