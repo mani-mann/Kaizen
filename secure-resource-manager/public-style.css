@@ -1,0 +1,7 @@
+.srm-status-msg {
+  display: inline-block;
+  margin-left: 8px;
+  font-style: italic;
+  font-size: 0.95em;
+  color: #444;
+}
