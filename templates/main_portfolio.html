@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maninder Mann - AI Builders</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #0F172A; /* Slate 900 */
+            color: #E2E8F0; /* Slate 200 */
+            overflow-x: hidden;
+        }
+
+        /* THIS IS THE CRITICAL FIX */
+        .hero-bg {
+            background-image: url("{{ url_for('static', filename='images/Ai1.png') }}");
+            background-size: cover;
+            background-position: center;
+            color: white;
+        }
+
+        .hero-overlay {
+            background: linear-gradient(90deg, rgba(67, 97, 238, 0.9) 0%, rgba(67, 97, 238, 0.7) 40%, rgba(67, 97, 238, 0.1) 80%, rgba(67, 97, 238, 0) 100%);
+        }
+
+        .card {
+            background-color: #1E293B; /* Slate 800 */
+            border: 1px solid #334155; /* Slate 700 */
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 10px 30px rgba(67, 97, 238, 0.2);
+        }
+
+        .scroll-fade-in {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+        }
+
+        .scroll-fade-in.is-visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0F172A;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4361EE;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4CC9F0;
+        }
+
+        /* Timeline */
+        .timeline-container::before {
+            content: '';
+            position: absolute;
+            top: 10px;
+            left: 11px;
+            height: calc(100% - 20px);
+            width: 2px;
+            background: #334155; /* Slate 700 */
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-left: 48px; 
+            padding-bottom: 32px;
+            transition: all 0.3s ease;
+        }
+        .timeline-item:last-child {
+            padding-bottom: 0;
+        }
+        
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            top: 5px;
+            left: 0;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: #0F172A;
+            border: 2px solid #F7B801; /* Yellow Accent */
+            transition: all 0.3s ease;
+        }
+        .timeline-item:hover::before {
+            background-color: #F7B801;
+            transform: scale(1.1);
+        }
+
+        .text-glow-yellow {
+             text-shadow: 0 0 10px rgba(247, 184, 1, 0.6);
+        }
+    </style>
+</head>
+
+<body class="antialiased">
+    <!-- Header -->
+    <header id="header" class="fixed top-0 left-0 right-0 z-50 transition-all duration-300">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="#" class="text-xl font-bold text-white tracking-wider">MANINDER MANN</a>
+            <nav class="hidden md:flex space-x-8">
+                <a href="#journey" class="text-gray-200 hover:text-yellow-300 transition-colors">JOURNEY</a>
+                <a href="#ventures" class="text-gray-200 hover:text-yellow-300 transition-colors">VENTURES</a>
+                <a href="#contact" class="text-gray-200 hover:text-yellow-300 transition-colors">CONNECT</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero-bg relative">
+            <div class="hero-overlay relative z-10">
+                <div class="container mx-auto px-6 flex items-center min-h-screen">
+                    <div class="w-full md:w-3/5 lg:w-1/2">
+                        <h1 class="text-3xl md:text-4xl font-light text-white leading-snug">
+                            "The real question in the age of AI is not what AI can do. It’s: <br>
+                            <span class="font-bold text-yellow-300 text-glow-yellow">What do YOU want to do with it?</span>"
+                        </h1>
+                        
+                        <div class="h-px bg-yellow-300/50 my-8 w-1/2"></div>
+
+                        <ul class="space-y-3 text-2xl font-medium">
+                            <li class="flex items-center gap-3"><span class="w-3 h-3 bg-yellow-300 rounded-full"></span> IIM Alumni</li>
+                            <li class="flex items-center gap-3"><span class="w-3 h-3 bg-yellow-300 rounded-full"></span> IIM Faculty</li>
+                            <li class="flex items-center gap-3"><span class="w-3 h-3 bg-yellow-300 rounded-full"></span> AI Geek</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ventures Section -->
+        <section id="ventures" class="py-20 lg:py-32">
+             <div class="container mx-auto px-6">
+                <div class="text-center mb-12">
+                    <h2 class="text-3xl lg:text-4xl font-bold text-white uppercase tracking-wider scroll-fade-in">My Ventures</h2>
+                    <div class="w-24 h-1 bg-yellow-400 mx-auto mt-4 scroll-fade-in"></div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+                    <div class="card p-8 rounded-lg scroll-fade-in text-center">
+                        <i data-lucide="building-2" class="w-12 h-12 mx-auto mb-4 text-blue-400"></i>
+                        <h3 class="text-xl font-semibold text-white mb-2">Kaizen Lessons</h3>
+                        <p class="text-gray-400">Innovating in higher education and employability through technology and strategic consulting.</p>
+                    </div>
+                    <div class="card p-8 rounded-lg scroll-fade-in text-center">
+                        <i data-lucide="smartphone-charging" class="w-12 h-12 mx-auto mb-4 text-blue-400"></i>
+                        <h3 class="text-xl font-semibold text-white mb-2">Career Inbox</h3>
+                        <p class="text-gray-400">Our EdTech app providing targeted learning and resources for IT & Business graduates.</p>
+                    </div>
+                </div>
+             </div>
+        </section>
+
+        <!-- Career Timeline Section -->
+        <section id="journey" class="py-20 lg:py-32 bg-slate-900/50">
+            <div class="container mx-auto px-6">
+                 <div class="text-center mb-16">
+                    <h2 class="text-3xl lg:text-4xl font-bold text-white uppercase tracking-wider scroll-fade-in">Career Timeline</h2>
+                     <div class="w-24 h-1 bg-yellow-400 mx-auto mt-4 scroll-fade-in"></div>
+                </div>
+                <div class="relative timeline-container max-w-3xl mx-auto">
+                    <div class="timeline-item scroll-fade-in">
+                        <p class="text-xs text-yellow-400 font-semibold">Nov 2023 - Present</p>
+                        <h4 class="text-lg font-semibold text-white mt-1">Visiting Professor</h4>
+                        <p class="text-gray-400 font-light text-sm">Indian Institute of Management Raipur</p>
+                    </div>
+                    <div class="timeline-item scroll-fade-in">
+                        <p class="text-xs text-yellow-400 font-semibold">Sep 2019 - Present</p>
+                        <h4 class="text-lg font-semibold text-white mt-1">Founder Director</h4>
+                        <p class="text-gray-400 font-light text-sm">Kaizen Lessons</p>
+                    </div>
+                    <div class="timeline-item scroll-fade-in">
+                        <p class="text-xs text-yellow-400 font-semibold">2015 - Present</p>
+                        <h4 class="text-lg font-semibold text-white mt-1">Director</h4>
+                        <p class="text-gray-400 font-light text-sm">b3 solutions</p>
+                    </div>
+                    <div class="timeline-item scroll-fade-in">
+                        <p class="text-xs text-yellow-400 font-semibold">Oct 2013 - Jan 2015</p>
+                        <h4 class="text-lg font-semibold text-white mt-1">Sr Area Sales Manager</h4>
+                        <p class="text-gray-400 font-light text-sm">Cadbury plc.</p>
+                    </div>
+                    <div class="timeline-item scroll-fade-in">
+                        <p class="text-xs text-yellow-400 font-semibold">Sep 2011 - May 2013</p>
+                        <h4 class="text-lg font-semibold text-white mt-1">Territory Development Manager</h4>
+                        <p class="text-gray-400 font-light text-sm">Pepsico India</p>
+                    </div>
+                    <div class="timeline-item scroll-fade-in">
+                        <p class="text-xs text-yellow-400 font-semibold">2007 - 2009</p>
+                        <h4 class="text-lg font-semibold text-white mt-1">PGDM, Sales & Marketing</h4>
+                        <p class="text-gray-400 font-light text-sm">Indian Institute of Management, Indore</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Contact Section -->
+        <section id="contact" class="py-20 lg:py-32">
+            <div class="container mx-auto px-6 text-center">
+                <h2 class="text-3xl lg:text-4xl font-bold text-white mb-4 scroll-fade-in">Let's Connect</h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto mb-8 scroll-fade-in">
+                    Open to discussing new projects, educational collaborations, or opportunities to drive innovation with AI.
+                </p>
+                <div class="flex justify-center scroll-fade-in">
+                    <a href="mailto:email@example.com" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-lg transition-all flex items-center space-x-2 text-lg">
+                        <i data-lucide="mail"></i>
+                        <span>Email Me</span>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="bg-slate-900/50 py-6">
+            <div class="container mx-auto px-6 text-center text-gray-500">
+                <p>© <span id="year"></span> Maninder Mann | Ai Builders</p>
+            </div>
+        </footer>
+    </main>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Set current year in footer
+        document.getElementById('year').textContent = new Date().getFullYear();
+
+        // Header scroll effect
+        const header = document.getElementById('header');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 50) {
+                header.classList.add('bg-slate-900/80', 'backdrop-blur-sm');
+            } else {
+                header.classList.remove('bg-slate-900/80', 'backdrop-blur-sm');
+            }
+        });
+
+        // Scroll fade-in animations
+        const fadeInElements = document.querySelectorAll('.scroll-fade-in');
+        const observerOptions = { root: null, rootMargin: '0px', threshold: 0.1 };
+        const observer = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('is-visible');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+        fadeInElements.forEach(el => observer.observe(el));
+    </script>
+</body>
+</html>

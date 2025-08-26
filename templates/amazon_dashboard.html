@@ -1,0 +1,835 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Amazon Keyword Engine</title>
+    
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Libs CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/2.0.3/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/fixedcolumns/5.0.0/css/fixedColumns.bootstrap5.min.css" rel="stylesheet">
+
+    <!-- THE DEFINITIVE UI/UX STYLES -->
+    <style>
+        :root {
+            --font-sans: "Inter", sans-serif;
+            --bg: #F9FAFB;
+            --bg-module: #FFFFFF;
+            --border-color: #E5E7EB;
+            /* Amazon Brand Colors */
+            --amazon-orange: #FF9900;
+            --amazon-charcoal: #131A22;
+            --amazon-blue: #0066c0;
+            --text-primary: var(--amazon-charcoal);
+            --text-secondary: #4B5563;
+            --accent: var(--amazon-orange);
+            --accent-focus-ring: rgba(255, 153, 0, 0.25);
+        }
+        
+        body {
+            background-color: var(--bg);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Sidebar Styles - Dark Theme */
+        .sidebar-nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            width: 240px;
+            background: linear-gradient(180deg, var(--amazon-charcoal) 0%, #0d1117 100%);
+            border-right: 1px solid #21262d;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+        }
+        
+        .sidebar-logo {
+            padding: 1.5rem;
+            text-align: center;
+            border-bottom: 1px solid #21262d;
+            margin-bottom: 1rem;
+        }
+        
+        .amazon-logo {
+            width: 60px;
+            height: auto;
+            margin-bottom: 1rem;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .sidebar-logo span {
+            font-family: var(--font-sans);
+            font-weight: 700;
+            font-size: 1.4rem;
+            color: #fff;
+            letter-spacing: -0.5px;
+        }
+        
+        .sidebar-nav .nav-link {
+            color: #8b949e;
+            font-weight: 500;
+            font-size: 0.95rem;
+            padding: 0.9rem 1.5rem;
+            border-radius: 0;
+            margin: 0.1rem 0.75rem;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            border-radius: 8px;
+        }
+        
+        .sidebar-nav .nav-link:hover {
+            background: rgba(255, 153, 0, 0.1);
+            color: var(--amazon-orange);
+            transform: translateX(2px);
+        }
+        
+        .sidebar-nav .nav-link.active {
+            background: linear-gradient(135deg, var(--amazon-orange) 0%, #e67e00 100%);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(255, 153, 0, 0.3);
+        }
+        
+        .sidebar-nav .nav-link i {
+            margin-right: 0.75rem;
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Main Content Area */
+        .main-container {
+            margin-left: 240px;
+            padding: 2rem;
+            max-width: none;
+            min-height: 100vh;
+        }
+
+        /* Page Header */
+        .page-header {
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            padding-bottom: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .page-title { 
+            font-size: 2rem; 
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 0;
+        }
+        
+        .filter-controls { 
+            display: flex; 
+            align-items: center; 
+            gap: 1rem; 
+            flex-wrap: wrap;
+        }
+        
+        .form-control, .form-select, .ts-control {
+            background-color: var(--bg-module) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 8px;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+        }
+        
+        .form-control:focus, .form-select:focus, .ts-control.focus {
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 3px var(--accent-focus-ring) !important;
+        }
+        
+        /* KPI GRID - OPTIMIZED DESIGN */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1.25rem;
+            margin: 1.5rem 0;
+        }
+        
+        .kpi-card {
+            background: #000;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .kpi-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .kpi-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin: 0;
+            color: #fff;
+            line-height: 1.2;
+        }
+
+        .currency-symbol {
+            font-size: 0.8em;
+            vertical-align: middle;
+            margin-right: 0.1em;
+        }
+
+        /* Main Content Modules */
+        .content-module {
+            background-color: var(--bg-module);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            margin-top: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        
+        .module-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        
+        .module-title { 
+            font-size: 1.125rem; 
+            font-weight: 600;
+            margin: 0;
+            color: var(--text-primary);
+        }
+        
+        .module-body { 
+            padding: 1.5rem; 
+        }
+        
+        /* Report Type Tabs */
+        .report-tabs {
+            border-bottom: 1px solid var(--border-color);
+            padding: 0 1.5rem;
+            background: #f8f9fa;
+        }
+        
+        .report-tabs .nav-link {
+            display: flex; 
+            align-items: center; 
+            gap: 0.5rem;
+            padding: 1rem 1.5rem; 
+            margin-right: 0.5rem;
+            border-bottom: 3px solid transparent; 
+            color: var(--text-secondary);
+            font-weight: 500; 
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+            border-radius: 8px 8px 0 0;
+            background: transparent;
+            border: none;
+            text-decoration: none;
+        }
+        
+        .report-tabs .nav-link:hover { 
+            color: var(--text-primary);
+            background: rgba(255, 153, 0, 0.1);
+        }
+        
+        .report-tabs .nav-link.active {
+            color: var(--amazon-orange);
+            border-bottom-color: var(--amazon-orange);
+            background: var(--bg-module);
+            font-weight: 600;
+        }
+
+        /* DataTables: The No-Slide Fix */
+        #data-table, #campaign-asin-sku-table { 
+            white-space: nowrap; 
+        }
+        
+        .dt-layout-row { 
+            padding: 1rem 1.5rem; 
+        }
+        
+        .dt-search input { 
+            width: 250px; 
+        }
+
+        /* Export Buttons Styling */
+        .export-buttons {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: #f8f9fa;
+        }
+        
+        .btn-export {
+            background-color: var(--amazon-blue) !important;
+            border-color: var(--amazon-blue) !important;
+            color: white !important;
+            border-radius: 8px !important;
+            padding: 0.5rem 1rem !important;
+            font-size: 0.875rem !important;
+            font-weight: 500 !important;
+            margin-right: 0.5rem !important;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-export:hover {
+            background-color: #0056b3 !important;
+            border-color: #0056b3 !important;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        /* Table container */
+        .table-responsive {
+            padding: 1.5rem;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .sidebar-nav { 
+                width: 60px; 
+                overflow: hidden;
+            }
+            
+            .sidebar-nav .nav-link span {
+                display: none;
+            }
+            
+            .sidebar-logo span {
+                font-size: 0;
+            }
+            
+            .main-container { 
+                margin-left: 60px; 
+                padding: 1rem;
+            }
+            
+            .kpi-grid {
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                gap: 1rem;
+            }
+            
+            .filter-controls {
+                flex-direction: column;
+                align-items: stretch;
+                width: 100%;
+            }
+            
+            .page-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <div class="sidebar-nav">
+        <div class="sidebar-logo">
+            <img src="{{ url_for('static', filename='images/kaizen_logo.png') }}" alt="Kaizen Logo" class="amazon-logo">
+            <span>Amazon Analytics</span>
+        </div>
+        <nav class="nav flex-column">
+            <a class="nav-link active" href="/amazonanalytics">
+                <i data-lucide="search"></i>
+                <span>Keywords</span>
+            </a>
+            <a class="nav-link" href="/businessreports">
+                <i data-lucide="bar-chart-3"></i>
+                <span>Business Reports</span>
+            </a>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-container">
+        <form method="get" action="/amazonanalytics" id="filterForm"></form>
+
+        <header class="page-header">
+            <h1 class="page-title">Amazon Keyword Engine</h1>
+            <div class="filter-controls">
+                <input type="date" class="form-control" name="start_date" form="filterForm" value="{{ filters.start_date }}" onchange="this.form.submit()">
+                <input type="date" class="form-control" name="end_date" form="filterForm" value="{{ filters.end_date }}" onchange="this.form.submit()">
+                <div style="width: 300px;">
+                    <select id="campaign-select" name="campaigns" form="filterForm" multiple placeholder="Filter Campaigns...">
+                        {% for campaign in all_campaigns %}<option value="{{ campaign }}" {% if campaign in selected_campaigns %}selected{% endif %}>{{ campaign }}</option>{% endfor %}
+                    </select>
+                </div>
+                {% if report_type == 'Keywords' %}
+                <div style="width: 300px;">
+                    <select id="keyword-select" name="keywords" form="filterForm" multiple placeholder="Filter Keywords...">
+                        {% for keyword in all_keywords %}<option value="{{ keyword }}" {% if keyword in selected_keywords %}selected{% endif %}>{{ keyword }}</option>{% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+            </div>
+        </header>
+        
+        <section class="kpi-grid">
+            <div class="kpi-card"> 
+                <p class="kpi-label">Ad Spend</p> 
+                <p class="kpi-value"><span class="currency-symbol">₹</span>{{ '%.2f'|format(kpi_data.cost) }}</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">Ad Sales</p> 
+                <p class="kpi-value" style="color: var(--accent);"><span class="currency-symbol">₹</span>{{ '%.2f'|format(kpi_data.sales) }}</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">ACOS</p> 
+                <p class="kpi-value">{{ '%.2f'|format(kpi_data.acos) }}%</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">Total Sales</p> 
+                <p class="kpi-value" style="color: #0066c0;"><span class="currency-symbol">₹</span>{{ '%.2f'|format(total_sales_business) }}</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">TCOS</p> 
+                <p class="kpi-value" style="color: #e67e00;">{{ '%.2f'|format(tcos) }}%</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">ROAS</p> 
+                <p class="kpi-value">{{ '%.2f'|format(kpi_data.roas) }}</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">Ad Clicks</p> 
+                <p class="kpi-value">{{ kpi_data.clicks|int }}</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">Avg. CPC</p> 
+                <p class="kpi-value"><span class="currency-symbol">₹</span>{{ '%.2f'|format(kpi_data.cpc) }}</p> 
+            </div>
+            <div class="kpi-card"> 
+                <p class="kpi-label">Avg. CTR</p> 
+                <p class="kpi-value">{{ '%.2f'|format(kpi_data.ctr) }}%</p> 
+            </div>
+        </section>
+
+        <section class="content-module">
+            <div class="module-header">
+                <h2 class="module-title">Performance Trend</h2>
+                <select class="form-select form-select-sm" name="group_by" form="filterForm" style="width: 120px;" onchange="this.form.submit()">
+                    <option {% if filters.group_by == 'Daily' %}selected{% endif %}>Daily</option>
+                    <option {% if filters.group_by == 'Weekly' %}selected{% endif %}>Weekly</option>
+                    <option {% if filters.group_by == 'Monthly' %}selected{% endif %}>Monthly</option>
+                </select>
+            </div>
+            <div class="module-body" style="height: 350px;">
+                <canvas id="performanceChart"></canvas>
+            </div>
+        </section>
+
+        <section class="content-module">
+            <nav class="report-tabs">
+                <div class="nav nav-tabs border-0">
+                    <button type="submit" name="report_type" value="Keywords" form="filterForm" class="nav-link {% if report_type == 'Keywords' %}active{% endif %}">
+                        <i data-lucide="search" style="width: 16px; height: 16px;"></i>Keywords
+                    </button>
+                    <button type="submit" name="report_type" value="Campaigns" form="filterForm" class="nav-link {% if report_type == 'Campaigns' %}active{% endif %}">
+                        <i data-lucide="layout-grid" style="width: 16px; height: 16px;"></i>Campaigns
+                    </button>
+                    <button type="submit" name="report_type" value="CampaignASINSKU" form="filterForm" class="nav-link {% if report_type == 'CampaignASINSKU' %}active{% endif %}">
+                        <i data-lucide="link" style="width: 16px; height: 16px;"></i>Campaign-ASIN-SKU Map
+                    </button>
+                </div>
+            </nav>
+            
+            <!-- Export Buttons -->
+            <div class="export-buttons">
+                <button id="export-excel" class="btn btn-export">
+                    <i data-lucide="file-spreadsheet" style="width: 16px; height: 16px;"></i> Excel
+                </button>
+                <button id="export-csv" class="btn btn-export">
+                    <i data-lucide="file-text" style="width: 16px; height: 16px;"></i> CSV
+                </button>
+            </div>
+            
+            {% if report_type == 'CampaignASINSKU' %}
+            <div class="table-responsive">
+                <table id="campaign-asin-sku-table" class="table table-hover" style="width:100%">
+                    <thead>
+                        <tr>
+                            <th>Campaign Name</th>
+                            <th>Parent ASIN</th>
+                            <th>SKU</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Data will be loaded via AJAX -->
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="table-responsive">
+                <table id="data-table" class="table table-hover" style="width:100%">
+                    <thead><tr>{% for header in table_headers %}<th>{{ header }}</th>{% endfor %}</tr></thead>
+                    <tbody>
+                        <!-- Data will be loaded via AJAX -->
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </section>
+    </main>
+
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+    <!-- DataTables JS for Fixed Columns -->
+    <script src="https://cdn.datatables.net/2.0.3/js/dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/2.0.3/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/fixedcolumns/5.0.0/js/dataTables.fixedColumns.min.js"></script>
+    <script src="https://cdn.datatables.net/fixedcolumns/5.0.0/js/fixedColumns.bootstrap5.min.js"></script>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        document.addEventListener('DOMContentLoaded', function() {
+            new TomSelect('#campaign-select', {
+                plugins: ['remove_button'],
+                onChange: function() { document.getElementById('filterForm').submit(); }
+            });
+
+            // Initialize keyword select if it exists
+            const keywordSelect = document.getElementById('keyword-select');
+            if (keywordSelect) {
+                new TomSelect('#keyword-select', {
+                    plugins: ['remove_button'],
+                    onChange: function() { document.getElementById('filterForm').submit(); }
+                });
+            }
+
+            // Get report type for export filename
+            const reportType = '{{ report_type }}';
+            const exportFilename = `amazon_${reportType.toLowerCase()}_report_${new Date().toISOString().split('T')[0]}`;
+
+            // Get current filter parameters
+            const currentFilters = {
+                start_date: '{{ filters.start_date }}',
+                end_date: '{{ filters.end_date }}',
+                report_type: '{{ report_type }}',
+                campaigns: {{ selected_campaigns | tojson }},
+                keywords: {{ selected_keywords | tojson }}
+            };
+
+            let dataTable;
+            let campaignAsinSkuTable;
+
+            if (reportType === 'Keywords') {
+                dataTable = $('#data-table').DataTable({
+                    scrollX: true, 
+                    fixedColumns: {
+                        left: 1 
+                    },
+                    pageLength: 25, 
+                    order: [],
+                    processing: true,
+                    serverSide: true,
+                    ajax: {
+                        url: '/api/data',
+                        type: 'GET',
+                        data: function(d) {
+                            d.start_date = currentFilters.start_date;
+                            d.end_date = currentFilters.end_date;
+                            d.report_type = currentFilters.report_type;
+                            d.campaigns = currentFilters.campaigns;
+                            d.keywords = currentFilters.keywords;
+                        }
+                    },
+                    language: { 
+                        search: "", 
+                        searchPlaceholder: "Search report...", 
+                        lengthMenu: "_MENU_ entries",
+                        processing: "Processing..."
+                    },
+                    layout: { 
+                        topStart: 'pageLength', 
+                        topEnd: 'search', 
+                        bottomStart: 'info', 
+                        bottomEnd: 'paging' 
+                    },
+                    dom: 'frtip',
+                    columnDefs: [
+                        {
+                            targets: '_all',
+                            type: 'string'
+                        }
+                    ]
+                });
+            } else if (reportType === 'Campaigns') {
+                dataTable = $('#data-table').DataTable({
+                    scrollX: true, 
+                    fixedColumns: {
+                        left: 1 
+                    },
+                    pageLength: 25, 
+                    order: [],
+                    processing: true,
+                    serverSide: true,
+                    ajax: {
+                        url: '/api/data',
+                        type: 'GET',
+                        data: function(d) {
+                            d.start_date = currentFilters.start_date;
+                            d.end_date = currentFilters.end_date;
+                            d.report_type = currentFilters.report_type;
+                            d.campaigns = currentFilters.campaigns;
+                            d.keywords = currentFilters.keywords;
+                        }
+                    },
+                    language: { 
+                        search: "", 
+                        searchPlaceholder: "Search report...", 
+                        lengthMenu: "_MENU_ entries",
+                        processing: "Processing..."
+                    },
+                    layout: { 
+                        topStart: 'pageLength', 
+                        topEnd: 'search', 
+                        bottomStart: 'info', 
+                        bottomEnd: 'paging' 
+                    },
+                    dom: 'frtip',
+                    columnDefs: [
+                        {
+                            targets: '_all',
+                            type: 'string'
+                        }
+                    ]
+                });
+            } else if (reportType === 'CampaignASINSKU') {
+                campaignAsinSkuTable = $('#campaign-asin-sku-table').DataTable({
+                    scrollX: true, 
+                    fixedColumns: {
+                        left: 1 
+                    },
+                    pageLength: 25, 
+                    order: [],
+                    processing: true,
+                    serverSide: true,
+                    ajax: {
+                        url: '/api/campaign-asin-sku-map',
+                        type: 'GET',
+                        data: function(d) {
+                            d.start_date = currentFilters.start_date;
+                            d.end_date = currentFilters.end_date;
+                            d.campaigns = currentFilters.campaigns;
+                        }
+                    },
+                    language: { 
+                        search: "", 
+                        searchPlaceholder: "Search report...", 
+                        lengthMenu: "_MENU_ entries",
+                        processing: "Processing..."
+                    },
+                    layout: { 
+                        topStart: 'pageLength', 
+                        topEnd: 'search', 
+                        bottomStart: 'info', 
+                        bottomEnd: 'paging' 
+                    },
+                    dom: 'frtip',
+                    columnDefs: [
+                        {
+                            targets: '_all',
+                            type: 'string'
+                        }
+                    ]
+                });
+            }
+
+            // Chart initialization
+            const chartData = JSON.parse('{{ chart_data | tojson | safe }}');
+            const ctx = document.getElementById('performanceChart');
+            if (ctx && chartData && chartData.labels.length > 0) {
+                new Chart(ctx, {
+                    type: 'line',
+                    data: { 
+                        labels: chartData.labels, 
+                        datasets: [
+                            { 
+                                label: 'Ad Sales', 
+                                data: chartData.sales, 
+                                borderColor: '#FF9900', 
+                                backgroundColor: 'rgba(255, 153, 0, 0.1)', 
+                                yAxisID: 'y', 
+                                tension: 0.4, 
+                                fill: true, 
+                                borderWidth: 2.5 
+                            },
+                            { 
+                                label: 'Ad Spend', 
+                                data: chartData.spend, 
+                                borderColor: '#0066c0', 
+                                backgroundColor: 'rgba(0, 102, 192, 0.1)', 
+                                yAxisID: 'y', 
+                                tension: 0.4, 
+                                fill: true, 
+                                borderWidth: 1.5 
+                            },
+                            { 
+                                label: 'Total Sales', 
+                                data: chartData.total_sales, 
+                                borderColor: '#10B981', 
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)', 
+                                yAxisID: 'y', 
+                                tension: 0.4, 
+                                fill: false, 
+                                borderWidth: 2.0 
+                            },
+                            { 
+                                label: 'ACOS (%)', 
+                                data: chartData.acos, 
+                                borderColor: '#4B5563', 
+                                yAxisID: 'y1', 
+                                tension: 0.4, 
+                                fill: false, 
+                                borderWidth: 1.5, 
+                                borderDash: [5, 5] 
+                            },
+                            { 
+                                label: 'TCOS (%)', 
+                                data: chartData.tcos, 
+                                borderColor: '#8B5CF6', 
+                                yAxisID: 'y1', 
+                                tension: 0.4, 
+                                fill: false, 
+                                borderWidth: 1.5, 
+                                borderDash: [10, 5] 
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true, 
+                        maintainAspectRatio: false, 
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            x: { 
+                                grid: { display: false }, 
+                                ticks: { color: '#4B5563', font: { family: "Inter" } } 
+                            },
+                            y: { 
+                                position: 'left', 
+                                grid: { color: '#E5E7EB' }, 
+                                ticks: { 
+                                    color: '#4B5563', 
+                                    font: { family: "Inter" }, 
+                                    callback: v => '₹' + v.toLocaleString() 
+                                } 
+                            },
+                            y1: { 
+                                position: 'right', 
+                                grid: { drawOnChartArea: false }, 
+                                ticks: { 
+                                    color: '#4B5563', 
+                                    font: { family: "Inter" }, 
+                                    callback: v => v.toFixed(0) + '%' 
+                                } 
+                            }
+                        },
+                        plugins: {
+                            legend: { 
+                                position: 'top', 
+                                align: 'end', 
+                                labels: { 
+                                    color: '#131A22', 
+                                    font: { family: "Inter" }, 
+                                    usePointStyle: true, 
+                                    boxWidth: 8 
+                                } 
+                            },
+                            tooltip: {
+                                backgroundColor: '#FFFFFF',
+                                titleColor: '#131A22',
+                                bodyColor: '#4B5563',
+                                titleFont: { weight: 'bold', family: 'Inter' },
+                                bodyFont: { family: 'Inter', size: 13 },
+                                padding: 12,
+                                cornerRadius: 8,
+                                borderColor: '#E5E7EB',
+                                borderWidth: 1,
+                                callbacks: {
+                                    labelColor: function(context) {
+                                        return {
+                                            borderColor: context.dataset.borderColor,
+                                            backgroundColor: context.dataset.borderColor,
+                                        };
+                                    },
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed.y !== null) {
+                                            if (context.dataset.yAxisID === 'y1') {
+                                                label += context.parsed.y.toFixed(2) + '%';
+                                            } else {
+                                                label += new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(context.parsed.y);
+                                            }
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Export button handlers
+            document.getElementById('export-excel').addEventListener('click', function() {
+                const params = new URLSearchParams({
+                    start_date: currentFilters.start_date,
+                    end_date: currentFilters.end_date,
+                    report_type: currentFilters.report_type,
+                    ...currentFilters.campaigns.reduce((acc, val, i) => ({...acc, [`campaigns`]: val}), {}),
+                    ...currentFilters.keywords.reduce((acc, val, i) => ({...acc, [`keywords`]: val}), {})
+                });
+                window.open(`/export/excel?${params.toString()}`, '_blank');
+            });
+
+            document.getElementById('export-csv').addEventListener('click', function() {
+                const params = new URLSearchParams({
+                    start_date: currentFilters.start_date,
+                    end_date: currentFilters.end_date,
+                    report_type: currentFilters.report_type,
+                    ...currentFilters.campaigns.reduce((acc, val, i) => ({...acc, [`campaigns`]: val}), {}),
+                    ...currentFilters.keywords.reduce((acc, val, i) => ({...acc, [`keywords`]: val}), {})
+                });
+                window.open(`/export/csv?${params.toString()}`, '_blank');
+            });
+        });
+    </script>
+</body>
+</html>
