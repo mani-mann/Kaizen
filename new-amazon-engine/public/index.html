@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon Keyword Engine</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Google Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="keywordStyle.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Hover trigger area for sidebar -->
+        <div class="sidebar-trigger"></div>
+        
+        <!-- Mobile Menu Button -->
+        <button class="mobile-menu-btn" id="mobileMenuBtn">
+            <span class="material-icons">menu</span>
+        </button>
+
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">A</div>
+                <div class="brand-text">
+                    <div class="brand-title">Amazon</div>
+                    <div class="brand-subtitle">Analytics</div>
+                </div>
+            </div>
+            
+            <nav class="navigation">
+                <a href="index.html" class="nav-item active">
+                    <span class="material-icons">search</span>
+                    <span>Keywords</span>
+                </a>
+                <a href="business_reports.html" class="nav-item">
+                    <span class="material-icons">bar_chart</span>
+                    <span>Business Reports</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <span class="material-icons">trending_up</span>
+                    <span>Performance</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <span class="material-icons">description</span>
+                    <span>Reports</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="page-header">
+                <div class="header-content">
+                    <h1 class="page-title">Amazon Keyword Engine</h1>
+                    <p class="page-description">Comprehensive analytics and actionable insights for your Amazon campaigns</p>
+                </div>
+                <div class="header-status">
+                    <div class="live-indicator">
+                        <div class="live-dot"></div>
+                        <span>Live Data</span>
+                    </div>
+                    <div class="last-update">Last updated: 2 minutes ago</div>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Overview Section -->
+                <section id="overview" class="content-section active">
+                    
+                    <!-- Dashboard Header with Date Picker -->
+                    <div class="dashboard-header">
+                        <div class="dashboard-title">
+                            <h2>Dashboard Overview</h2>
+                            <p>Key performance indicators and metrics at a glance</p>
+                        </div>
+                        <div class="dashboard-date-picker">
+                            <div class="date-filter" id="dateFilter">
+                                <span class="material-icons">calendar_today</span>
+                                <span id="dateRangeDisplay">—</span>
+                                <div class="date-picker-dropdown" id="datePickerDropdown">
+                                    <!-- Calendar content will be populated by JavaScript -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- KPI Metrics Grid -->
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon blue">
+                                    <span class="material-icons">attach_money</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AD SPEND</div>
+                            <div class="metric-value">—</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon orange">
+                                    <span class="material-icons">shopping_cart</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AD SALES</div>
+                            <div class="metric-value">—</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon green">
+                                    <span class="material-icons">add</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">TOTAL SALES</div>
+                            <div class="metric-value">—</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon purple">
+                                    <span class="material-icons">donut_small</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">ACOS</div>
+                            <div class="metric-value">—</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon red">
+                                    <span class="material-icons">track_changes</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">TACOS</div>
+                            <div class="metric-value">—</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon teal">
+                                    <span class="material-icons">trending_up</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">ROAS</div>
+                            <div class="metric-value">—</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon violet">
+                                    <span class="material-icons">mouse</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AD CLICKS</div>
+                            <div class="metric-value">—</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <div class="metric-icon indigo">
+                                    <span class="material-icons">attach_money</span>
+                                </div>
+                                <div class="metric-trend">
+                                    <span class="material-icons">trending_up</span>
+                                    <span>—</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AVG. CPC</div>
+                            <div class="metric-value">—</div>
+                        </div>
+                    </div>
+
+                    <!-- Performance Chart -->
+                    <div class="chart-section">
+                        <div class="chart-header">
+                            <div class="chart-title">
+                                <span class="material-icons">trending_up</span>
+                                <span>Performance Trend</span>
+                                <small>Campaign performance over time</small>
+                            </div>
+                            <div class="chart-controls">
+                                <select class="period-selector" id="chartPeriod" title="Change chart data aggregation period (shows ALL database data)">
+                                    <option value="daily">Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="quarterly">Quarterly</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="performanceChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Campaign Data Section (Added after chart) -->
+                    <div class="table-section">
+                        <div class="table-header">
+                            <div class="table-title">
+                                <span class="material-icons">table_chart</span>
+                                <span>Campaign Data</span>
+                            </div>
+                            <div class="table-actions">
+                                <button class="action-btn" id="exportExcel">
+                                    <span class="material-icons">download</span>
+                                    <span>Excel</span>
+                                </button>
+                                <button class="action-btn" id="exportCSV">
+                                    <span class="material-icons">description</span>
+                                    <span>CSV</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Tab Navigation and Search -->
+                        <div class="table-controls">
+                            <div class="table-tabs">
+                                <button class="table-tab active" data-tab="keywords">Keywords</button>
+                                <button class="table-tab" data-tab="campaigns">Campaigns</button>
+                            </div>
+                            <div class="search-container">
+                                <span class="material-icons">search</span>
+                                <input type="text" id="searchInput" placeholder="Search reports...">
+                            </div>
+                        </div>
+
+                        <!-- Filters Section -->
+                        <div class="filters-section">
+                            <div class="filters-header">
+                                <span class="material-icons">filter_list</span>
+                                <span>Filters</span>
+                            </div>
+                            <div class="filters-content">
+                                <select class="filter-dropdown" id="campaignFilter" multiple>
+                                </select>
+                                
+                                <select class="filter-dropdown" id="keywordFilter" multiple>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Results Count and Pagination -->
+                        <div class="table-controls">
+                            <div class="results-count">
+                                <span id="resultsCount">—</span>
+                            </div>
+                            <div class="pagination-controls">
+                                <button class="pagination-btn" id="prevPage" disabled>
+                                    <span class="material-icons">chevron_left</span>
+                                </button>
+                                <span class="page-info">
+                                    Page <span id="currentPage">1</span> of <span id="totalPages">1</span>
+                                </span>
+                                <button class="pagination-btn" id="nextPage">
+                                    <span class="material-icons">chevron_right</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Data Table -->
+                        <div class="table-wrapper">
+                            <table class="data-table" id="dataTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="searchTerm">
+                                            <span>Search Term</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="keywords">
+                                            <span>Keywords</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="campaignName">
+                                            <span>Campaign Name</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="spend">
+                                            <span>Spend</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="sales">
+                                            <span>Sales</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="acos">
+                                            <span>ACOS</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="roas">
+                                            <span>ROAS</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="cpc">
+                                            <span>CPC</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="ctr">
+                                            <span>CTR</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="clicks">
+                                            <span>Clicks</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="impressions">
+                                            <span>Impressions</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="purchases">
+                                            <span>Purchases</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tableBody">
+                                    <!-- Data will be populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Keywords Section -->
+                <section id="keywords" class="content-section">
+                    <div class="section-header">
+                        <h2>Keyword Performance</h2>
+                        <p>Detailed analysis of search terms and keyword performance</p>
+                    </div>
+                    
+                    <!-- Filters Section -->
+                    <div class="filters-section">
+                        <div class="filters-header">
+                            <span class="material-icons">filter_list</span>
+                            <span>Filters</span>
+                        </div>
+                        <div class="filters-content">
+                            <select class="filter-dropdown" id="campaignFilter">
+                                <option value="">Filter Campaigns...</option>
+                            </select>
+                            
+                            <select class="filter-dropdown" id="keywordFilter">
+                                <option value="">Filter Keywords...</option>
+                            </select>
+                            
+                            <div class="search-container">
+                                <span class="material-icons">search</span>
+                                <input type="text" id="searchInput" placeholder="Search keywords...">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Data Table -->
+                    <div class="table-section">
+                        <div class="table-header">
+                            <div class="table-title">
+                                <span class="material-icons">table_chart</span>
+                                <span>Keyword Data</span>
+                            </div>
+                            <div class="table-actions">
+                                <button class="action-btn" id="exportExcel">
+                                    <span class="material-icons">download</span>
+                                    <span>Excel</span>
+                                </button>
+                                <button class="action-btn" id="exportCSV">
+                                    <span class="material-icons">description</span>
+                                    <span>CSV</span>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="table-controls">
+                            <div class="results-count">
+                                <span id="resultsCount">—</span>
+                            </div>
+                            <div class="pagination-controls">
+                                <button class="pagination-btn" id="prevPage" disabled>
+                                    <span class="material-icons">chevron_left</span>
+                                </button>
+                                <span class="page-info">
+                                    Page <span id="currentPage">1</span> of <span id="totalPages">1</span>
+                                </span>
+                                <button class="pagination-btn" id="nextPage">
+                                    <span class="material-icons">chevron_right</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-wrapper">
+                            <table class="data-table" id="dataTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="searchTerm">
+                                            <span>Search Term</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="keywords">
+                                            <span>Keywords</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="campaignName">
+                                            <span>Campaign Name</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="spend">
+                                            <span>Spend</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="sales">
+                                            <span>Sales</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="acos">
+                                            <span>ACOS</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="roas">
+                                            <span>ROAS</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="cpc">
+                                            <span>CPC</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="ctr">
+                                            <span>CTR</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="clicks">
+                                            <span>Clicks</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="impressions">
+                                            <span>Impressions</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="sortable" data-sort="purchases">
+                                            <span>Purchases</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tableBody">
+                                    <!-- Data will be populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Campaigns Section -->
+                <section id="campaigns" class="content-section">
+                    <div class="section-header">
+                        <h2>Campaign Management</h2>
+                        <p>Overview and management of advertising campaigns</p>
+                    </div>
+                    <div class="coming-soon">
+                        <span class="material-icons">construction</span>
+                        <h3>Coming Soon</h3>
+                        <p>Campaign management features are under development</p>
+                    </div>
+                </section>
+
+                <!-- Performance Section -->
+                <section id="performance" class="content-section">
+                    <div class="section-header">
+                        <h2>Performance Analytics</h2>
+                        <p>Advanced performance metrics and insights</p>
+                    </div>
+                    <div class="coming-soon">
+                        <span class="material-icons">analytics</span>
+                        <h3>Coming Soon</h3>
+                        <p>Advanced analytics features are under development</p>
+                    </div>
+                </section>
+
+                <!-- Reports Section -->
+                <section id="reports" class="content-section">
+                    <div class="section-header">
+                        <h2>Reports & Export</h2>
+                        <p>Generate and download comprehensive reports</p>
+                    </div>
+                    <div class="coming-soon">
+                        <span class="material-icons">assessment</span>
+                        <h3>Coming Soon</h3>
+                        <p>Advanced reporting features are under development</p>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+    
+
+    <!-- Load Chart.js - Using version 3.x that works with regular script tags -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    
+    <!-- Navigation Active State Script -->
+    <script>
+        // Set active navigation item based on current page
+        document.addEventListener('DOMContentLoaded', function() {
+            const currentPage = window.location.pathname.split('/').pop() || 'index.html';
+            const navItems = document.querySelectorAll('.nav-item');
+            
+            navItems.forEach(item => {
+                const href = item.getAttribute('href');
+                if (href === currentPage || (currentPage === '' && href === 'index.html')) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        });
+    </script>
+    
+    <!-- Load your JavaScript file - Update this path to match your actual file name -->
+    <script src="Keyword_scripts.js"></script>
+</body>
+</html>
