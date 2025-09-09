@@ -39,7 +39,7 @@
             <nav class="navigation">
                 <a href="index.html" class="nav-item active">
                     <span class="material-icons">search</span>
-                    <span>Keywords</span>
+                    <span>AD Reports</span>
                 </a>
                 <a href="business_reports.html" class="nav-item">
                     <span class="material-icons">bar_chart</span>
@@ -88,6 +88,19 @@
                             <div class="date-filter" id="dateFilter">
                                 <span class="material-icons">calendar_today</span>
                                 <span id="dateRangeDisplay">—</span>
+                                <button class="preset-toggle" id="presetToggle" title="Quick ranges">Today ▾</button>
+                                <div class="preset-dropdown" id="presetDropdown" style="display:none">
+                                    <button data-preset="today">Today</button>
+                                    <button data-preset="yesterday">Yesterday</button>
+                                    <button data-preset="last7">Last 7 days</button>
+                                    <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                    <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                    <button data-preset="last30">Last 30 days</button>
+                                    <button data-preset="thisMonth">This month</button>
+                                    <button data-preset="lastMonth">Last month</button>
+                                    <button data-preset="ytd">Year to date</button>
+                                    <button data-preset="lifetime">Lifetime</button>
+                                </div>
                                 <div class="date-picker-dropdown" id="datePickerDropdown">
                                     <!-- Calendar content will be populated by JavaScript -->
                                 </div>
@@ -163,7 +176,7 @@
                                     <span>—</span>
                                 </div>
                             </div>
-                            <div class="metric-label">TACOS</div>
+                            <div class="metric-label">TCOS</div>
                             <div class="metric-value">—</div>
                         </div>
 
@@ -383,7 +396,7 @@
                             
                             <div class="search-container">
                                 <span class="material-icons">search</span>
-                                <input type="text" id="searchInput" placeholder="Search keywords...">
+                                <input type="text" id="keywordSearchInput" placeholder="Search keywords...">
                             </div>
                         </div>
                     </div>
@@ -396,11 +409,11 @@
                                 <span>Keyword Data</span>
                             </div>
                             <div class="table-actions">
-                                <button class="action-btn" id="exportExcel">
+                                <button class="action-btn" id="keywordExportExcel">
                                     <span class="material-icons">download</span>
                                     <span>Excel</span>
                                 </button>
-                                <button class="action-btn" id="exportCSV">
+                                <button class="action-btn" id="keywordExportCSV">
                                     <span class="material-icons">description</span>
                                     <span>CSV</span>
                                 </button>

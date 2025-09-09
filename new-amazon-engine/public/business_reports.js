@@ -1,6 +1,6 @@
-// Mute verbose console output in production to avoid noisy logs and overhead
+// Enable debug logging for troubleshooting
 (function() {
-    const ENABLE_DEBUG = false;
+    const ENABLE_DEBUG = true; // Changed to true for debugging
     if (!ENABLE_DEBUG && typeof console !== 'undefined') {
         const noops = ['log', 'debug', 'info', 'group', 'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'table'];
         noops.forEach(fn => { try { console[fn] = () => {}; } catch(_) {} });
@@ -41,28 +41,55 @@ async init() {
 }
 
 async initializeComponents() {
+    console.log('🔍 Initializing business reports dashboard components...');
+    
     this.setupEventListeners();
+    console.log('✅ Event listeners setup complete');
+    
     this.initializeDatePicker();
+    console.log('✅ Date picker initialized');
     
+    console.log('🔍 Fetching available date range...');
     await this.fetchAvailableDateRange();
+    console.log('✅ Date range fetched');
     
-    this.loadData();
+    console.log('🔍 Loading initial data...');
+    await this.loadData();
+    console.log('✅ Initial data loaded');
+    
     this.startAutoRefresh();
+    console.log('✅ Auto refresh started');
+    
+    console.log('🎉 Business reports dashboard initialization complete');
 }
 
 // removed debug connectivity probe
 
 async fetchAvailableDateRange() {
     try {
+        console.log('🔍 Fetching available date range...');
         const rangeResponse = await fetch('http://localhost:5000/api/business-date-range');
-        if (!rangeResponse.ok) throw new Error('Failed to fetch date range');
+        console.log('🔍 Date range response status:', rangeResponse.status);
+        
+        if (!rangeResponse.ok) {
+            console.error('❌ Failed to fetch date range:', rangeResponse.status, rangeResponse.statusText);
+            throw new Error('Failed to fetch date range');
+        }
         
         const dateRange = await rangeResponse.json();
+        console.log('🔍 Date range response:', dateRange);
         
+        console.log('🔍 Fetching available dates...');
         const datesResponse = await fetch('http://localhost:5000/api/business-available-dates');
-        if (!datesResponse.ok) throw new Error('Failed to fetch available dates');
+        console.log('🔍 Available dates response status:', datesResponse.status);
+        
+        if (!datesResponse.ok) {
+            console.error('❌ Failed to fetch available dates:', datesResponse.status, datesResponse.statusText);
+            throw new Error('Failed to fetch available dates');
+        }
         
         const availableDates = await datesResponse.json();
+        console.log('🔍 Available dates response:', availableDates);
         
         if (dateRange.hasData && dateRange.minDate && dateRange.maxDate && availableDates.hasData) {
             let maxDate, minDate;
@@ -186,6 +213,9 @@ async fetchAvailableDateRange() {
         }
         
     } catch (error) {
+        console.error('❌ Error fetching available date range:', error);
+        console.error('❌ Error stack:', error.stack);
+        
         const now = new Date();
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
         const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -193,6 +223,8 @@ async fetchAvailableDateRange() {
         // Create date strings directly to avoid any timezone issues
         const startDateStr = this.formatDate(start);
         const endDateStr = this.formatDate(end);
+        
+        console.log('🔍 Using fallback date range:', { startDateStr, endDateStr });
         
         this.state.dateRange = { 
             start, 
@@ -240,6 +272,26 @@ setupEventListeners() {
             }
         }
     });
+
+    // Preset dropdown wiring
+    const presetToggle = document.getElementById('presetToggle');
+    const presetDropdown = document.getElementById('presetDropdown');
+    if (presetToggle && presetDropdown) {
+        presetToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            presetDropdown.style.display = presetDropdown.style.display === 'block' ? 'none' : 'block';
+        });
+        presetDropdown.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const btn = e.target.closest('button[data-preset]');
+            if (!btn) return;
+            const key = btn.getAttribute('data-preset');
+            await this.applyPreset(key);
+            presetDropdown.style.display = 'none';
+            presetToggle.textContent = btn.textContent.trim() + ' ▾';
+        });
+        document.addEventListener('click', () => { presetDropdown.style.display = 'none'; });
+    }
 }
 
 async loadData() {
@@ -248,13 +300,27 @@ async loadData() {
             ? `http://localhost:5000/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}`
             : 'http://localhost:5000/api/business-data';
         
+        console.log('🔍 Loading business data from URL:', url);
+        console.log('🔍 Date range state:', this.state.dateRange);
+        
         const response = await fetch(url);
-        if (!response.ok) throw new Error('Failed to fetch data');
+        console.log('🔍 Response status:', response.status, response.statusText);
+        
+        if (!response.ok) {
+            console.error('❌ Response not OK:', response.status, response.statusText);
+            throw new Error(`Failed to fetch data: ${response.status} ${response.statusText}`);
+        }
         
         const data = await response.json();
+        console.log('🔍 Raw API response:', data);
+        console.log('🔍 Data array length:', data.data ? data.data.length : 'No data array');
+        console.log('🔍 KPIs:', data.kpis);
         
         this.state.businessData = this.transformData(data.data || []);
         this.state.filteredData = [...this.state.businessData];
+        
+        console.log('🔍 Transformed business data:', this.state.businessData);
+        console.log('🔍 Filtered data length:', this.state.filteredData.length);
         
         this.updateKPIs(data.kpis || {});
         // Also compute trend vs previous equal-length period
@@ -262,10 +328,83 @@ async loadData() {
         this.renderTable();
         this.updateResultsCount();
         
-    } catch (error) {
+        console.log('✅ Data loading completed successfully');
         
-        this.showError('Failed to load data. Please try again.');
+    } catch (error) {
+        console.error('❌ Error loading data:', error);
+        console.error('❌ Error stack:', error.stack);
+        this.showError(`Failed to load data: ${error.message}`);
     }
+}
+
+// ---------- Preset ranges ----------
+async applyPreset(key) {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999);
+
+    const startOfWeek = (d) => {
+        const dt = new Date(d);
+        const dow = dt.getDay();
+        const sub = dow === 0 ? 6 : dow - 1; // Monday start
+        dt.setDate(dt.getDate() - sub);
+        dt.setHours(0,0,0,0);
+        return dt;
+    };
+    const endOfWeek = (d) => { const s = startOfWeek(d); const e = new Date(s); e.setDate(s.getDate()+6); e.setHours(23,59,59,999); return e; };
+
+    let start = startOfToday;
+    let end = endOfToday;
+    switch (key) {
+        case 'today':
+            break;
+        case 'yesterday':
+            start = new Date(startOfToday); start.setDate(start.getDate()-1);
+            end = new Date(start); end.setHours(23,59,59,999);
+            break;
+        case 'last7':
+            start = new Date(endOfToday); start.setDate(start.getDate()-6); start.setHours(0,0,0,0);
+            end = endOfToday;
+            break;
+        case 'thisWeek':
+            start = startOfWeek(now); end = endOfWeek(now); break;
+        case 'lastWeek':
+            start = startOfWeek(new Date(now.getFullYear(), now.getMonth(), now.getDate()-7));
+            end = endOfWeek(new Date(start));
+            break;
+        case 'last30':
+            start = new Date(endOfToday); start.setDate(start.getDate()-29); start.setHours(0,0,0,0);
+            end = endOfToday;
+            break;
+        case 'thisMonth':
+            start = new Date(now.getFullYear(), now.getMonth(), 1);
+            end = new Date(now.getFullYear(), now.getMonth()+1, 0, 23,59,59,999);
+            break;
+        case 'lastMonth':
+            start = new Date(now.getFullYear(), now.getMonth()-1, 1);
+            end = new Date(now.getFullYear(), now.getMonth(), 0, 23,59,59,999);
+            break;
+        case 'ytd':
+            start = new Date(now.getFullYear(), 0, 1);
+            end = endOfToday;
+            break;
+        case 'lifetime':
+            start = this.availableDateRange?.minDate ? new Date(this.availableDateRange.minDate) : new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
+            start.setHours(0,0,0,0);
+            end = endOfToday;
+            break;
+        default:
+            break;
+    }
+
+    this.state.dateRange = {
+        start,
+        end,
+        startStr: this.formatDate(start),
+        endStr: this.formatDate(end)
+    };
+    this.updateDateDisplay();
+    await this.loadData();
 }
 
 async updateKPITrends(currentKpis) {
@@ -361,10 +500,14 @@ transformData(data) {
             }
         } catch (_) {}
         
+        // Use the SKU as the product name (as shown in your screenshot)
+        const productName = row.sku || 'Unknown';
+        
         return {
             date: localDateStr,
-            sku: row.parent_asin || row.sku || 'Unknown',
+            sku: productName, // SKU column shows the product name
             parentAsin: row.parent_asin || 'Unknown',
+            productTitle: `Product ${productName}`, // Product Title shows "Product [SKU]"
             sessions: parseInt(row.sessions || 0),
             pageViews: parseInt(row.page_views || 0),
             unitsOrdered: parseInt(row.units_ordered || 0),
@@ -413,7 +556,8 @@ filterData() {
     } else {
         this.state.filteredData = this.state.businessData.filter(row => 
             row.sku.toLowerCase().includes(this.state.searchTerm) ||
-            row.parentAsin.toLowerCase().includes(this.state.searchTerm)
+            row.parentAsin.toLowerCase().includes(this.state.searchTerm) ||
+            row.productTitle.toLowerCase().includes(this.state.searchTerm)
         );
     }
     this.renderTable();
@@ -479,7 +623,7 @@ renderTable() {
     if (pageData.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" class="empty-state">
+                <td colspan="9" class="empty-state">
                     <div style="text-align: center; padding: 2rem;">
                         <span class="material-icons" style="font-size: 48px; color: var(--text-secondary);">inbox</span>
                         <h3>No data found</h3>
@@ -493,6 +637,7 @@ renderTable() {
             <tr>
                 <td>${this.escapeHtml(row.sku)}</td>
                 <td>${this.escapeHtml(row.parentAsin)}</td>
+                <td>${this.escapeHtml(row.productTitle)}</td>
                 <td>${this.formatNumber(row.sessions)}</td>
                 <td>${this.formatNumber(row.pageViews)}</td>
                 <td>${this.formatNumber(row.unitsOrdered)}</td>
@@ -564,7 +709,7 @@ async exportData(format) {
             return;
         }
         
-        const headers = ['Date', 'SKU', 'Parent ASIN', 'Sessions', 'Page Views', 'Units Ordered', 'Sales (₹)', 'Conversion Rate (%)', 'Avg Order Value (₹)'];
+        const headers = ['Date', 'SKU', 'Parent ASIN', 'Product Title', 'Sessions', 'Page Views', 'Units Ordered', 'Sales (₹)', 'Conversion Rate (%)', 'Avg Order Value (₹)'];
         
         let csv = headers.join(',') + '\n';
         
@@ -575,6 +720,7 @@ async exportData(format) {
                 `"${actualDate}"`,
                 `"${row.sku}"`,
                 `"${row.parentAsin}"`,
+                `"${row.productTitle}"`,
                 row.sessions,
                 row.pageViews,
                 row.unitsOrdered,

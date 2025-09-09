@@ -95,7 +95,7 @@ async function fetchKeywordData(startDate = null, endDate = null) {
 }
 
 // --------------------
-// Fetch Business Data with Date Filtering
+// Fetch Business Data with Date Filtering and Aggregation by Parent ASIN
 // --------------------
 async function fetchBusinessData(startDate = null, endDate = null) {
   try {
@@ -107,20 +107,61 @@ async function fetchBusinessData(startDate = null, endDate = null) {
     
     console.log('🔍 fetchBusinessData called with:', { startDate, endDate });
     
-    // Select only required columns (avoid columns that may not exist like product_title)
-    let query = `SELECT parent_asin, sku, sessions, page_views, units_ordered, ordered_product_sales, date
-                 FROM amazon_sales_traffic`;
-    let params = [];
-    
-    if (startDate && endDate) {
-      // Compare by calendar date only, without timezone shifts
-      query += " WHERE DATE(date) >= $1::date AND DATE(date) <= $2::date";
-      params = [startDate, endDate];
+    // If no date range provided, aggregate by date for chart data
+    if (!startDate || !endDate) {
+      console.log('📊 Fetching ALL business data aggregated by date for chart');
+      const query = `
+        SELECT 
+          DATE(date) as date,
+          SUM(CAST(sessions AS INTEGER)) as sessions,
+          SUM(CAST(page_views AS INTEGER)) as page_views,
+          SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
+          SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
+        FROM amazon_sales_traffic
+        WHERE date IS NOT NULL
+        GROUP BY DATE(date)
+        ORDER BY DATE(date) DESC
+      `;
+      
+      const res = await client.query(query);
+      console.log(`📊 Aggregated ${res.rows.length} unique dates from business data`);
+      
+      // Debug: Show first few rows of business data
+      if (res.rows.length > 0) {
+        console.log('🔍 First 5 business data rows:', res.rows.slice(0, 5).map(row => ({
+          date: row.date,
+          ordered_product_sales: row.ordered_product_sales
+        })));
+        
+        // Debug: Check specifically for September 8th
+        const sep8Data = res.rows.filter(row => {
+          const date = new Date(row.date);
+          return date.getMonth() === 8 && date.getDate() === 8; // September 8th
+        });
+        console.log('🔍 September 8th business data:', sep8Data);
+      }
+      
+      return res.rows;
     }
     
-    query += ' ORDER BY date DESC';
+    // If date range provided, aggregate by Parent ASIN for specific date range
+    let query = `
+      SELECT 
+        parent_asin,
+        (array_agg(sku ORDER BY date DESC))[1] as sku,  -- Take the first SKU for each Parent ASIN
+        SUM(CAST(sessions AS INTEGER)) as sessions,
+        SUM(CAST(page_views AS INTEGER)) as page_views,
+        SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
+        SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales,
+        MIN(date) as date  -- Take the earliest date for reference
+      FROM amazon_sales_traffic
+      WHERE DATE(date) >= $1::date AND DATE(date) <= $2::date
+      GROUP BY parent_asin
+      ORDER BY SUM(CAST(ordered_product_sales AS DECIMAL)) DESC
+    `;
     
-    const res = await client.query(query, params);
+    const res = await client.query(query, [startDate, endDate]);
+    console.log(`📊 Aggregated ${res.rows.length} unique Parent ASINs from business data for date range`);
     
     return res.rows;
   } catch (err) {
@@ -247,20 +288,117 @@ function calculateDashboardKPIs(keywordData, businessData) {
 // --------------------
 // Transform Database Data for Frontend
 // --------------------
-function transformKeywordDataForFrontend(dbData) {
-  return dbData.map(row => ({
-    searchTerm: row.search_term || 'Unknown',
-    keywords: row.keyword_info || row.match_type || '',
-    campaignName: row.campaign_name || 'Unknown Campaign',
-    spend: parseFloat(row.cost || 0),
-    sales: parseFloat(row.sales_1d || 0),
-    // Create distinct totalSales by adding realistic variation to ad sales
-    // This ensures we have 5 distinct lines in the chart
-    totalSales: parseFloat(row.sales_1d || 0) * 1.25, // 25% higher than ad sales (realistic organic + ad sales)
-    clicks: parseInt(row.clicks || 0),
-    impressions: parseInt(row.impressions || 0),
-    date: row.report_date
-  }));
+function transformKeywordDataForFrontend(dbData, businessData = []) {
+  // First, aggregate business data by date to get total sales per date
+  const businessDataByDate = {};
+  businessData.forEach(bizRow => {
+    // Use YYYY-MM-DD format for consistent date matching
+    const date = new Date(bizRow.date);
+    const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    if (!businessDataByDate[dateStr]) {
+      businessDataByDate[dateStr] = {
+        totalSales: 0,
+        totalSessions: 0,
+        totalPageViews: 0,
+        totalUnitsOrdered: 0
+      };
+    }
+    businessDataByDate[dateStr].totalSales += parseFloat(bizRow.ordered_product_sales || 0);
+    businessDataByDate[dateStr].totalSessions += parseInt(bizRow.sessions || 0);
+    businessDataByDate[dateStr].totalPageViews += parseInt(bizRow.page_views || 0);
+    businessDataByDate[dateStr].totalUnitsOrdered += parseInt(bizRow.units_ordered || 0);
+  });
+
+  console.log('🔍 Business data by date:', Object.keys(businessDataByDate).map(date => ({
+    date,
+    totalSales: businessDataByDate[date].totalSales
+  })));
+  
+  // Debug: Show all available business dates
+  console.log('🔍 All business dates available:', Object.keys(businessDataByDate));
+
+  return dbData.map(row => {
+    // Find matching business data for the same date to get real total sales
+    // Use YYYY-MM-DD format to match business data keys
+    const keywordDate = new Date(row.report_date);
+    const keywordDateStr = keywordDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const matchingBusinessData = businessDataByDate[keywordDateStr];
+    
+    // Use real business data if available, otherwise fall back to ad sales
+    const realTotalSales = matchingBusinessData 
+      ? matchingBusinessData.totalSales
+      : parseFloat(row.sales_1d || 0);
+    
+    // Debug: Check if we have business data for this date
+    if (keywordDateStr.includes('2025-09-08') || keywordDateStr.includes('Sep 8')) {
+      console.log('🔍 Sep 8 business data lookup:', {
+        keywordDateStr,
+        businessDataAvailable: Object.keys(businessDataByDate),
+        matchingBusinessData: matchingBusinessData ? matchingBusinessData.totalSales : 'No match',
+        fallbackAdSales: parseFloat(row.sales_1d || 0),
+        finalTotalSales: realTotalSales
+      });
+    }
+    
+    // Debug: Log when totalSales equals spend
+    if (realTotalSales === parseFloat(row.cost || 0)) {
+      console.error(`🚨 Backend Bug: Date ${keywordDateStr} has totalSales=${realTotalSales} equals spend=${row.cost}`);
+      console.log('Business data available:', !!matchingBusinessData);
+      console.log('Business sales value:', matchingBusinessData?.totalSales);
+    }
+    
+    // Debug logging for September dates
+    if (keywordDateStr.includes('Sep 08 2025') || keywordDateStr.includes('Sep 08') || 
+        keywordDateStr.includes('Sep 25 2025') || keywordDateStr.includes('Sep 25')) {
+      console.log('🔍 September data:', {
+        keywordDateStr,
+        adSales: parseFloat(row.sales_1d || 0),
+        realTotalSales,
+        hasBusinessData: !!matchingBusinessData,
+        businessDataValue: matchingBusinessData?.totalSales,
+        businessDataKeys: Object.keys(businessDataByDate)
+      });
+    }
+    
+    // Debug: Show first few keyword dates being processed
+    if (dbData.indexOf(row) < 5) {
+      console.log('🔍 Keyword date being processed:', {
+        index: dbData.indexOf(row),
+        keywordDateStr,
+        hasMatchingBusinessData: !!matchingBusinessData,
+        realTotalSales
+      });
+    }
+    
+    const result = {
+      searchTerm: row.search_term || 'Unknown',
+      keywords: row.keyword_info || row.match_type || '',
+      campaignName: row.campaign_name || 'Unknown Campaign',
+      spend: parseFloat(row.cost || 0),
+      sales: parseFloat(row.sales_1d || 0),
+      // Use real business data for total sales instead of fake calculation
+      totalSales: realTotalSales,
+      clicks: parseInt(row.clicks || 0),
+      impressions: parseInt(row.impressions || 0),
+      date: row.report_date
+    };
+    
+    // Debug: Log the final result for September 8th
+    if (keywordDateStr.includes('2025-09-08')) {
+      console.log('🔍 Final result for Sep 8:', {
+        date: result.date,
+        spend: result.spend,
+        sales: result.sales,
+        totalSales: result.totalSales,
+        realTotalSales: realTotalSales,
+        rowIndex: dbData.indexOf(row),
+        totalRows: dbData.length
+      });
+    }
+    
+    return result;
+  });
 }
 
 // --------------------
@@ -357,17 +495,21 @@ app.get('/api/analytics', async (req, res) => {
       endDate = end;     // e.g., "2025-07-02"
     }
     
-    // Fetch only the requested range for both datasets
-    const [keywordData, businessData] = await Promise.all([
+    // Fetch data - get business data based on date range
+    const [keywordData, businessDataForChart, businessDataForKPIs] = await Promise.all([
       fetchKeywordData(startDate, endDate),
+      // For chart: Get ALL business data aggregated by date
+      fetchBusinessData(null, null),
+      // For KPIs: Get business data for the specific date range
       fetchBusinessData(startDate, endDate)
     ]);
     
     console.log(`📊 Fetched ${keywordData.length} keyword rows from database`);
-    console.log(`📊 Fetched ${businessData.length} business rows from database`);
+    console.log(`📊 Fetched ${businessDataForChart.length} business rows for chart`);
+    console.log(`📊 Fetched ${businessDataForKPIs.length} business rows for KPIs`);
     
-    const kpis = calculateDashboardKPIs(keywordData, businessData);
-    const rows = transformKeywordDataForFrontend(keywordData);
+    const kpis = calculateDashboardKPIs(keywordData, businessDataForKPIs);
+    const rows = transformKeywordDataForFrontend(keywordData, businessDataForChart);
     
     console.log(`📊 Transformed ${rows.length} rows for frontend`); 
     

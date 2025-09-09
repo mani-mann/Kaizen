@@ -39,7 +39,7 @@
             <nav class="navigation">
                 <a href="index.html" class="nav-item">
                     <span class="material-icons">search</span>
-                    <span>Keywords</span>
+                    <span>AD Reports</span>
                 </a>
                 <a href="business_reports.html" class="nav-item active">
                     <span class="material-icons">bar_chart</span>
@@ -88,6 +88,19 @@
                             <div class="date-filter" id="dateFilter">
                                 <span class="material-icons">calendar_today</span>
                                 <span id="dateRangeDisplay">—</span>
+                                <button class="preset-toggle" id="presetToggle" title="Quick ranges">Today ▾</button>
+                                <div class="preset-dropdown" id="presetDropdown" style="display:none">
+                                    <button data-preset="today">Today</button>
+                                    <button data-preset="yesterday">Yesterday</button>
+                                    <button data-preset="last7">Last 7 days</button>
+                                    <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                    <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                    <button data-preset="last30">Last 30 days</button>
+                                    <button data-preset="thisMonth">This month</button>
+                                    <button data-preset="lastMonth">Last month</button>
+                                    <button data-preset="ytd">Year to date</button>
+                                    <button data-preset="lifetime">Lifetime</button>
+                                </div>
                                 <div class="date-picker-dropdown" id="datePickerDropdown">
                                     <!-- Calendar content will be populated by JavaScript -->
                                 </div>
@@ -242,7 +255,10 @@
                                             <span>Parent ASIN</span>
                                             <span class="material-icons">keyboard_arrow_down</span>
                                         </th>
-
+                                        <th class="sortable" data-sort="productTitle">
+                                            <span>Product Title</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </th>
                                         <th class="sortable" data-sort="sessions">
                                             <span>Sessions</span>
                                             <span class="material-icons">keyboard_arrow_down</span>

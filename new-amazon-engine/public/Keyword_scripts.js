@@ -1,7 +1,7 @@
 // Amazon Analytics Dashboard JavaScript
 // Mute verbose console output in production to avoid noisy logs and any overhead
 (function() {
-    const ENABLE_DEBUG = false;
+    const ENABLE_DEBUG = true;
     if (!ENABLE_DEBUG && typeof console !== 'undefined') {
         const noops = ['log', 'debug', 'info', 'group', 'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'table'];
         noops.forEach(fn => { try { console[fn] = () => {}; } catch(_) {} });
@@ -11,6 +11,8 @@ class AmazonDashboard {
     constructor() {
         this.chart = null;
         this.currentData = [];
+        this.chartData = []; // Separate data for chart (ALL data, not filtered by date)
+        this.businessSeries = []; // Business total sales by date for chart
         this.filteredData = [];
         this.sortConfig = { key: null, direction: 'desc' };
         this.refreshInterval = null;
@@ -304,6 +306,77 @@ class AmazonDashboard {
         await this.refreshForCurrentRange();
     }
 
+    // Quick presets (Today, Yesterday, Last 7 days, etc.)
+    async applyPreset(key) {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999);
+
+        const startOfWeek = (d) => {
+            const dt = new Date(d);
+            const dow = dt.getDay();
+            const sub = dow === 0 ? 6 : dow - 1; // Monday start
+            dt.setDate(dt.getDate() - sub);
+            dt.setHours(0,0,0,0);
+            return dt;
+        };
+        const endOfWeek = (d) => { const s = startOfWeek(d); const e = new Date(s); e.setDate(s.getDate() + 6); e.setHours(23,59,59,999); return e; };
+
+        let start = startOfToday;
+        let end = endOfToday;
+
+        switch (key) {
+            case 'today':
+                break;
+            case 'yesterday':
+                start = new Date(startOfToday); start.setDate(start.getDate() - 1);
+                end = new Date(start); end.setHours(23,59,59,999);
+                break;
+            case 'last7':
+                start = new Date(endOfToday); start.setDate(start.getDate() - 6); start.setHours(0,0,0,0);
+                end = endOfToday;
+                break;
+            case 'thisWeek':
+                start = startOfWeek(now);
+                end = endOfWeek(now);
+                break;
+            case 'lastWeek':
+                start = startOfWeek(new Date(now.getFullYear(), now.getMonth(), now.getDate()-7));
+                end = endOfWeek(new Date(start));
+                break;
+            case 'last30':
+                start = new Date(endOfToday); start.setDate(start.getDate() - 29); start.setHours(0,0,0,0);
+                end = endOfToday;
+                break;
+            case 'thisMonth':
+                start = new Date(now.getFullYear(), now.getMonth(), 1);
+                end = new Date(now.getFullYear(), now.getMonth()+1, 0, 23,59,59,999);
+                break;
+            case 'lastMonth':
+                start = new Date(now.getFullYear(), now.getMonth()-1, 1);
+                end = new Date(now.getFullYear(), now.getMonth(), 0, 23,59,59,999);
+                break;
+            case 'ytd':
+                start = new Date(now.getFullYear(), 0, 1);
+                end = endOfToday;
+                break;
+            case 'lifetime': {
+                const min = this.dataMinDate ? this.stripTime(this.dataMinDate) : new Date(now.getFullYear(), now.getMonth(), now.getDate()-365);
+                start = new Date(min);
+                end = endOfToday;
+                break;
+            }
+            default:
+                break;
+        }
+
+        const startStr = this.toInputDate(start);
+        const endStr = this.toInputDate(end);
+        this.dateRange = { start, end, startStr, endStr };
+        this.updateDateDisplay();
+        await this.refreshForCurrentRange();
+    }
+
     toInputDate(date) {
         // Use local date components to avoid timezone issues
         const y = date.getFullYear();
@@ -386,8 +459,12 @@ class AmazonDashboard {
     bindEvents() {
         // Search functionality
         const searchInput = document.getElementById('searchInput');
+        const keywordSearchInput = document.getElementById('keywordSearchInput');
         if (searchInput) {
             searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
+        }
+        if (keywordSearchInput) {
+            keywordSearchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
         }
         
         // Table sorting
@@ -405,6 +482,8 @@ class AmazonDashboard {
         // Export buttons
         document.getElementById('exportExcel')?.addEventListener('click', () => this.handleExport('excel'));
         document.getElementById('exportCSV')?.addEventListener('click', () => this.handleExport('csv'));
+        document.getElementById('keywordExportExcel')?.addEventListener('click', () => this.handleExport('excel'));
+        document.getElementById('keywordExportCSV')?.addEventListener('click', () => this.handleExport('csv'));
         
         // Filter dropdowns
         document.getElementById('campaignFilter')?.addEventListener('change', (e) => {
@@ -427,6 +506,8 @@ class AmazonDashboard {
         // Date picker events
         const dateFilter = document.getElementById('dateFilter');
         const datePickerDropdown = document.getElementById('datePickerDropdown');
+        const presetToggle = document.getElementById('presetToggle');
+        const presetDropdown = document.getElementById('presetDropdown');
         const applyBtn = document.getElementById('applyDatePicker');
         const cancelBtn = document.getElementById('cancelDatePicker');
 
@@ -456,6 +537,25 @@ class AmazonDashboard {
                     dateFilter.classList.remove('open');
                 }
             });
+
+            // Presets
+            presetToggle?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (presetDropdown) presetDropdown.style.display = presetDropdown.style.display === 'block' ? 'none' : 'block';
+            });
+            presetDropdown?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const btn = e.target.closest('button[data-preset]');
+                if (!btn) return;
+                const key = btn.getAttribute('data-preset');
+                this.applyPreset(key);
+                // Reflect the selected preset on the button label
+                const label = btn.textContent.trim();
+                const toggle = document.getElementById('presetToggle');
+                if (toggle) toggle.textContent = `${label} ▾`;
+                if (presetDropdown) presetDropdown.style.display = 'none';
+            });
+            document.addEventListener('click', () => { if (presetDropdown) presetDropdown.style.display = 'none'; });
         }
 
         applyBtn?.addEventListener('click', () => this.applyDateRange());
@@ -490,14 +590,51 @@ class AmazonDashboard {
             });
         }
         
-        // Close sidebar when clicking outside on mobile
-        document.addEventListener('click', (e) => {
-            if (window.innerWidth <= 992) {
-                if (!sidebar.contains(e.target) && !mobileMenuBtn.contains(e.target)) {
-                    sidebar.classList.remove('open');
+        // Enhanced mobile sidebar interactions
+        if (window.innerWidth <= 992) {
+            // Close sidebar when clicking outside (on overlay)
+            document.addEventListener('click', (e) => {
+                if (sidebar && sidebar.classList.contains('open')) {
+                    // Check if click is on the overlay (not the sidebar content)
+                    const sidebarContent = sidebar.querySelector('.sidebar-header')?.parentElement;
+                    if (!sidebarContent?.contains(e.target) && !mobileMenuBtn.contains(e.target)) {
+                        sidebar.classList.remove('open');
+                    }
                 }
-            }
-        });
+            });
+            
+            // Add swipe gesture support
+            let startX = 0;
+            let currentX = 0;
+            let isDragging = false;
+            
+            document.addEventListener('touchstart', (e) => {
+                startX = e.touches[0].clientX;
+                isDragging = true;
+            });
+            
+            document.addEventListener('touchmove', (e) => {
+                if (!isDragging) return;
+                currentX = e.touches[0].clientX;
+                const diffX = currentX - startX;
+                
+                // Swipe right from left edge to open sidebar
+                if (startX < 50 && diffX > 50 && !sidebar.classList.contains('open')) {
+                    sidebar.classList.add('open');
+                    isDragging = false;
+                }
+                
+                // Swipe left to close sidebar
+                if (diffX < -50 && sidebar.classList.contains('open')) {
+                    sidebar.classList.remove('open');
+                    isDragging = false;
+                }
+            });
+            
+            document.addEventListener('touchend', () => {
+                isDragging = false;
+            });
+        }
         
         // Window resize
         window.addEventListener('resize', () => this.handleResize());
@@ -628,6 +765,9 @@ class AmazonDashboard {
                 this.loadSampleData();
             }
             
+            // Load ALL data for chart (independent of date picker)
+            await this.loadChartData();
+            
             // Update UI with data - ensure data is ready first
             if (this.currentData && this.currentData.length > 0) {
                 this.updateKPIs();
@@ -675,6 +815,75 @@ class AmazonDashboard {
         this.kpis = null;
         
         console.log('⚠️ Dashboard requires database connection to display data');
+    }
+
+    async loadChartData() {
+        try {
+            console.log('📊 Loading chart data with same date range as KPIs');
+            
+            // Use the same date range as KPIs to ensure consistency
+            const startStr = this.dateRange.startStr || this.toInputDate(new Date(this.dateRange.start));
+            const endStr = this.dateRange.endStr || this.toInputDate(new Date(this.dateRange.end));
+            
+            const params = new URLSearchParams({
+                start: startStr,
+                end: endStr
+            });
+            
+            // Fetch data with same date filtering as KPIs
+            const res = await fetch(`http://localhost:5000/api/analytics?${params.toString()}`, { 
+                headers: { 'Accept': 'application/json' } 
+            });
+            
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+            
+            const payload = await res.json();
+            
+            if (payload && Array.isArray(payload.rows)) {
+                // Normalize any UTC timestamps to local calendar date strings for consistency
+                this.chartData = payload.rows.map(row => {
+                    if (row && row.report_date) {
+                        try {
+                            const d = new Date(row.report_date);
+                            if (!isNaN(d.getTime())) {
+                                row.report_date = this.toInputDate(d);
+                            }
+                        } catch (_) {}
+                    }
+                    if (row && row.date) {
+                        try {
+                            const d2 = new Date(row.date);
+                            if (!isNaN(d2.getTime())) {
+                                row.date = this.toInputDate(d2);
+                            }
+                        } catch (_) {}
+                    }
+                    return row;
+                });
+                
+                console.log(`📊 Loaded ${this.chartData.length} keyword rows for chart (ALL data)`);
+                // Also capture business series by date if provided (payload may include aggregated business data)
+                if (Array.isArray(payload.businessData)) {
+                    this.businessSeries = payload.businessData.map(b => ({
+                        date: this.toInputDate(new Date(b.date)),
+                        sessions: Number(b.sessions || 0),
+                        page_views: Number(b.page_views || 0),
+                        units_ordered: Number(b.units_ordered || 0),
+                        ordered_product_sales: Number(b.ordered_product_sales || 0)
+                    }));
+                }
+            } else {
+                console.log('⚠️ No chart data available');
+                this.chartData = [];
+                this.businessSeries = [];
+            }
+            
+        } catch (e) {
+            console.error('loadChartData failed:', e);
+            this.chartData = [];
+        }
     }
 
     async fetchAnalytics(start, end) {
@@ -743,8 +952,8 @@ class AmazonDashboard {
                     campaignName: row.campaignName || row.campaign_name || 'Unknown Campaign',
                     spend: parseFloat(row.spend || row.cost || 0),
                     sales: parseFloat(row.sales || row.sales_1d || 0),
-                    // Ensure totalSales is included and distinct from sales
-                    totalSales: parseFloat(row.totalSales || (parseFloat(row.sales || row.sales_1d || 0) * 1.25)),
+                    // Use real business data for totalSales, not calculated value
+                    totalSales: parseFloat(row.totalSales || 0),
                     clicks: parseInt(row.clicks || 0),
                     impressions: parseInt(row.impressions || 0),
                     purchases: parseInt(row.purchases || row.purchases_1d || 0),
@@ -809,7 +1018,7 @@ class AmazonDashboard {
                 if (lower.includes('click')) el.textContent = value.toLocaleString('en-IN');
                 else if (lower.includes('cpc')) el.textContent = `₹${value.toFixed(2)}`;
                 else if (lower.includes('sales') || lower.includes('spend')) el.textContent = `₹${value.toLocaleString('en-IN')}`;
-                else if (lower.includes('acos') || lower.includes('tacos')) el.textContent = `${value.toFixed(2)}%`;
+                else if (lower.includes('acos') || lower.includes('tcos')) el.textContent = `${value.toFixed(2)}%`;
                 else if (lower.includes('roas')) el.textContent = value.toFixed(2);
                 else el.textContent = String(value);
                 
@@ -825,7 +1034,7 @@ class AmazonDashboard {
         setValue('AD SALES', this.kpis.adSales || 0);
         setValue('TOTAL SALES', this.kpis.totalSales || 0);
         setValue('ACOS', this.kpis.acos || 0);
-        setValue('TACOS', this.kpis.tacos || 0);
+        setValue('TCOS', this.kpis.tacos || 0);
         setValue('ROAS', this.kpis.roas || 0);
         setValue('AD CLICKS', this.kpis.adClicks || 0);
         setValue('AVG. CPC', this.kpis.avgCpc || 0);
@@ -844,7 +1053,7 @@ class AmazonDashboard {
                 ['AD SALES', 'adSales'],
                 ['TOTAL SALES', 'totalSales'],
                 ['ACOS', 'acos'],
-                ['TACOS', 'tacos'],
+                ['TCOS', 'tacos'],
                 ['ROAS', 'roas'],
                 ['AD CLICKS', 'adClicks'],
                 ['AVG. CPC', 'avgCpc']
@@ -1304,7 +1513,7 @@ class AmazonDashboard {
                         yAxisID: 'y1'
                     },
                     {
-                        label: 'TACOS (%)',
+                        label: 'TCOS (%)',
                         data: chartData.tacos,
                         borderColor: '#6f42c1',
                         backgroundColor: 'rgba(111, 66, 193, 0.1)',
@@ -1401,24 +1610,24 @@ class AmazonDashboard {
     
     generateChartData(period) {
         console.log('🔄 generateChartData called with period:', period);
-        console.log('🔄 generateChartData called with currentData:', this.currentData);
+        console.log('🔄 generateChartData called with chartData:', this.chartData);
         
-        // Use ALL database data, not selected date range
-        if (!this.currentData || this.currentData.length === 0) {
-            console.log('⚠️ No data available for chart generation');
+        // Use chart data with same date range as KPIs for consistency
+        if (!this.chartData || this.chartData.length === 0) {
+            console.log('⚠️ No chart data available for chart generation');
             return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
         }
         
-        // Find the actual date range from ALL available data
-        const allDates = this.currentData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
+        // Find the actual date range from chart data (same as KPIs)
+        const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
         if (allDates.length === 0) {
-            console.log('⚠️ No valid dates found in data');
+            console.log('⚠️ No valid dates found in chart data');
             return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
         }
         
         const start = new Date(Math.min(...allDates));
         const end = new Date(Math.max(...allDates));
-        console.log('📅 Chart will show data from entire database range:', start.toDateString(), 'to', end.toDateString());
+        console.log('📅 Chart will show data from selected date range:', start.toDateString(), 'to', end.toDateString());
 
         const labels = [];
         const adSpend = [];
@@ -1427,12 +1636,13 @@ class AmazonDashboard {
         const acos = [];
         const tacos = [];
 
-        // Group data by period - use ALL data from database
+        // Group data by period - use chart data with same date range as KPIs
         const dataByPeriod = {};
+        const businessDataPerPeriod = {}; // Track business data separately to avoid duplication
         
-        this.currentData.forEach(item => {
+        this.chartData.forEach(item => {
             const itemDate = new Date(item.date);
-            // Use ALL data, no date filtering
+            // Use chart data with same date filtering as KPIs
             let periodKey;
             if (period === 'monthly') {
                 periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
@@ -1474,15 +1684,68 @@ class AmazonDashboard {
                     adSpend: 0,
                     adSales: 0,
                     totalSales: 0,
-                    clicks: 0
+                    clicks: 0,
+                    datesProcessed: new Set() // Track which dates we've processed for totalSales
                 };
             }
             
+            // Always add ad spend, ad sales, and clicks (these should be summed)
             dataByPeriod[periodKey].adSpend += (item.spend || 0);
             dataByPeriod[periodKey].adSales += (item.sales || 0);
-            // Use the distinct totalSales field from the database
-            dataByPeriod[periodKey].totalSales += Number(item.totalSales || 0);
             dataByPeriod[periodKey].clicks += (item.clicks || 0);
+            
+            // For totalSales, only add once per unique date to avoid duplication
+            const dateKey = item.date; // Use the exact date as key
+            if (!dataByPeriod[periodKey].datesProcessed.has(dateKey)) {
+                dataByPeriod[periodKey].totalSales += Number(item.totalSales || 0);
+                dataByPeriod[periodKey].datesProcessed.add(dateKey);
+                
+                // Debug for Sep 8
+                if (dateKey.includes('2025-09-08')) {
+                    console.log('🔍 Adding Sep 8 totalSales once:', {
+                        periodKey,
+                        dateKey,
+                        totalSalesAdded: Number(item.totalSales || 0),
+                        currentTotal: dataByPeriod[periodKey].totalSales
+                    });
+                }
+            }
+        });
+
+        // Debug: Check if adSpend equals totalSales in aggregated data
+        Object.keys(dataByPeriod).forEach(period => {
+            const data = dataByPeriod[period];
+            if (data.adSpend === data.totalSales) {
+                console.error(`🚨 FOUND THE BUG: Period ${period} has adSpend=${data.adSpend} equals totalSales=${data.totalSales}`);
+                console.log('Raw items that contributed to this period:', 
+                    this.chartData.filter(item => {
+                        const itemDate = new Date(item.date);
+                        let periodKey;
+                        if (period === 'monthly') {
+                            periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+                        } else if (period === 'quarterly') {
+                            const q = Math.floor(itemDate.getMonth() / 3) + 1;
+                            periodKey = `Q${q} ${itemDate.getFullYear()}`;
+                        } else if (period === 'weekly') {
+                            const weekStart = new Date(itemDate);
+                            const dayOfWeek = weekStart.getDay();
+                            const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                            weekStart.setDate(weekStart.getDate() - daysToSubtract);
+                            weekStart.setHours(0, 0, 0, 0);
+                            const weekEnd = new Date(weekStart);
+                            weekEnd.setDate(weekStart.getDate() + 6);
+                            periodKey = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+                        } else {
+                            periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                        }
+                        return periodKey === period;
+                    }).map(item => ({
+                        spend: item.spend,
+                        sales: item.sales, 
+                        totalSales: item.totalSales
+                    }))
+                );
+            }
         });
 
         console.log('📊 Data grouped by period:', dataByPeriod);
@@ -1568,8 +1831,79 @@ class AmazonDashboard {
                     acos.push(Math.min(100, acosVal));
                     tacos.push(Math.min(50, tacosVal));
                 });
+            } else if (period === 'quarterly') {
+                // Rolling last 3 months split into 3 simple monthly buckets
+                console.log('📊 Generating rolling 3-month buckets for quarterly view');
+
+                const today = new Date();
+                const start = new Date(today);
+                start.setMonth(today.getMonth() - 3);
+                start.setHours(0, 0, 0, 0);
+
+                const month1Start = new Date(start);
+                const month2Start = new Date(start); month2Start.setMonth(month2Start.getMonth() + 1);
+                const month3Start = new Date(start); month3Start.setMonth(month3Start.getMonth() + 2);
+
+                const month1End = new Date(month2Start.getTime() - 1);
+                const month2End = new Date(month3Start.getTime() - 1);
+                const month3End = new Date(today);
+
+                const makeLabel = (a, b) => `${a.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${b.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+
+                const buckets = [
+                    { label: makeLabel(month1Start, month1End), start: month1Start, end: month1End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, dates: new Set() },
+                    { label: makeLabel(month2Start, month2End), start: month2Start, end: month2End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, dates: new Set() },
+                    { label: makeLabel(month3Start, month3End), start: month3Start, end: month3End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, dates: new Set() },
+                ];
+
+                // Aggregate from keyword rows, but fall back to business totals where keywords are missing
+                const addBusinessIfMissing = (bucket, start, end) => {
+                    // Sum business ordered_product_sales in date range if available
+                    if (!this.businessSeries || this.businessSeries.length === 0) return;
+                    const sum = this.businessSeries
+                        .filter(b => {
+                            const d = new Date(b.date);
+                            return d >= start && d <= end;
+                        })
+                        .reduce((acc, b) => acc + Number(b.ordered_product_sales || 0), 0);
+                    // Only replace when keyword-driven total is zero
+                    if (bucket.totalSales === 0 && sum > 0) {
+                        bucket.totalSales = sum;
+                    }
+                };
+
+                this.chartData.forEach(item => {
+                    const d = new Date(item.date);
+                    if (d < start || d > today) return;
+                    for (const b of buckets) {
+                        if (d >= b.start && d <= b.end) {
+                            b.adSpend += (item.spend || 0);
+                            b.adSales += (item.sales || 0);
+                            b.clicks += (item.clicks || 0);
+                            const dk = item.date;
+                            if (!b.dates.has(dk)) {
+                                b.totalSales += Number(item.totalSales || 0);
+                                b.dates.add(dk);
+                            }
+                            break;
+                        }
+                    }
+                });
+
+                buckets.forEach(b => {
+                    // If keyword data produced zero totalSales, backfill from business table
+                    addBusinessIfMissing(b, b.start, b.end);
+                    labels.push(b.label);
+                    adSpend.push(b.adSpend);
+                    adSales.push(b.adSales);
+                    totalSales.push(b.totalSales);
+                    const acosVal = b.adSales > 0 ? (b.adSpend / b.adSales) * 100 : 0;
+                    const tacosVal = b.totalSales > 0 ? (b.adSpend / b.totalSales) * 100 : 0;
+                    acos.push(Math.min(100, acosVal));
+                    tacos.push(Math.min(50, tacosVal));
+                });
             } else {
-                // For other periods, use the original logic
+                // For monthly and daily periods, use cursor-based logic
                 const cursor = new Date(start);
                 while (cursor <= end) {
                     const periodKey = this.formatLabel(cursor, period);
@@ -1591,9 +1925,6 @@ class AmazonDashboard {
                     if (period === 'monthly') {
                         cursor.setMonth(cursor.getMonth() + 1);
                         cursor.setDate(1);
-                    } else if (period === 'quarterly') {
-                        const nextMonth = cursor.getMonth() + 3;
-                        cursor.setMonth(nextMonth, 1);
                     } else {
                         // For daily, ensure we move exactly one day
                         cursor.setDate(cursor.getDate() + 1);
