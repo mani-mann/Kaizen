@@ -36,11 +36,6 @@ class AmazonDashboard {
         if (period === 'monthly') {
             return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
         }
-        if (period === 'quarterly') {
-            const month = date.getMonth();
-            const quarter = Math.floor(month / 3) + 1;
-            return `Q${quarter} ${date.getFullYear()}`;
-        }
         if (period === 'weekly') {
             const endOfWeek = new Date(date);
             endOfWeek.setDate(endOfWeek.getDate() + 6);
@@ -326,8 +321,6 @@ class AmazonDashboard {
         let end = endOfToday;
 
         switch (key) {
-            case 'today':
-                break;
             case 'yesterday':
                 start = new Date(startOfToday); start.setDate(start.getDate() - 1);
                 end = new Date(start); end.setHours(23,59,59,999);
@@ -1646,9 +1639,6 @@ class AmazonDashboard {
             let periodKey;
             if (period === 'monthly') {
                 periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-            } else if (period === 'quarterly') {
-                const q = Math.floor(itemDate.getMonth() / 3) + 1;
-                periodKey = `Q${q} ${itemDate.getFullYear()}`;
             } else if (period === 'weekly') {
                 // Fix weekly aggregation to ensure proper week grouping
                 const weekStart = new Date(itemDate);
@@ -1723,9 +1713,6 @@ class AmazonDashboard {
                         let periodKey;
                         if (period === 'monthly') {
                             periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-                        } else if (period === 'quarterly') {
-                            const q = Math.floor(itemDate.getMonth() / 3) + 1;
-                            periodKey = `Q${q} ${itemDate.getFullYear()}`;
                         } else if (period === 'weekly') {
                             const weekStart = new Date(itemDate);
                             const dayOfWeek = weekStart.getDay();

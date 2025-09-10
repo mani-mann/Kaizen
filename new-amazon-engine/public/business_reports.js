@@ -356,8 +356,6 @@ async applyPreset(key) {
     let start = startOfToday;
     let end = endOfToday;
     switch (key) {
-        case 'today':
-            break;
         case 'yesterday':
             start = new Date(startOfToday); start.setDate(start.getDate()-1);
             end = new Date(start); end.setHours(23,59,59,999);
