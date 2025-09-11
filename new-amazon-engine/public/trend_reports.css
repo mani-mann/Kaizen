@@ -692,6 +692,81 @@ body {
     cursor: pointer;
 }
 
+/* Multi-Select Dropdown */
+.multi-select-dropdown {
+    position: relative;
+    min-width: 150px;
+}
+
+.multi-select-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+}
+
+.multi-select-toggle:hover {
+    border-color: var(--border-focus);
+}
+
+.multi-select-toggle .material-icons {
+    font-size: 18px;
+    transition: transform var(--transition-fast);
+}
+
+.multi-select-dropdown.open .multi-select-toggle .material-icons {
+    transform: rotate(180deg);
+}
+
+.multi-select-options {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background: var(--white);
+    border: 1px solid var(--border-primary);
+    box-shadow: 0 8px 20px rgba(0,0,0,.08);
+    border-radius: 8px;
+    padding: 6px;
+    z-index: 30;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.multi-select-option {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color var(--transition-fast);
+}
+
+.multi-select-option:hover {
+    background: var(--gray-100);
+}
+
+.multi-select-option input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.multi-select-option label {
+    margin: 0;
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+}
+
 .chart-wrapper {
     padding: var(--spacing-xl);
     height: 400px;
@@ -807,6 +882,94 @@ body {
     color: var(--text-muted);
 }
 
+/* Filter Container */
+.filter-container {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    width: 100%;
+    max-width: 400px;
+}
+
+.name-filter {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius);
+    padding: var(--spacing-sm) var(--spacing-md);
+    transition: all var(--transition-normal);
+    position: relative;
+}
+
+.name-filter:hover {
+    border-color: var(--border-focus);
+}
+
+.name-filter .material-icons {
+    color: var(--text-secondary);
+    font-size: 18px;
+}
+
+.searchable-dropdown {
+    position: relative;
+    flex: 1;
+    min-width: 200px;
+}
+
+.filter-input {
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    outline: none;
+    width: 100%;
+    padding: 0;
+}
+
+.filter-input::placeholder {
+    color: var(--text-muted);
+}
+
+.filter-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: var(--z-dropdown);
+    margin-top: 4px;
+}
+
+.filter-option {
+    padding: var(--spacing-sm) var(--spacing-md);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    transition: background-color var(--transition-fast);
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.filter-option:last-child {
+    border-bottom: none;
+}
+
+.filter-option:hover {
+    background: var(--bg-tertiary);
+}
+
+.filter-option.selected {
+    background: var(--primary);
+    color: var(--white);
+}
+
 .results-count {
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
@@ -920,6 +1083,25 @@ body {
 
 .data-table tbody tr:last-child td {
     border-bottom: none;
+}
+
+/* Date badges styling */
+.dates-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: 300px;
+}
+
+.date-badge {
+    background: var(--primary);
+    color: var(--white);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: var(--font-size-xs);
+    font-weight: 500;
+    white-space: nowrap;
+    display: inline-block;
 }
 
 /* Date Picker Dropdown */

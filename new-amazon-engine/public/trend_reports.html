@@ -140,17 +140,42 @@
                                 </div>
                                 <div class="chart-controls">
                                     <div class="chart-control-group">
-                                        <select class="metric-selector" id="chartMetric">
-                                            <option value="spend">Spend</option>
-                                            <option value="cpc">CPC</option>
-                                            <option value="sales">Sales</option>
-                                            <option value="acos">ACOS</option>
-                                            <option value="tcos">TCOS</option>
-                                            <option value="ctr">CTR</option>
-                                            <option value="sessions">Sessions</option>
-                                            <option value="pageviews">Page Views</option>
-                                            <option value="conversionRate">Conversion Rate</option>
-                                        </select>
+                                        <div class="multi-select-dropdown" id="chartMetricDropdown">
+                                            <div class="multi-select-toggle" id="chartMetricToggle">
+                                                <span id="chartMetricText">Select Metrics</span>
+                                                <span class="material-icons">keyboard_arrow_down</span>
+                                            </div>
+                                            <div class="multi-select-options" id="chartMetricOptions" style="display: none;">
+                                                <div class="multi-select-option" data-value="spend">
+                                                    <input type="checkbox" id="metric-spend">
+                                                    <label for="metric-spend">Spend</label>
+                                                </div>
+                                                <div class="multi-select-option" data-value="cpc">
+                                                    <input type="checkbox" id="metric-cpc">
+                                                    <label for="metric-cpc">CPC</label>
+                                                </div>
+                                                <div class="multi-select-option" data-value="sales">
+                                                    <input type="checkbox" id="metric-sales">
+                                                    <label for="metric-sales">Sales</label>
+                                                </div>
+                                                <div class="multi-select-option" data-value="orders">
+                                                    <input type="checkbox" id="metric-orders">
+                                                    <label for="metric-orders">No of Orders</label>
+                                                </div>
+                                                <div class="multi-select-option" data-value="sessions">
+                                                    <input type="checkbox" id="metric-sessions">
+                                                    <label for="metric-sessions">Sessions</label>
+                                                </div>
+                                                <div class="multi-select-option" data-value="pageviews">
+                                                    <input type="checkbox" id="metric-pageviews">
+                                                    <label for="metric-pageviews">Page Views</label>
+                                                </div>
+                                                <div class="multi-select-option" data-value="conversionRate">
+                                                    <input type="checkbox" id="metric-conversionRate">
+                                                    <label for="metric-conversionRate">Conversion Rate</label>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                     <div class="chart-control-group">
                                         <div class="period-dropdown-container">
@@ -192,11 +217,18 @@
                             </div>
                         </div>
 
-                        <!-- Search and Filters -->
+                        <!-- Name Filter -->
                         <div class="table-controls">
-                            <div class="search-container">
-                                <span class="material-icons">search</span>
-                                <input type="text" id="searchInput" placeholder="Search trends...">
+                            <div class="filter-container">
+                                <div class="name-filter">
+                                    <span class="material-icons">filter_list</span>
+                                    <div class="searchable-dropdown">
+                                        <input type="text" id="nameFilterInput" class="filter-input" placeholder="Search names..." autocomplete="off">
+                                        <div class="filter-dropdown" id="nameFilterDropdown" style="display: none;">
+                                            <div class="filter-option" data-value="">All Names</div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -222,51 +254,15 @@
                         <div class="table-wrapper">
                             <table class="data-table" id="dataTable">
                                 <thead>
-                                    <tr>
-                                        <th class="sortable" data-sort="date">
-                                            <span>Date</span>
+                                    <tr id="tableHeaderRow">
+                                        <th class="sortable" data-sort="name">
+                                            <span>Product Name</span>
                                             <span class="material-icons">keyboard_arrow_down</span>
                                         </th>
-                                        <th class="sortable" data-sort="category">
-                                            <span>Category</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        <th>
+                                            <span>Metric</span>
                                         </th>
-                                        <th class="sortable" data-sort="spend">
-                                            <span>Spend</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="cpc">
-                                            <span>CPC</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="sales">
-                                            <span>Sales</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="acos">
-                                            <span>ACOS</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="tcos">
-                                            <span>TCOS</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="ctr">
-                                            <span>CTR</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="sessions">
-                                            <span>Sessions</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="pageviews">
-                                            <span>Page Views</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
-                                        <th class="sortable" data-sort="conversionRate">
-                                            <span>Conversion Rate</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
+                                        <!-- Date columns will be injected here dynamically -->
                                     </tr>
                                 </thead>
                                 <tbody id="tableBody">

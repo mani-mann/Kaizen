@@ -3,19 +3,18 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "node backend/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "bootstrap": "^5.3.8",
+    "compression": "^1.8.1",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
-    "jquery": "^3.7.1",
-    "json2csv": "^6.0.0-alpha.2",
-    "pg": "^8.16.3",
-    "xlsx": "^0.18.5"
+    "pg": "^8.16.3"
   },
   "description": ""
 }

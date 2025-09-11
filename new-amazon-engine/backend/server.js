@@ -769,6 +769,145 @@ app.get('/api/debug-dates', async (req, res) => {
   }
 });
 
+// ✅ Trend Reports endpoint - Get data for trend analysis
+app.get('/api/trend-reports', async (req, res) => {
+  try {
+    if (!dbConnected) {
+      return res.status(500).json({ error: 'Database not connected' });
+    }
+    
+    const { start, end, category, timePeriod } = req.query;
+    console.log('📊 Trend Reports endpoint called with:', { start, end, category, timePeriod });
+    
+    let data = [];
+    
+    if (category === 'products') {
+      // Get product data from amazon_sales_traffic with ads spend data
+      const query = `
+        SELECT 
+          DATE(st.date) as date,
+          COALESCE(NULLIF(st.parent_asin, ''), 'Unknown Product') as name,
+          st.sku,
+          CAST(st.sessions AS INTEGER) as sessions,
+          CAST(st.page_views AS INTEGER) as page_views,
+          CAST(st.units_ordered AS INTEGER) as units_ordered,
+          CAST(st.ordered_product_sales AS DECIMAL) as ordered_product_sales,
+          COALESCE(SUM(CAST(ar.cost AS DECIMAL)), 0) as total_spend,
+          COALESCE(SUM(CAST(ar.clicks AS INTEGER)), 0) as total_clicks,
+          COALESCE(SUM(CAST(ar.impressions AS INTEGER)), 0) as total_impressions
+        FROM amazon_sales_traffic st
+        LEFT JOIN amazon_ads_reports ar ON DATE(ar.report_date) = DATE(st.date)
+        WHERE st.date IS NOT NULL AND st.parent_asin IS NOT NULL
+        ${start && end ? 'AND DATE(st.date) >= $1::date AND DATE(st.date) <= $2::date' : ''}
+        GROUP BY DATE(st.date), st.parent_asin, st.sku, st.sessions, st.page_views, st.units_ordered, st.ordered_product_sales
+        ORDER BY DATE(st.date) DESC, st.ordered_product_sales DESC
+      `;
+      
+      const params = start && end ? [start, end] : [];
+      const result = await client.query(query, params);
+      
+      data = result.rows.map(row => {
+        const spend = parseFloat(row.total_spend || 0);
+        const clicks = parseInt(row.total_clicks || 0);
+        const impressions = parseInt(row.total_impressions || 0);
+        const sales = parseFloat(row.ordered_product_sales || 0);
+        
+        return {
+          date: row.date,
+          category: 'products',
+          name: row.name || 'Unknown Product',
+          sku: row.sku || null,
+          spend: spend,
+          cpc: clicks > 0 ? spend / clicks : 0,
+          sales: sales,
+          units_ordered: parseInt(row.units_ordered || 0),
+          acos: sales > 0 ? (spend / sales) * 100 : 0,
+          tcos: sales > 0 ? (spend / sales) * 100 : 0,
+          ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+          sessions: parseInt(row.sessions || 0),
+          pageviews: parseInt(row.page_views || 0),
+          conversionRate: row.sessions > 0 ? (row.units_ordered / row.sessions) * 100 : 0
+        };
+      });
+      
+    } else if (category === 'campaigns') {
+      // Get campaign data from amazon_ads_reports
+      const query = `
+        SELECT 
+          DATE(report_date) as date,
+          COALESCE(NULLIF(campaign_name, ''), 'Unknown Campaign') as name,
+          CAST(cost AS DECIMAL) as spend,
+          CAST(clicks AS INTEGER) as clicks,
+          CAST(impressions AS INTEGER) as impressions,
+          CAST(sales_1d AS DECIMAL) as sales
+        FROM amazon_ads_reports
+        WHERE report_date IS NOT NULL AND campaign_name IS NOT NULL
+        ${start && end ? 'AND DATE(report_date) >= $1::date AND DATE(report_date) <= $2::date' : ''}
+        ORDER BY DATE(report_date) DESC, cost DESC
+      `;
+      
+      const params = start && end ? [start, end] : [];
+      const result = await client.query(query, params);
+      
+      data = result.rows.map(row => ({
+        date: row.date,
+        category: 'campaigns',
+        name: row.name || 'Unknown Campaign',
+        spend: parseFloat(row.spend || 0),
+        cpc: row.clicks > 0 ? parseFloat(row.spend || 0) / row.clicks : 0,
+        sales: parseFloat(row.sales || 0),
+        acos: row.sales > 0 ? (parseFloat(row.spend || 0) / row.sales) * 100 : 0,
+        tcos: 0, // Will be calculated with total sales
+        ctr: row.impressions > 0 ? (row.clicks / row.impressions) * 100 : 0,
+        sessions: 0,
+        pageviews: 0,
+        conversionRate: 0
+      }));
+      
+    } else if (category === 'search-terms') {
+      // Get search term data from amazon_ads_reports
+      const query = `
+        SELECT 
+          DATE(report_date) as date,
+          COALESCE(NULLIF(query, ''), 'Unknown Search Term') as name,
+          CAST(cost AS DECIMAL) as spend,
+          CAST(clicks AS INTEGER) as clicks,
+          CAST(impressions AS INTEGER) as impressions,
+          CAST(sales_1d AS DECIMAL) as sales
+        FROM amazon_ads_reports
+        WHERE report_date IS NOT NULL AND query IS NOT NULL AND query != ''
+        ${start && end ? 'AND DATE(report_date) >= $1::date AND DATE(report_date) <= $2::date' : ''}
+        ORDER BY DATE(report_date) DESC, cost DESC
+      `;
+      
+      const params = start && end ? [start, end] : [];
+      const result = await client.query(query, params);
+      
+      data = result.rows.map(row => ({
+        date: row.date,
+        category: 'search-terms',
+        name: row.name || 'Unknown Search Term',
+        spend: parseFloat(row.spend || 0),
+        cpc: row.clicks > 0 ? parseFloat(row.spend || 0) / row.clicks : 0,
+        sales: parseFloat(row.sales || 0),
+        acos: row.sales > 0 ? (parseFloat(row.spend || 0) / row.sales) * 100 : 0,
+        tcos: 0,
+        ctr: row.impressions > 0 ? (row.clicks / row.impressions) * 100 : 0,
+        sessions: 0,
+        pageviews: 0,
+        conversionRate: 0
+      }));
+    }
+    
+    console.log(`📊 Returning ${data.length} records for ${category}`);
+    res.json({ data, category, timePeriod });
+    
+  } catch (error) {
+    console.error('❌ Trend Reports endpoint error:', error);
+    res.status(500).json({ error: 'Failed to fetch trend reports data' });
+  }
+});
+
 // --------------------
 // Start Server
 // --------------------
