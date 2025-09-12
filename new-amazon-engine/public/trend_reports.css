@@ -1828,10 +1828,57 @@ body {
         padding: var(--spacing-sm);
     }
     
-    /* Hide some columns on very small screens */
-    .data-table th:nth-child(n+6),
-    .data-table td:nth-child(n+6) {
-        display: none;
+    /* Ensure table is horizontally scrollable on mobile instead of hiding columns */
+    .table-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        position: relative;
+    }
+    
+    /* Add scroll indicator for mobile users */
+    .table-wrapper::after {
+        content: "← Scroll to see more columns →";
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        pointer-events: none;
+        opacity: 0.8;
+        z-index: 5;
+    }
+    
+    /* Keep all columns visible but make them more compact on mobile */
+    .data-table {
+        min-width: 600px; /* Ensure minimum width for readability */
+    }
+    
+    .data-table th,
+    .data-table td {
+        min-width: 80px; /* Minimum column width */
+        white-space: nowrap;
+    }
+    
+    /* Make the first two columns (Product Name and Metric) sticky on mobile */
+    .data-table th:first-child,
+    .data-table td:first-child {
+        position: sticky;
+        left: 0;
+        background: var(--bg-secondary);
+        z-index: 10;
+        border-right: 2px solid var(--border-primary);
+    }
+    
+    .data-table th:nth-child(2),
+    .data-table td:nth-child(2) {
+        position: sticky;
+        left: 120px; /* Adjust based on first column width */
+        background: var(--bg-secondary);
+        z-index: 10;
+        border-right: 2px solid var(--border-primary);
     }
     
     /* Mobile Period Dropdown */
@@ -1849,6 +1896,13 @@ body {
     .period-dropdown button {
         padding: var(--spacing-md);
         font-size: var(--font-size-sm);
+    }
+}
+
+/* Hide scroll indicator on larger screens */
+@media (min-width: 769px) {
+    .table-wrapper::after {
+        display: none;
     }
 }
 

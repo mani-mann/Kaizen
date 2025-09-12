@@ -37,6 +37,26 @@ const client = new Client({
 // Track connection status explicitly (client.connected is not reliable)
 let dbConnected = false;
 
+// Simple in-memory cache for KPI calculations
+const kpiCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Simple cache helper function
+function getCachedData(key) {
+  const cached = kpiCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedData(key, data) {
+  kpiCache.set(key, {
+    data: data,
+    timestamp: Date.now()
+  });
+}
+
 client.connect()
   .then(() => {
     dbConnected = true;
@@ -78,14 +98,19 @@ async function fetchKeywordData(startDate = null, endDate = null) {
     let params = [];
     
     if (startDate && endDate) {
-      // Compare by calendar date only, without timezone shifts
-      query += " WHERE DATE(report_date) >= $1::date AND DATE(report_date) <= $2::date";
+      // Optimized: Use direct date comparison instead of DATE() function for better index usage
+      query += " WHERE report_date >= $1::date AND report_date <= $2::date";
       params = [startDate, endDate];
+      // When date range is specified, return ALL data in that range (no LIMIT)
+      query += ' ORDER BY report_date DESC';
+    } else {
+      // When no date range specified, limit to recent data for performance
+      // This is for the initial dashboard load to show recent activity
+      query += ' ORDER BY report_date DESC LIMIT 5000';
     }
     
-    query += ' ORDER BY report_date DESC';
-    
     const res = await client.query(query, params);
+    console.log(`📊 Fetched ${res.rows.length} keyword records${startDate && endDate ? ' for date range' : ' (recent data)'}`);
     return res.rows;
   } catch (err) {
     console.error("❌ Error fetching keywords:", err);
@@ -124,7 +149,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       `;
       
       const res = await client.query(query);
-      console.log(`📊 Aggregated ${res.rows.length} unique dates from business data`);
+      console.log(`📊 Aggregated ${res.rows.length} unique dates from business data (ALL dates)`);
       
       // Debug: Show first few rows of business data
       if (res.rows.length > 0) {
@@ -155,13 +180,13 @@ async function fetchBusinessData(startDate = null, endDate = null) {
         SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales,
         MIN(date) as date  -- Take the earliest date for reference
       FROM amazon_sales_traffic
-      WHERE DATE(date) >= $1::date AND DATE(date) <= $2::date
+      WHERE date >= $1::date AND date <= $2::date
       GROUP BY parent_asin
       ORDER BY SUM(CAST(ordered_product_sales AS DECIMAL)) DESC
     `;
     
     const res = await client.query(query, [startDate, endDate]);
-    console.log(`📊 Aggregated ${res.rows.length} unique Parent ASINs from business data for date range`);
+    console.log(`📊 Aggregated ${res.rows.length} unique Parent ASINs from business data for date range (ALL products)`);
     
     return res.rows;
   } catch (err) {
@@ -495,6 +520,16 @@ app.get('/api/analytics', async (req, res) => {
       endDate = end;     // e.g., "2025-07-02"
     }
     
+    // Create cache key for this request
+    const cacheKey = `analytics_${startDate || 'all'}_${endDate || 'all'}`;
+    
+    // Check cache first
+    const cachedResult = getCachedData(cacheKey);
+    if (cachedResult) {
+      console.log('📊 Returning cached analytics data');
+      return res.json(cachedResult);
+    }
+    
     // Fetch data - get business data based on date range
     const [keywordData, businessDataForChart, businessDataForKPIs] = await Promise.all([
       fetchKeywordData(startDate, endDate),
@@ -516,32 +551,28 @@ app.get('/api/analytics', async (req, res) => {
     // Get data range for date picker via lightweight query
     const dataRange = await getGlobalDateRange();
     
-    // If no data available, return empty response
-    if (!rows || rows.length === 0) {
-      console.log("📊 No data available from database");
-      res.json({
-        rows: [],
-        kpis: {
-          adSpend: 0,
-          adSales: 0,
-          totalSales: 0,
-          acos: 0,
-          tacos: 0,
-          roas: 0,
-          adClicks: 0,
-          avgCpc: 0
-        },
-        dataRange: null,
-        totalRows: 0
-      });
-    } else {
-      res.json({
-        rows,
-        kpis,
-        dataRange,
-        totalRows: rows.length
-      });
-    }
+    // Prepare response data
+    const responseData = {
+      rows: rows || [],
+      kpis: rows && rows.length > 0 ? kpis : {
+        adSpend: 0,
+        adSales: 0,
+        totalSales: 0,
+        acos: 0,
+        tacos: 0,
+        roas: 0,
+        adClicks: 0,
+        avgCpc: 0
+      },
+      dataRange,
+      totalRows: rows ? rows.length : 0
+    };
+    
+    // Cache the result
+    setCachedData(cacheKey, responseData);
+    
+    // Return response
+    res.json(responseData);
     
   } catch (err) {
     console.error('Analytics endpoint error:', err);
@@ -996,3 +1027,4 @@ app.get('/api/trend-reports', async (req, res) => {
 // --------------------
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+
