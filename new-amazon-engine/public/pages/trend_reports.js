@@ -1315,7 +1315,26 @@ class TrendReports {
             return group.count > 0 ? (group.values.reduce((sum, val) => sum + (Number(val)||0), 0) / group.count) : 0;
         });
         
-        return { labels, values };
+        // Remove only the latest consecutive zero values (data not updated yet)
+        let filteredLabels = labels;
+        let filteredValues = values;
+        
+        // Find the last non-zero value index
+        let lastNonZeroIndex = -1;
+        for (let i = values.length - 1; i >= 0; i--) {
+            if (values[i] > 0) {
+                lastNonZeroIndex = i;
+                break;
+            }
+        }
+        
+        // If we found a non-zero value, trim everything after it
+        if (lastNonZeroIndex >= 0) {
+            filteredLabels = labels.slice(0, lastNonZeroIndex + 1);
+            filteredValues = values.slice(0, lastNonZeroIndex + 1);
+        }
+        
+        return { labels: filteredLabels, values: filteredValues };
     }
 
     setupMultiSelectDropdown() {

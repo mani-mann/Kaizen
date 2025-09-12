@@ -1923,33 +1923,41 @@ class AmazonDashboard {
                 buckets.forEach(b => {
                     // If keyword data produced zero totalSales, backfill from business table
                     addBusinessIfMissing(b, b.start, b.end);
-                    labels.push(b.label);
-                    adSpend.push(b.adSpend);
-                    adSales.push(b.adSales);
-                    totalSales.push(b.totalSales);
-                    const acosVal = b.adSales > 0 ? (b.adSpend / b.adSales) * 100 : 0;
-                    const tacosVal = b.totalSales > 0 ? (b.adSpend / b.totalSales) * 100 : 0;
-                    acos.push(Math.min(100, acosVal));
-                    tacos.push(Math.min(50, tacosVal));
+                    
+                    // Only include quarters that have actual data (not all zeros)
+                    if (b.adSpend > 0 || b.adSales > 0 || b.totalSales > 0) {
+                        labels.push(b.label);
+                        adSpend.push(b.adSpend);
+                        adSales.push(b.adSales);
+                        totalSales.push(b.totalSales);
+                        const acosVal = b.adSales > 0 ? (b.adSpend / b.adSales) * 100 : 0;
+                        const tacosVal = b.totalSales > 0 ? (b.adSpend / b.totalSales) * 100 : 0;
+                        acos.push(Math.min(100, acosVal));
+                        tacos.push(Math.min(50, tacosVal));
+                    }
                 });
             } else {
                 // For monthly and daily periods, use cursor-based logic
                 const cursor = new Date(start);
                 while (cursor <= end) {
                     const periodKey = this.formatLabel(cursor, period);
-                    labels.push(periodKey);
                     
                     const periodData = dataByPeriod[periodKey] || { adSpend: 0, adSales: 0, totalSales: 0, clicks: 0 };
                     
-                    adSpend.push(periodData.adSpend);
-                    adSales.push(periodData.adSales);
-                    totalSales.push(periodData.totalSales);
-                    
-                    const acosVal = periodData.adSales > 0 ? (periodData.adSpend / periodData.adSales) * 100 : 0;
-                    const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
-                    
-                    acos.push(Math.min(100, acosVal));
-                    tacos.push(Math.min(50, tacosVal));
+                    // Only include periods that have actual data (not all zeros)
+                    if (periodData.adSpend > 0 || periodData.adSales > 0 || periodData.totalSales > 0) {
+                        labels.push(periodKey);
+                        
+                        adSpend.push(periodData.adSpend);
+                        adSales.push(periodData.adSales);
+                        totalSales.push(periodData.totalSales);
+                        
+                        const acosVal = periodData.adSales > 0 ? (periodData.adSpend / periodData.adSales) * 100 : 0;
+                        const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
+                        
+                        acos.push(Math.min(100, acosVal));
+                        tacos.push(Math.min(50, tacosVal));
+                    }
 
                     // Move cursor to next period
                     if (period === 'monthly') {
@@ -1978,6 +1986,25 @@ class AmazonDashboard {
         }
 
         const result = { labels, adSpend, adSales, totalSales, acos, tacos };
+        
+        // Simple post-processing: remove latest consecutive zero values from all arrays
+        let lastNonZeroIndex = -1;
+        for (let i = result.totalSales.length - 1; i >= 0; i--) {
+            if (result.totalSales[i] > 0 || result.adSales[i] > 0 || result.adSpend[i] > 0) {
+                lastNonZeroIndex = i;
+                break;
+            }
+        }
+        
+        if (lastNonZeroIndex >= 0) {
+            result.labels = result.labels.slice(0, lastNonZeroIndex + 1);
+            result.adSpend = result.adSpend.slice(0, lastNonZeroIndex + 1);
+            result.adSales = result.adSales.slice(0, lastNonZeroIndex + 1);
+            result.totalSales = result.totalSales.slice(0, lastNonZeroIndex + 1);
+            result.acos = result.acos.slice(0, lastNonZeroIndex + 1);
+            result.tacos = result.tacos.slice(0, lastNonZeroIndex + 1);
+        }
+        
         console.log('📊 Final chart data:', result);
         return result;
     }
