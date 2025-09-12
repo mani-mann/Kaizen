@@ -1467,9 +1467,14 @@ class AmazonDashboard {
                         backgroundColor: 'rgba(40, 167, 69, 0.1)',
                         tension: 0.4,
                         fill: false,
-                        pointRadius: 2,
-                        pointHoverRadius: 4,
-                        borderWidth: 2
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        borderWidth: 3,
+                        showLine: true,
+                        spanGaps: true,
+                        pointStyle: 'circle',
+                        capBezierPoints: true,
+                        cubicInterpolationMode: 'monotone'
                     },
                     {
                         label: 'Ad Sales',
@@ -1478,9 +1483,14 @@ class AmazonDashboard {
                         backgroundColor: 'rgba(255, 193, 7, 0.1)',
                         tension: 0.4,
                         fill: false,
-                        pointRadius: 2,
-                        pointHoverRadius: 4,
-                        borderWidth: 2
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        borderWidth: 3,
+                        showLine: true,
+                        spanGaps: true,
+                        pointStyle: 'circle',
+                        capBezierPoints: true,
+                        cubicInterpolationMode: 'monotone'
                     },
                     {
                         label: 'Ad Spend',
@@ -1489,9 +1499,14 @@ class AmazonDashboard {
                         backgroundColor: 'rgba(0, 123, 255, 0.1)',
                         tension: 0.4,
                         fill: false,
-                        pointRadius: 2,
-                        pointHoverRadius: 4,
-                        borderWidth: 2
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        borderWidth: 3,
+                        showLine: true,
+                        spanGaps: true,
+                        pointStyle: 'circle',
+                        capBezierPoints: true,
+                        cubicInterpolationMode: 'monotone'
                     },
                     {
                         label: 'ACOS (%)',
@@ -1500,9 +1515,14 @@ class AmazonDashboard {
                         backgroundColor: 'rgba(220, 53, 69, 0.1)',
                         tension: 0.4,
                         fill: false,
-                        pointRadius: 2,
-                        pointHoverRadius: 4,
-                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        borderWidth: 3,
+                        showLine: true,
+                        spanGaps: true,
+                        pointStyle: 'circle',
+                        capBezierPoints: true,
+                        cubicInterpolationMode: 'monotone',
                         yAxisID: 'y1'
                     },
                     {
@@ -1512,9 +1532,14 @@ class AmazonDashboard {
                         backgroundColor: 'rgba(111, 66, 193, 0.1)',
                         tension: 0.4,
                         fill: false,
-                        pointRadius: 2,
-                        pointHoverRadius: 4,
-                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        borderWidth: 3,
+                        showLine: true,
+                        spanGaps: true,
+                        pointStyle: 'circle',
+                        capBezierPoints: true,
+                        cubicInterpolationMode: 'monotone',
                         yAxisID: 'y1'
                     }
                 ]
@@ -1522,9 +1547,27 @@ class AmazonDashboard {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animation: {
+                    duration: 750,
+                    easing: 'easeInOutQuart'
+                },
                 interaction: {
                     mode: 'index',
                     intersect: false
+                },
+                elements: {
+                    line: {
+                        tension: 0.4,
+                        borderWidth: 3,
+                        borderCapStyle: 'round',
+                        borderJoinStyle: 'round'
+                    },
+                    point: {
+                        radius: 3,
+                        hoverRadius: 6,
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }
                 },
                 plugins: {
                     legend: {

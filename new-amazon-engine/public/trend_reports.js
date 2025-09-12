@@ -14,10 +14,18 @@ class TrendReports {
         this.currentPage = 1;
         this.itemsPerPage = 20;
         this.sortColumn = 'date';
-        this.selectedMetrics = ['sales']; // Default to sales
+        this.selectedMetrics = []; // No default selection
+        // Keep metric selections separate per category/tab
+        this.selectedMetricsByCategory = {
+            products: [],
+            campaigns: [],
+            'search-terms': []
+        };
         this.sortDirection = 'desc';
         this.currentMonth = undefined;
         this.currentYear = undefined;
+        this.debounceTimer = null;
+        this.isLoadingData = false;
         
         this.init();
     }
@@ -26,14 +34,16 @@ class TrendReports {
         this.setupEventListeners();
         this.initializeDatePicker();
         this.initializePeriodDropdown();
-        this.loadInitialData();
         this.setupMobileMenu();
+        // Ensure correct metric visibility per category
+        this.updateMetricOptionsVisibility();
         
-        // Force load database data after a short delay to ensure everything is ready
+        // Ensure DOM is fully ready before loading data and setting up dropdowns
         setTimeout(() => {
-            console.log('🔄 Force loading database data...');
             this.loadInitialData();
-        }, 1000);
+        }, 100);
+        
+        // Initial data is already loaded above, no need for duplicate call
     }
 
     setupEventListeners() {
@@ -84,6 +94,18 @@ class TrendReports {
 
         // Multi-select metric dropdown
         this.setupMultiSelectDropdown();
+        
+        // Add a global fallback click handler for the metric dropdown
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#chartMetricToggle')) {
+                console.log('🎯 Fallback click handler triggered!');
+                const dropdown = document.getElementById('chartMetricDropdown');
+                if (dropdown) {
+                    dropdown.classList.toggle('open');
+                    console.log('Fallback dropdown toggled to:', dropdown.classList.contains('open') ? 'open' : 'closed');
+                }
+            }
+        });
 
         // Search functionality removed - using name filter only
 
@@ -213,11 +235,17 @@ class TrendReports {
     }
 
     initializePeriodDropdown() {
-        // Set initial active state
+        // Set initial active state and display text
         const periodButtons = document.querySelectorAll('.period-dropdown button');
+        const periodDisplay = document.getElementById('periodDisplay');
+        
         periodButtons.forEach(btn => {
             if (btn.dataset.period === this.currentTimePeriod) {
                 btn.classList.add('active');
+                // Set the display text to match the default selection
+                if (periodDisplay) {
+                    periodDisplay.textContent = btn.textContent;
+                }
             }
         });
     }
@@ -538,10 +566,37 @@ class TrendReports {
         });
         document.querySelector(`[data-category="${category}"]`).classList.add('active');
         
-                    // Reset pagination and filters when switching categories
+        // Reset pagination and filters when switching categories
         this.currentPage = 1;
         this.selectedName = '';
         document.getElementById('nameFilterInput').value = '';
+        
+        // Restore per-category metric selections or set defaults
+        let saved = this.selectedMetricsByCategory[this.currentCategory] || [];
+        
+        // If no saved selections, set default based on category
+        if (saved.length === 0) {
+            if (this.currentCategory === 'products') {
+                saved = ['sales'];
+            } else if (this.currentCategory === 'campaigns') {
+                saved = ['spend'];
+            } else if (this.currentCategory === 'search-terms') {
+                saved = ['sessions'];
+            }
+            // Save the default selection
+            this.selectedMetricsByCategory[this.currentCategory] = [...saved];
+        }
+        
+        // Update checkboxes to reflect saved selection
+            document.querySelectorAll('#chartMetricOptions input[type="checkbox"]').forEach(cb => {
+            const key = cb.id.replace('metric-', '');
+            cb.checked = saved.includes(key);
+            });
+        this.selectedMetrics = [...saved];
+        // Update visibility for metrics per category
+        this.updateMetricOptionsVisibility();
+        // Update the dropdown display text
+            this.updateSelectedMetrics();
         
         try {
             // Fetch new data for the selected category
@@ -561,8 +616,54 @@ class TrendReports {
     }
 
     async loadInitialData() {
+        // Prevent multiple simultaneous calls
+        if (this.isLoadingData) {
+            console.log('⚠️ Already loading data, skipping duplicate call');
+            return;
+        }
+        
+        this.isLoadingData = true;
         console.log('🚀 Loading initial data...');
         try {
+            // Set default metric selection for first load only
+            console.log('🔍 Checking default metric selection:', {
+                selectedMetricsLength: this.selectedMetrics.length,
+                currentCategory: this.currentCategory,
+                selectedMetrics: this.selectedMetrics
+            });
+            
+            if (this.selectedMetrics.length === 0) {
+                if (this.currentCategory === 'products') {
+                    this.selectedMetrics = ['sales'];
+                } else if (this.currentCategory === 'campaigns') {
+                    this.selectedMetrics = ['spend'];
+                } else if (this.currentCategory === 'search-terms') {
+                    this.selectedMetrics = ['sessions'];
+                }
+                
+                console.log('✅ Set default metrics:', this.selectedMetrics);
+                
+                // Save the selection for this category
+                this.selectedMetricsByCategory[this.currentCategory] = [...this.selectedMetrics];
+                
+                // Update checkboxes to reflect the default selection
+                setTimeout(() => {
+                    this.selectedMetrics.forEach(metric => {
+                        const checkbox = document.getElementById(`metric-${metric}`);
+                        if (checkbox) {
+                            checkbox.checked = true;
+                        }
+                    });
+                    // Update the UI display text directly
+                    const textElement = document.getElementById('chartMetricText');
+                    if (this.selectedMetrics.length === 1) {
+                        textElement.textContent = this.getMetricLabel(this.selectedMetrics[0]);
+                    } else {
+                        textElement.textContent = `${this.selectedMetrics.length} Metrics Selected`;
+                    }
+                }, 100); // Small delay to ensure DOM is ready
+            }
+            
             // Fetch real data from database
             await this.fetchDataFromDatabase();
             console.log('✅ Database data loaded successfully');
@@ -577,6 +678,8 @@ class TrendReports {
             this.currentPage = 1;
             this.updateChart();
             this.renderTable();
+        } finally {
+            this.isLoadingData = false;
         }
     }
 
@@ -592,6 +695,12 @@ class TrendReports {
             if (this.currentDateRange.start && this.currentDateRange.end) {
                 params.append('start', this.formatLocalDate(this.currentDateRange.start));
                 params.append('end', this.formatLocalDate(this.currentDateRange.end));
+            }
+
+            // For campaigns, always request both individual and aggregated data
+            if (this.currentCategory === 'campaigns') {
+                params.append('aggregate', 'date');
+                console.log('🔄 Requesting both individual campaigns and daily totals');
             }
 
             const apiBase = (location.port === '5000' || location.hostname !== '127.0.0.1') ? '' : 'http://localhost:5000';
@@ -675,21 +784,32 @@ class TrendReports {
                     });
                 } else {
                     // Fallback mapping for other categories (campaigns/search-terms)
-                    normalized = normalized.map(r => ({
+                    normalized = normalized.map(r => {
+                        const spend = Number(r.spend || r.cost || 0);
+                        const sales = Number(r.sales || 0);
+                        const clicks = Number(r.clicks || r.total_clicks || 0);
+                        const cpc = Number(r.cpc || (clicks > 0 ? spend / clicks : 0));
+                        const acos = Number(r.acos || (sales > 0 ? (spend / sales) * 100 : 0));
+                        const tcos = Number(r.tcos || 0);
+                        const roas = spend > 0 ? sales / spend : 0;
+                        return {
                         date: r.date,
                         category: result.category,
                         name: r.name,
                         displayName: r.name,
-                        spend: Number(r.spend || r.cost || 0),
-                        sales: Number(r.sales || 0),
+                            spend,
+                            sales,
+                            clicks,
+                            cpc,
+                            roas,
+                            ctr: Number(r.ctr || 0),
+                            acos,
+                            tcos,
                         sessions: Number(r.sessions || 0),
                         pageviews: Number(r.page_views || r.pageviews || 0),
-                        cpc: Number(r.cpc || 0),
-                        ctr: Number(r.ctr || 0),
-                        acos: Number(r.acos || 0),
-                        tcos: Number(r.tcos || 0),
                         conversionRate: Number(r.conversionRate || 0)
-                    }));
+                        };
+                    });
                 }
                 this.currentData = normalized;
                 this.filteredData = [...normalized];
@@ -831,26 +951,55 @@ class TrendReports {
 
     filterDataByDateRange(data) {
         if (!this.currentDateRange.start || !this.currentDateRange.end) return data;
+
+        // Compare using local date-only keys to avoid timezone shifts (e.g., 'YYYY-MM-DD')
+        const startKey = this.formatLocalDate(this.currentDateRange.start);
+        let endKey = this.formatLocalDate(this.currentDateRange.end);
+        const todayKey = this.formatLocalDate(new Date());
+        // If range ends today, we exclude today's (partial) data by capping to yesterday
+        if (endKey === todayKey) {
+            const endDate = new Date(this.currentDateRange.end.getFullYear(), this.currentDateRange.end.getMonth(), this.currentDateRange.end.getDate() - 1);
+            endKey = this.formatLocalDate(endDate);
+        }
         
         return data.filter(item => {
-            const itemDate = new Date(item.date);
-            return itemDate >= this.currentDateRange.start && itemDate <= this.currentDateRange.end;
+            const itemKey = this.normalizeDateKey(item.date);
+            return itemKey >= startKey && itemKey <= endKey;
         });
     }
 
 
     formatNumber(num) {
-        if (num >= 1000000) {
-            return (num / 1000000).toFixed(1) + 'M';
-        } else if (num >= 1000) {
-            return (num / 1000).toFixed(1) + 'K';
+        if (typeof num !== 'number' || isNaN(num)) return '0';
+        
+        // Round to 2 decimal places first to avoid floating point issues
+        const rounded = Math.round(num * 100) / 100;
+        
+        if (rounded >= 1000000) {
+            return (rounded / 1000000).toFixed(1) + 'M';
+        } else if (rounded >= 1000) {
+            return (rounded / 1000).toFixed(1) + 'K';
+        } else if (rounded % 1 === 0) {
+            // Show whole numbers without decimals
+            return rounded.toString();
+        } else {
+            // Show up to 2 decimal places, removing trailing zeros
+            return rounded.toFixed(2).replace(/\.?0+$/, '');
         }
-        return num.toString();
     }
 
-    formatPercentage(num, decimals = 1) {
+    formatPercentage(num, decimals = 2) {
         const n = Number(num) || 0;
-        return n.toFixed(decimals);
+        // Round to avoid floating point issues
+        const rounded = Math.round(n * 100) / 100;
+        
+        if (rounded % 1 === 0) {
+            // Show whole numbers without decimals
+            return rounded.toString();
+        } else {
+            // Show up to 2 decimal places, removing trailing zeros
+            return rounded.toFixed(decimals).replace(/\.?0+$/, '');
+        }
     }
 
     formatLocalDate(dateObj) {
@@ -880,13 +1029,44 @@ class TrendReports {
         const ctx = document.getElementById('trendChart');
         if (!ctx) return;
         
-        const categoryData = this.currentData.filter(item => item.category === this.currentCategory);
-        const dateFilteredData = this.filterDataByDateRange(categoryData);
+        // Always destroy existing chart first to prevent canvas reuse errors
+        if (this.trendChart) {
+            this.trendChart.destroy();
+            this.trendChart = null;
+        }
+        
+        // Use the same data that's being used for the table
+        let data = this.currentData.filter(item => item.category === this.currentCategory);
+        
+        // Apply name filter if selected (same as table)
+        if (this.selectedName) {
+            data = data.filter(item => (item.displayName || item.name) === this.selectedName);
+        }
+        
+        // Apply date range filter (same as table)
+        data = this.filterDataByDateRange(data);
+        
+        // Always try to show chart - let Chart.js handle empty data
+        console.log('Chart data:', data.length, 'records');
+        console.log('Selected metrics:', this.selectedMetrics);
+        console.log('Current category:', this.currentCategory);
         
         // Group data by time period for each selected metric
+        // If on Campaigns, constrain to only the six allowed metrics
+        const allowedCampaignMetrics = ['spend','cpc','clicks','roas','acos','tcos'];
+        if (this.currentCategory === 'campaigns') {
+            this.selectedMetrics = this.selectedMetrics.filter(m => allowedCampaignMetrics.includes(m));
+        }
+
         const datasets = this.selectedMetrics.map((metric, index) => {
-            const groupedData = this.groupDataByTimePeriod(dateFilteredData, metric);
-            const colors = ['#39c258', '#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#06b6d4', '#10b981'];
+            const groupedData = this.groupDataByTimePeriod(data, metric);
+            console.log(`Grouped data for ${metric}:`, {
+                labels: groupedData.labels?.length || 0,
+                values: groupedData.values?.length || 0,
+                sampleValues: groupedData.values?.slice(0, 5) || []
+            });
+            // Use brand colors with fallback to professional colors
+            const colors = ['#80d5be', '#1d5a55', '#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#06b6d4', '#10b981'];
             const color = colors[index % colors.length];
             
             return {
@@ -896,33 +1076,64 @@ class TrendReports {
                 backgroundColor: color + '20',
                 borderWidth: 3,
                 fill: false,
-                tension: 0.6,
+                tension: 0.4,
                 pointBackgroundColor: color,
                 pointBorderColor: '#ffffff',
                 pointBorderWidth: 2,
-                pointRadius: 4,
+                pointRadius: 3,
                 pointHoverRadius: 6,
                 showLine: true,
                 spanGaps: true,
-                stepped: false
+                stepped: false,
+                pointStyle: 'circle',
+                capBezierPoints: true,
+                cubicInterpolationMode: 'monotone'
             };
         });
         
-        // Use labels from first metric (they should all be the same)
-        const firstMetricData = this.groupDataByTimePeriod(dateFilteredData, this.selectedMetrics[0] || 'sales');
+        // Handle case when no metrics are selected
+        if (this.selectedMetrics.length === 0) {
+            // Show empty chart with message
+            this.trendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: []
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+            return;
+        }
         
-        // Debug: Log data points
+        // Use labels from first metric (they should all be the same)
+        const firstMetricData = this.groupDataByTimePeriod(data, this.selectedMetrics[0]);
+        
+        // Debug: Log data points and chart configuration
         console.log(`Chart data for ${this.selectedMetrics.join(', ')}:`, {
-            totalDataPoints: dateFilteredData.length,
+            totalDataPoints: data.length,
             datasets: datasets.length,
-            labels: firstMetricData.labels
+            labels: firstMetricData.labels,
+            firstDatasetData: datasets[0]?.data?.length || 0,
+            firstDatasetShowLine: datasets[0]?.showLine,
+            spanGaps: datasets[0]?.spanGaps
         });
         
         // Ensure we have at least 2 data points for a line
-        if (firstMetricData.labels.length < 2) {
+        if (firstMetricData.labels.length < 2 && this.selectedMetrics.length > 0) {
             console.warn('Not enough data points for line chart, using all data');
             const allData = this.currentData.filter(item => item.category === this.currentCategory);
-            const allGroupedData = this.groupDataByTimePeriod(allData, this.selectedMetrics[0] || 'sales');
+            const allGroupedData = this.groupDataByTimePeriod(allData, this.selectedMetrics[0]);
             firstMetricData.labels = allGroupedData.labels;
             // Update datasets with new data
             datasets.forEach((dataset, index) => {
@@ -945,13 +1156,58 @@ class TrendReports {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animation: {
+                    duration: 750,
+                    easing: 'easeInOutQuart'
+                },
                 interaction: {
                     intersect: false,
                     mode: 'index'
                 },
+                elements: {
+                    line: {
+                        tension: 0.4,
+                        borderWidth: 3,
+                        borderCapStyle: 'round',
+                        borderJoinStyle: 'round'
+                    },
+                    point: {
+                        radius: 3,
+                        hoverRadius: 6,
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }
+                },
                 plugins: {
                     legend: {
                         display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff',
+                        borderColor: '#80d5be',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        displayColors: true,
+                        callbacks: {
+                            title: function(context) {
+                                return context[0].label;
+                            },
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                const metric = context.dataset.label;
+                                if (metric.includes('Sales') || metric.includes('Spend') || metric.includes('CPC') || metric.includes('CPR')) {
+                                    return `${metric}: ₹${value.toFixed(2)}`;
+                                } else if (metric.includes('ACOS') || metric.includes('TCOS')) {
+                                    return `${metric}: ${value.toFixed(2)}%`;
+                                } else if (metric.includes('ROAS') || metric.includes('CTR') || metric.includes('Conversion Rate')) {
+                                    return `${metric}: ${value.toFixed(2)}`;
+                                } else {
+                                    return `${metric}: ${Math.round(value).toLocaleString()}`;
+                                }
+                            }
+                        }
                     }
                 },
                 scales: {
@@ -1014,7 +1270,23 @@ class TrendReports {
             groups[key].count++;
         });
         
-        const sortedKeys = Object.keys(groups).sort();
+        // Build sorted keys; for daily with date range, include all dates in range
+        let sortedKeys = Object.keys(groups).sort();
+        if (this.currentTimePeriod === 'daily' && this.currentDateRange.start && this.currentDateRange.end) {
+            const expected = [];
+            const c = new Date(this.currentDateRange.start.getFullYear(), this.currentDateRange.start.getMonth(), this.currentDateRange.start.getDate());
+            let e = new Date(this.currentDateRange.end.getFullYear(), this.currentDateRange.end.getMonth(), this.currentDateRange.end.getDate());
+            // Exclude today's partial day from labels
+            const todayKey = this.formatLocalDate(new Date());
+            if (this.formatLocalDate(e) === todayKey) {
+                e.setDate(e.getDate() - 1);
+            }
+            while (c <= e) {
+                expected.push(`${c.getFullYear()}-${String(c.getMonth()+1).padStart(2,'0')}-${String(c.getDate()).padStart(2,'0')}`);
+                c.setDate(c.getDate()+1);
+            }
+            sortedKeys = expected;
+        }
         const labels = sortedKeys.map(key => {
             if (this.currentTimePeriod === 'weekly') {
                 const date = new Date(key);
@@ -1031,12 +1303,16 @@ class TrendReports {
         });
         
         const values = sortedKeys.map(key => {
-            const group = groups[key];
-            if (metric === 'spend' || metric === 'sales' || metric === 'sessions' || metric === 'pageviews' || metric === 'orders') {
-                return group.values.reduce((sum, val) => sum + val, 0);
-            } else {
-                return group.values.reduce((sum, val) => sum + val, 0) / group.count;
+            const group = groups[key] || { values: [], count: 0 };
+            if (['spend','sales','sessions','pageviews','orders','clicks'].includes(metric)) {
+                return group.values.reduce((sum, val) => sum + (Number(val)||0), 0);
             }
+            if (metric === 'roas') {
+                // Estimate ROAS via available fields when we grouped by value only
+                // Fallback to averaged value
+                return group.count > 0 ? (group.values.reduce((s,v)=>s+(Number(v)||0),0)/group.count) : 0;
+            }
+            return group.count > 0 ? (group.values.reduce((sum, val) => sum + (Number(val)||0), 0) / group.count) : 0;
         });
         
         return { labels, values };
@@ -1047,16 +1323,35 @@ class TrendReports {
         const options = document.getElementById('chartMetricOptions');
         const dropdown = document.getElementById('chartMetricDropdown');
         
-        // Toggle dropdown
-        toggle.addEventListener('click', (e) => {
-            e.stopPropagation();
-            dropdown.classList.toggle('open');
-            options.style.display = dropdown.classList.contains('open') ? 'block' : 'none';
+        console.log('🔧 Setting up multi-select dropdown:', {
+            toggle: !!toggle,
+            options: !!options,
+            dropdown: !!dropdown
         });
+        
+        if (!toggle || !options || !dropdown) {
+            console.error('❌ Missing dropdown elements:', { toggle, options, dropdown });
+            return;
+        }
+        
+        // Simple, reliable click handler
+        toggle.onclick = (e) => {
+            console.log('🎯 Toggle clicked!');
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const isOpen = dropdown.classList.contains('open');
+            console.log('Current state:', isOpen ? 'open' : 'closed');
+            
+            // Toggle the dropdown using CSS classes
+            dropdown.classList.toggle('open');
+            console.log('✅ Dropdown toggled to:', dropdown.classList.contains('open') ? 'open' : 'closed');
+        };
         
         // Handle checkbox changes
         options.addEventListener('change', (e) => {
             if (e.target.type === 'checkbox') {
+                console.log('📋 Checkbox changed:', e.target.id);
                 this.updateSelectedMetrics();
             }
         });
@@ -1065,21 +1360,30 @@ class TrendReports {
         document.addEventListener('click', (e) => {
             if (!dropdown.contains(e.target)) {
                 dropdown.classList.remove('open');
-                options.style.display = 'none';
             }
         });
         
-        // Set default selection to Sales
-        const salesCheckbox = document.getElementById('metric-sales');
-        if (salesCheckbox) {
-            salesCheckbox.checked = true;
-        }
+        // Initialize checkboxes from saved selection for current category
+        const saved = this.selectedMetricsByCategory[this.currentCategory] || [];
+        document.querySelectorAll('#chartMetricOptions input[type="checkbox"]').forEach(cb => {
+            cb.checked = saved.includes(cb.id.replace('metric-', ''));
+        });
         this.updateSelectedMetrics();
     }
     
     updateSelectedMetrics() {
         const checkboxes = document.querySelectorAll('#chartMetricOptions input[type="checkbox"]:checked');
+        const previousMetrics = [...this.selectedMetrics];
         this.selectedMetrics = Array.from(checkboxes).map(cb => cb.id.replace('metric-', ''));
+        
+        console.log('🔄 updateSelectedMetrics called:', {
+            previousMetrics,
+            newMetrics: this.selectedMetrics,
+            checkedCheckboxes: Array.from(checkboxes).map(cb => cb.id)
+        });
+        
+        // Persist selection per current category
+        this.selectedMetricsByCategory[this.currentCategory] = [...this.selectedMetrics];
         
         // Update display text
         const textElement = document.getElementById('chartMetricText');
@@ -1098,8 +1402,12 @@ class TrendReports {
     
     getMetricLabel(metric) {
         const labels = {
-            'spend': 'Spend',
-            'cpc': 'CPC', 
+            'spend': 'Ad Spend',
+            'cpc': 'AVG. CPC',
+            'clicks': 'Ad Clicks',
+            'roas': 'ROAS',
+            'acos': 'ACOS',
+            'tcos': 'TCOS',
             'sales': 'Sales',
             'orders': 'No of Orders',
             'sessions': 'Sessions',
@@ -1107,6 +1415,76 @@ class TrendReports {
             'conversionRate': 'Conversion Rate'
         };
         return labels[metric] || metric;
+    }
+
+    updateMetricOptionsVisibility() {
+        const ids = [
+            'metric-sales','metric-spend','metric-orders','metric-sessions','metric-pageviews',
+            'metric-cpc','metric-clicks','metric-roas','metric-acos','metric-tcos',
+            'metric-searchVolume','metric-searchClicks','metric-conversionRate'
+        ];
+        const refs = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+        const containers = Object.fromEntries(Object.entries(refs).map(([k, el]) => [k, el ? el.closest('.multi-select-option') : null]));
+        const show = (id, visible) => { if (containers[id]) containers[id].style.display = visible ? 'flex' : 'none'; };
+        if (this.currentCategory === 'campaigns') {
+            // Show campaign-related metrics
+            // Only these six in dropdown
+            show('metric-sales', false);
+            show('metric-spend', true);
+            show('metric-cpc', true);
+            show('metric-clicks', true);
+            show('metric-roas', true);
+            show('metric-acos', true);
+            show('metric-tcos', true);
+            show('metric-orders', false);
+            show('metric-sessions', false);
+            show('metric-pageviews', false);
+            show('metric-searchVolume', false);
+            show('metric-searchClicks', false);
+            show('metric-conversionRate', false);
+
+            // Ensure at least one metric is selected; default to Ad Spend
+            const allowed = ['metric-spend','metric-cpc','metric-clicks','metric-roas','metric-acos','metric-tcos'];
+            const checkedAllowed = allowed.filter(id => {
+                const el = document.getElementById(id);
+                return el && el.checked;
+            });
+            if (checkedAllowed.length === 0) {
+                const spendCb = document.getElementById('metric-spend');
+                if (spendCb) spendCb.checked = true;
+                this.updateSelectedMetrics();
+            }
+        } else if (this.currentCategory === 'search-terms') {
+            // Search terms: hide sales/spend/orders and campaign specifics
+            show('metric-sales', false);
+            show('metric-spend', false);
+            show('metric-orders', false);
+            show('metric-sessions', true);
+            show('metric-pageviews', true);
+            show('metric-cpc', false);
+            show('metric-clicks', false);
+            show('metric-roas', false);
+            show('metric-acos', false);
+            show('metric-tcos', false);
+            show('metric-searchVolume', true);
+            show('metric-searchClicks', true);
+            show('metric-conversionRate', true);
+        } else {
+            // Products: limited standard metrics
+            show('metric-sales', true);
+            show('metric-spend', false);
+            show('metric-orders', true);
+            show('metric-sessions', true);
+            show('metric-pageviews', true);
+            show('metric-cpc', false);
+            show('metric-clicks', false);
+            show('metric-roas', false);
+            show('metric-acos', false);
+            show('metric-tcos', false);
+            show('metric-searchVolume', false);
+            show('metric-searchClicks', false);
+            show('metric-conversionRate', true);
+        }
     }
 
     setupNameFilter() {
@@ -1424,11 +1802,27 @@ class TrendReports {
             ${buckets.labels.map(lbl => `<th><span>${lbl}</span></th>`).join('')}
         `;
         
+        // Handle case when no metrics are selected
+        if (this.selectedMetrics.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="${buckets.labels.length + 1}" style="text-align: center; padding: 20px; color: #666;">
+                        Please select at least one metric to view data
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
         // Render rows with only selected metrics for each product
         tbody.innerHTML = pageData.map(product => {
             const allMetrics = [
-                { key: 'spend', label: 'Spend', data: product.spendByKey, format: 'currency' },
-                { key: 'cpc', label: 'CPC', data: product.cpcByKey, format: 'currency' },
+                { key: 'spend', label: 'Ad Spend', data: product.spendByKey, format: 'currency' },
+                { key: 'cpc', label: 'AVG. CPC', data: product.cpcByKey, format: 'currency' },
+                { key: 'clicks', label: 'Ad Clicks', data: product.clicksByKey, format: 'number' },
+                { key: 'roas', label: 'ROAS', data: product.roasByKey, format: 'number' },
+                { key: 'acos', label: 'ACOS', data: product.acosByKey, format: 'percentage' },
+                { key: 'tcos', label: 'TCOS', data: product.tcosByKey, format: 'percentage' },
                 { key: 'sales', label: 'Sales', data: product.salesByKey, format: 'currency' },
                 { key: 'orders', label: 'No of Orders', data: product.ordersByKey, format: 'number' },
                 { key: 'sessions', label: 'Sessions', data: product.sessionsByKey, format: 'number' },
@@ -1475,8 +1869,12 @@ class TrendReports {
                 
                 const productNameCell = index === 0 ? `<td rowspan="${metricRows.length}" style="vertical-align: top; font-weight: 600;">${product.name}</td>` : '';
                 
+                // Check if this is a total row (contains "DAILY TOTAL" or "📊")
+                const isTotalRow = product.name.includes('📊') || product.name.includes('DAILY TOTAL') || product.name.includes('Total');
+                const rowClass = isTotalRow ? 'total-row' : '';
+                
                 return `
-                    <tr>
+                    <tr class="${rowClass}">
                         ${productNameCell}
                         <td style="font-weight: 500; background: #f8f9fa;">${metric.label}</td>
                         ${cells}
@@ -1514,13 +1912,13 @@ class TrendReports {
         const pushMonthly = (d) => { const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; add(key, d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })); };
         
         if (this.currentTimePeriod === 'daily' && this.currentDateRange.start && this.currentDateRange.end) {
-            // Build buckets for every day in the selected range
-            const start = new Date(this.currentDateRange.start.getFullYear(), this.currentDateRange.start.getMonth(), this.currentDateRange.start.getDate());
-            const end = new Date(this.currentDateRange.end.getFullYear(), this.currentDateRange.end.getMonth(), this.currentDateRange.end.getDate());
-            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                add(key, d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-            }
+            // Build buckets only for days that have actual data
+            data.forEach(item => {
+                const itemDate = new Date(item.date);
+                if (itemDate >= this.currentDateRange.start && itemDate <= this.currentDateRange.end) {
+                    pushDaily(item.date);
+                }
+            });
         } else {
             data.forEach(item => {
                 if (this.currentTimePeriod === 'weekly') {
@@ -1534,7 +1932,7 @@ class TrendReports {
                 }
             });
         }
-        const keys = Array.from(keySet).sort();
+        const keys = Array.from(keySet).sort().reverse();
         const labels = keys.map(k => keyToLabel[k] || k);
         return { keys, labels };
     }
@@ -1560,6 +1958,7 @@ class TrendReports {
                     name: name,
                     spendByKey: {},
                     salesByKey: {},
+                    clicksByKey: {},
                     sessionsByKey: {},
                     pageviewsByKey: {},
                     ordersByKey: {},
@@ -1567,13 +1966,15 @@ class TrendReports {
                     acosByKey: {},
                     tcosByKey: {},
                     ctrByKey: {},
-                    conversionRateByKey: {}
+                    conversionRateByKey: {},
+                    roasByKey: {}
                 };
             }
             
             // Aggregate all metrics by date key
             groups[name].spendByKey[key] = (groups[name].spendByKey[key] || 0) + (item.spend || 0);
             groups[name].salesByKey[key] = (groups[name].salesByKey[key] || 0) + (item.sales || 0);
+            groups[name].clicksByKey[key] = (groups[name].clicksByKey[key] || 0) + (item.clicks || 0);
             groups[name].sessionsByKey[key] = (groups[name].sessionsByKey[key] || 0) + (item.sessions || 0);
             groups[name].pageviewsByKey[key] = (groups[name].pageviewsByKey[key] || 0) + (item.pageviews || 0);
             groups[name].ordersByKey[key] = (groups[name].ordersByKey[key] || 0) + (item.orders || 0);
@@ -1593,6 +1994,10 @@ class TrendReports {
             groups[name].tcosByKey[key] = (groups[name].tcosByKey[key] || 0) + (item.tcos || 0);
             groups[name].ctrByKey[key] = (groups[name].ctrByKey[key] || 0) + (item.ctr || 0);
             groups[name].conversionRateByKey[key] = (groups[name].conversionRateByKey[key] || 0) + (item.conversionRate || 0);
+            // Maintain ROAS per key from aggregated spend/sales
+            const aggSpend = groups[name].spendByKey[key] || 0;
+            const aggSales = groups[name].salesByKey[key] || 0;
+            groups[name].roasByKey[key] = aggSpend > 0 ? aggSales / aggSpend : 0;
         });
         
         return Object.values(groups);
@@ -1682,6 +2087,11 @@ class TrendReports {
     downloadExcel(data) {
         // Simple Excel export using CSV format with .xlsx extension
         this.downloadCSV(data);
+    }
+
+    showChartNoData() {
+        // Don't replace the canvas - just show empty chart
+        console.log('No data available for chart');
     }
 }
 

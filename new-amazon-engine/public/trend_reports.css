@@ -696,6 +696,7 @@ body {
 .multi-select-dropdown {
     position: relative;
     min-width: 150px;
+    z-index: 100;
 }
 
 .multi-select-toggle {
@@ -710,15 +711,29 @@ body {
     font-size: var(--font-size-sm);
     cursor: pointer;
     transition: all var(--transition-normal);
+    user-select: none;
+    position: relative;
+    z-index: 101;
 }
 
 .multi-select-toggle:hover {
     border-color: var(--border-focus);
+    background-color: var(--bg-tertiary);
+}
+
+.multi-select-toggle:active {
+    transform: scale(0.98);
 }
 
 .multi-select-toggle .material-icons {
     font-size: 18px;
     transition: transform var(--transition-fast);
+    pointer-events: none;
+}
+
+.multi-select-dropdown.open .multi-select-toggle {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .multi-select-dropdown.open .multi-select-toggle .material-icons {
@@ -733,12 +748,17 @@ body {
     margin-top: 4px;
     background: var(--white);
     border: 1px solid var(--border-primary);
-    box-shadow: 0 8px 20px rgba(0,0,0,.08);
+    box-shadow: 0 8px 20px rgba(0,0,0,.15);
     border-radius: 8px;
     padding: 6px;
-    z-index: 30;
+    z-index: 1000;
     max-height: 200px;
     overflow-y: auto;
+    display: none !important;
+}
+
+.multi-select-dropdown.open .multi-select-options {
+    display: block !important;
 }
 
 .multi-select-option {
@@ -758,6 +778,8 @@ body {
 .multi-select-option input[type="checkbox"] {
     margin: 0;
     cursor: pointer;
+    width: 16px;
+    height: 16px;
 }
 
 .multi-select-option label {
@@ -765,6 +787,31 @@ body {
     cursor: pointer;
     font-size: var(--font-size-sm);
     color: var(--text-primary);
+    flex: 1;
+    user-select: none;
+}
+
+/* Ensure dropdown is always visible when open */
+.multi-select-dropdown.open {
+    z-index: 1001;
+}
+
+/* Add visual feedback for clickable toggle */
+.multi-select-toggle::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    border-radius: var(--radius);
+    background: transparent;
+    transition: all var(--transition-fast);
+    z-index: -1;
+}
+
+.multi-select-toggle:hover::before {
+    background: rgba(59, 130, 246, 0.05);
 }
 
 .chart-wrapper {
@@ -1083,6 +1130,25 @@ body {
 
 .data-table tbody tr:last-child td {
     border-bottom: none;
+}
+
+/* Style for total/summary rows */
+.data-table tbody tr.total-row {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    border-top: 2px solid var(--primary);
+    border-bottom: 2px solid var(--primary);
+}
+
+.data-table tbody tr.total-row td {
+    background-color: #f8f9fa;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.data-table tbody tr.total-row td:first-child {
+    color: var(--primary);
+    font-weight: 700;
 }
 
 /* Date badges styling */
@@ -1931,4 +1997,55 @@ body {
 .empty-state p {
     margin-top: var(--spacing-sm);
     font-size: var(--font-size-sm);
+}
+
+/* Chart Loading and No Data States */
+.chart-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: var(--text-secondary);
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #80d5be;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: var(--spacing-md);
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.chart-no-data {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.no-data-icon {
+    font-size: 3rem;
+    margin-bottom: var(--spacing-md);
+    opacity: 0.5;
+}
+
+.chart-no-data h3 {
+    margin-bottom: var(--spacing-sm);
+    color: var(--text-primary);
+}
+
+.chart-no-data p {
+    max-width: 300px;
+    line-height: 1.5;
 }
