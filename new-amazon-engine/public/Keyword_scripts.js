@@ -491,7 +491,6 @@ class AmazonDashboard {
         // Chart period selector - ONLY affects chart visualization, not table or KPIs
         document.getElementById('chartPeriod')?.addEventListener('change', (e) => {
             const period = e.target.value;
-            console.log('🔄 Chart period changed to:', period);
             // Only update the chart, don't change table or other metrics
             this.updateChart(period);
         });
@@ -775,7 +774,6 @@ class AmazonDashboard {
                 this.updateChart();
                 this.updateResultsCount();
             } else {
-                console.log('⚠️ No data available - database connection required');
                 this.showNoDataMessage();
             }
             
@@ -801,18 +799,15 @@ class AmazonDashboard {
     }
 
     loadSampleData() {
-        console.log('🔄 No database connection available');
         // No sample data - only show real data from database
         this.currentData = [];
         this.filteredData = [];
         this.kpis = null;
         
-        console.log('⚠️ Dashboard requires database connection to display data');
     }
 
     async loadChartData() {
         try {
-            console.log('📊 Loading chart data with same date range as KPIs');
             
             // Use the same date range as KPIs to ensure consistency
             const startStr = this.dateRange.startStr || this.toInputDate(new Date(this.dateRange.start));
@@ -856,7 +851,6 @@ class AmazonDashboard {
                     return row;
                 });
                 
-                console.log(`📊 Loaded ${this.chartData.length} keyword rows for chart (ALL data)`);
                 // Also capture business series by date if provided (payload may include aggregated business data)
                 if (Array.isArray(payload.businessData)) {
                     this.businessSeries = payload.businessData.map(b => ({
@@ -868,7 +862,6 @@ class AmazonDashboard {
                     }));
                 }
             } else {
-                console.log('⚠️ No chart data available');
                 this.chartData = [];
                 this.businessSeries = [];
             }
@@ -983,13 +976,9 @@ class AmazonDashboard {
         // Reset to first page when new data is loaded
         this.currentPage = 1;
         
-        console.log('🎯 Final currentData length:', this.currentData.length);
-        console.log('🎯 Final filteredData length:', this.filteredData.length);
-        console.log('🎯 Current page reset to:', this.currentPage);
         
         // Force refresh the table after data is loaded
         setTimeout(() => {
-            console.log('🔄 Force refreshing table after data load');
             this.updateTable();
             this.updateResultsCount();
         }, 100);
@@ -1003,7 +992,6 @@ class AmazonDashboard {
         const setValue = (label, value) => {
             const el = this.findMetricValueElement(label);
             if (!el) {
-                console.log('❌ Could not find element for metric:', label);
                 return;
             }
             if (typeof value === 'number') {
@@ -1015,10 +1003,8 @@ class AmazonDashboard {
                 else if (lower.includes('roas')) el.textContent = value.toFixed(2);
                 else el.textContent = String(value);
                 
-                console.log('✅ Updated metric:', label, '=', value);
             } else {
                 el.textContent = String(value ?? '—');
-                console.log('✅ Updated metric:', label, '=', value);
             }
         };
         
@@ -1111,38 +1097,26 @@ class AmazonDashboard {
     }
     
     updateTable() {
-        console.log('�� updateTable called');
-        console.log('🔍 Data state:', {
-            currentDataLength: this.currentData?.length || 0,
-            filteredDataLength: this.filteredData?.length || 0,
-            currentTab: this.currentTab,
-            currentPage: this.currentPage
-        });
         
         // Ensure filteredData is populated
         if (!this.filteredData || this.filteredData.length === 0) {
-            console.log('⚠️ filteredData is empty, repopulating from currentData');
             this.filteredData = [...this.currentData];
-            console.log('✅ Repopulated filteredData:', this.filteredData.length, 'items');
         }
         
         // Don't proceed if no data is available
         if (!this.currentData || this.currentData.length === 0) {
-            console.log('❌ No data available, skipping table update');
             return;
         }
         
         const tableBody = document.getElementById('tableBody');
         const tableHead = document.querySelector('#dataTable thead tr');
         if (!tableBody || !tableHead) {
-            console.log('❌ Table elements not found');
             return;
         }
         
         // Choose data set by tab
         let rowsSource = [];
         if (this.currentTab === 'campaigns') {
-            console.log('📊 Rendering campaigns view');
             const byCampaign = new Map();
             for (const item of this.filteredData) {
                 const key = item.campaignName || 'Unknown Campaign';
@@ -1157,7 +1131,6 @@ class AmazonDashboard {
                 agg.purchases += Number(item.purchases || 0);
             }
             rowsSource = Array.from(byCampaign.values());
-            console.log('📊 Aggregated campaigns data:', rowsSource);
             
             // Apply sorting to campaigns data if a sort is configured
             if (this.sortConfig.key) {
@@ -1178,15 +1151,12 @@ class AmazonDashboard {
                     if (aVal > bVal) return this.sortConfig.direction === 'asc' ? 1 : -1;
                     return 0;
                 });
-                console.log('📊 Applied sorting to campaigns data:', this.sortConfig.key, this.sortConfig.direction);
             } else {
                 // Default sort by spend descending if no sort is configured
                 rowsSource.sort((a, b) => b.spend - a.spend);
-                console.log('📊 Applied default sort by spend descending to campaigns');
             }
             
             // For campaigns view, show all data without pagination
-            console.log('📊 Campaigns view: showing all', rowsSource.length, 'campaigns without pagination');
             
             // Update table headers for campaigns view
             tableHead.innerHTML = `
@@ -1232,7 +1202,6 @@ class AmazonDashboard {
                 </th>
             `;
         } else {
-            console.log('📊 Rendering keywords view with search term aggregation');
             
             // Aggregate data by search term to avoid repetition
             const bySearchTerm = new Map();
@@ -1272,7 +1241,6 @@ class AmazonDashboard {
                 purchases: item.purchases
             }));
             
-            console.log('📊 Aggregated by search term:', aggregatedData.length, 'unique search terms');
             
             // Apply sorting to aggregated data if a sort is configured
             if (this.sortConfig.key) {
@@ -1293,16 +1261,13 @@ class AmazonDashboard {
                     if (aVal > bVal) return this.sortConfig.direction === 'asc' ? 1 : -1;
                     return 0;
                 });
-                console.log('📊 Applied sorting to aggregated data:', this.sortConfig.key, this.sortConfig.direction);
             } else {
                 // Default sort by spend descending if no sort is configured
                 aggregatedData.sort((a, b) => b.spend - a.spend);
-                console.log('📊 Applied default sort by spend descending');
             }
             
             // Use pagination for aggregated keywords view
             rowsSource = this.getPaginatedDataFromSource(aggregatedData);
-            console.log('📊 Showing paginated aggregated data:', rowsSource.length, 'rows for page', this.currentPage);
             
             // Reset to original headers for keywords view
             tableHead.innerHTML = `
@@ -1358,7 +1323,6 @@ class AmazonDashboard {
         }
 
         if (rowsSource.length === 0) {
-            console.log('❌ No data to display in table');
             tableBody.innerHTML = `
                 <tr>
                     <td colspan="${this.currentTab === 'campaigns' ? '10' : '12'}" class="no-data">
@@ -1371,7 +1335,6 @@ class AmazonDashboard {
             return;
         }
         
-        console.log('📊 Rendering', rowsSource.length, 'rows for page', this.currentPage, 'of', this.getTotalPages());
         
         const rows = rowsSource.map(item => {
             // Calculate derived metrics
@@ -1420,7 +1383,6 @@ class AmazonDashboard {
         }).join('');
         
         tableBody.innerHTML = rows;
-        console.log('✅ Table updated with', rowsSource.length, 'rows');
         
         // Update pagination after table update
         this.updatePagination();
@@ -1430,28 +1392,22 @@ class AmazonDashboard {
     }
     
     updateChart(period = 'daily') {
-        console.log('🔄 updateChart called with period:', period);
-        console.log('🔄 updateChart called with currentData:', this.currentData);
         
         const ctx = document.getElementById('performanceChart');
         if (!ctx) {
-            console.log('❌ Chart canvas not found');
             return;
         }
         
         // Destroy existing chart
         if (this.chart) {
-            console.log('🗑️ Destroying existing chart');
             this.chart.destroy();
         }
         
         // Generate chart data using ALL database data, not selected date range
         const chartData = this.generateChartData(period);
-        console.log('📊 Generated chart data for', period, 'period using ALL database data:', chartData);
         
         // Only create chart if we have data
         if (!chartData.labels || chartData.labels.length === 0) {
-            console.log('⚠️ No chart data available for', period, 'period');
             return;
         }
         
@@ -1641,29 +1597,23 @@ class AmazonDashboard {
             }
         });
         
-        console.log('✅ Chart updated successfully for', period, 'period');
     }
     
     generateChartData(period) {
-        console.log('🔄 generateChartData called with period:', period);
-        console.log('🔄 generateChartData called with chartData:', this.chartData);
         
         // Use chart data with same date range as KPIs for consistency
         if (!this.chartData || this.chartData.length === 0) {
-            console.log('⚠️ No chart data available for chart generation');
             return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
         }
         
         // Find the actual date range from chart data (same as KPIs)
         const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
         if (allDates.length === 0) {
-            console.log('⚠️ No valid dates found in chart data');
             return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
         }
         
         const start = new Date(Math.min(...allDates));
         const end = new Date(Math.max(...allDates));
-        console.log('📅 Chart will show data from selected date range:', start.toDateString(), 'to', end.toDateString());
 
         const labels = [];
         const adSpend = [];
@@ -1698,15 +1648,7 @@ class AmazonDashboard {
                 
                 // Debug weekly key generation for first few items
                 if (Object.keys(dataByPeriod).length < 3) {
-                    console.log('🔍 Weekly key generation:', {
-                        originalDate: item.date,
-                        parsedDate: itemDate,
-                        dayOfWeek: dayOfWeek,
-                        daysToSubtract: daysToSubtract,
-                        weekStart: weekStart.toDateString(),
-                        weekEnd: weekEnd.toDateString(),
-                        periodKey: periodKey
-                    });
+                    // Debug logging removed for performance
                 }
             } else {
                 periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -1735,12 +1677,7 @@ class AmazonDashboard {
                 
                 // Debug for Sep 8
                 if (dateKey.includes('2025-09-08')) {
-                    console.log('🔍 Adding Sep 8 totalSales once:', {
-                        periodKey,
-                        dateKey,
-                        totalSalesAdded: Number(item.totalSales || 0),
-                        currentTotal: dataByPeriod[periodKey].totalSales
-                    });
+                    // Debug logging removed for performance
                 }
             }
         });
@@ -1750,68 +1687,50 @@ class AmazonDashboard {
             const data = dataByPeriod[period];
             if (data.adSpend === data.totalSales) {
                 console.error(`🚨 FOUND THE BUG: Period ${period} has adSpend=${data.adSpend} equals totalSales=${data.totalSales}`);
-                console.log('Raw items that contributed to this period:', 
-                    this.chartData.filter(item => {
-                        const itemDate = new Date(item.date);
-                        let periodKey;
-                        if (period === 'monthly') {
-                            periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-                        } else if (period === 'weekly') {
-                            const weekStart = new Date(itemDate);
-                            const dayOfWeek = weekStart.getDay();
-                            const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-                            weekStart.setDate(weekStart.getDate() - daysToSubtract);
-                            weekStart.setHours(0, 0, 0, 0);
-                            const weekEnd = new Date(weekStart);
-                            weekEnd.setDate(weekStart.getDate() + 6);
-                            periodKey = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-                        } else {
-                            periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                        }
-                        return periodKey === period;
-                    }).map(item => ({
-                        spend: item.spend,
-                        sales: item.sales, 
-                        totalSales: item.totalSales
-                    }))
-                );
+                this.chartData.filter(item => {
+                    const itemDate = new Date(item.date);
+                    let periodKey;
+                    if (period === 'monthly') {
+                        periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+                    } else if (period === 'weekly') {
+                        const weekStart = new Date(itemDate);
+                        const dayOfWeek = weekStart.getDay();
+                        const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                        weekStart.setDate(weekStart.getDate() - daysToSubtract);
+                        weekStart.setHours(0, 0, 0, 0);
+                        const weekEnd = new Date(weekStart);
+                        weekEnd.setDate(weekStart.getDate() + 6);
+                        periodKey = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+                    } else {
+                        periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    }
+                    return periodKey === period;
+                });
             }
         });
 
-        console.log('📊 Data grouped by period:', dataByPeriod);
         
         // Debug: Verify we have distinct data for all 5 metrics
         if (Object.keys(dataByPeriod).length > 0) {
             const firstPeriod = Object.keys(dataByPeriod)[0];
             const sampleData = dataByPeriod[firstPeriod];
-            console.log('🔍 Sample period data verification:', {
-                period: firstPeriod,
-                adSpend: sampleData.adSpend,
-                adSales: sampleData.adSales,
-                totalSales: sampleData.totalSales,
-                isAdSalesEqualToTotalSales: sampleData.adSales === sampleData.totalSales,
-                difference: sampleData.totalSales - sampleData.adSales
-            });
+            // Debug logging removed for performance
         }
         
         // Debug: Show detailed weekly data if applicable
         if (period === 'weekly') {
-            console.log('🔍 Weekly data breakdown:');
-            console.log('🔍 Total weekly periods found:', Object.keys(dataByPeriod).length);
             Object.keys(dataByPeriod).forEach(weekKey => {
-                console.log(`  ${weekKey}:`, dataByPeriod[weekKey]);
+                // Debug logging removed for performance
             });
             
             // Check if we have any data
             if (Object.keys(dataByPeriod).length === 0) {
-                console.log('⚠️ No weekly data found - this might indicate an issue with date parsing or data structure');
-                console.log('🔍 Sample data item:', this.currentData[0]);
+                // Debug logging removed for performance
             }
         }
 
         // Generate sample data if no real data available
         if (Object.keys(dataByPeriod).length === 0) {
-            console.log('⚠️ No real data available, generating sample data for entire date range');
             const cursor = new Date(start);
             while (cursor <= end) {
                 const periodKey = this.formatLabel(cursor, period);
@@ -1863,7 +1782,6 @@ class AmazonDashboard {
                 });
             } else if (period === 'quarterly') {
                 // Rolling last 3 months split into 3 simple monthly buckets
-                console.log('📊 Generating rolling 3-month buckets for quarterly view');
 
                 const today = new Date();
                 const start = new Date(today);
@@ -1970,19 +1888,7 @@ class AmazonDashboard {
                 }
             }
             
-            console.log('📊 Generated continuous data points:', {
-                totalLabels: labels.length,
-                totalAdSpend: adSpend.length,
-                totalAdSales: adSales.length,
-                totalSales: totalSales.length,
-                totalAcos: acos.length,
-                totalTacos: tacos.length,
-                sampleData: {
-                    labels: labels.slice(0, 5),
-                    adSpend: adSpend.slice(0, 5),
-                    totalSales: totalSales.slice(0, 5)
-                }
-            });
+            // Debug logging removed for performance
         }
 
         const result = { labels, adSpend, adSales, totalSales, acos, tacos };
@@ -2005,21 +1911,17 @@ class AmazonDashboard {
             result.tacos = result.tacos.slice(0, lastNonZeroIndex + 1);
         }
         
-        console.log('📊 Final chart data:', result);
         return result;
     }
     
     updateTableForPeriod(period) {
-        console.log('🔄 updateTableForPeriod called with period:', period);
         
         if (!this.currentData || this.currentData.length === 0) {
-            console.log('❌ No data available for period aggregation');
             return;
         }
         
         // Aggregate data by period
         const aggregatedData = this.aggregateDataByPeriod(period);
-        console.log('📊 Aggregated data by period:', aggregatedData);
         
         // Update the table with aggregated data
         this.displayAggregatedTable(aggregatedData, period);
@@ -2081,13 +1983,11 @@ class AmazonDashboard {
     }
     
     displayAggregatedTable(aggregatedData, period) {
-        console.log('🔄 Displaying aggregated table for period:', period);
         
         const tableBody = document.getElementById('tableBody');
         const tableHead = document.querySelector('#dataTable thead tr');
         
         if (!tableBody || !tableHead) {
-            console.log('❌ Table elements not found');
             return;
         }
         
@@ -2296,7 +2196,6 @@ class AmazonDashboard {
         `).join('');
         
         tableBody.innerHTML = rows;
-        console.log('✅ Aggregated table updated with', aggregatedData.length, 'rows for', period, 'period');
         
         // Update results count
         const resultsElement = document.getElementById('resultsCount');
@@ -2379,39 +2278,25 @@ class AmazonDashboard {
     
     // Pagination methods
     getPaginatedData() {
-        console.log('🔍 getPaginatedData called with:', {
-            currentPage: this.currentPage,
-            rowsPerPage: this.rowsPerPage,
-            filteredDataLength: this.filteredData.length,
-            currentDataLength: this.currentData.length
-        });
         
         const startIndex = (this.currentPage - 1) * this.rowsPerPage;
         const endIndex = startIndex + this.rowsPerPage;
         
-        console.log('🔍 Pagination indices:', { startIndex, endIndex });
         
         const result = this.filteredData.slice(startIndex, endIndex);
-        console.log('🔍 Paginated result:', result.length, 'rows');
         
         return result;
     }
     
     // New method to paginate aggregated data
     getPaginatedDataFromSource(dataSource) {
-        console.log('🔍 getPaginatedDataFromSource called with:', {
-            currentPage: this.currentPage,
-            rowsPerPage: this.rowsPerPage,
-            dataSourceLength: dataSource.length
-        });
+        // Debug logging removed for performance
         
         const startIndex = (this.currentPage - 1) * this.rowsPerPage;
         const endIndex = startIndex + this.rowsPerPage;
         
-        console.log('🔍 Pagination indices:', { startIndex, endIndex });
         
         const result = dataSource.slice(startIndex, endIndex);
-        console.log('🔍 Paginated result:', result.length, 'rows');
         
         return result;
     }
@@ -2455,7 +2340,6 @@ class AmazonDashboard {
     updatePagination() {
         // Only show pagination for keywords view, not for campaigns
         if (this.currentTab !== 'keywords') {
-            console.log('📊 Campaigns view: hiding pagination since all data is shown');
             this.hidePagination();
             return;
         }
@@ -2550,7 +2434,6 @@ class AmazonDashboard {
             clickedTab.classList.add('active');
         }
         
-        console.log('Switched to tab:', tabName);
         // Save selections of the tab we are leaving
         this._saved = this._saved || { keywords: { campaigns: [], keywords: [] }, campaigns: { campaigns: [] } };
         if (this.currentTab === 'keywords') {
@@ -2891,10 +2774,6 @@ class AmazonDashboard {
     updateResultsCount() {
         const resultsElement = document.getElementById('resultsCount');
         if (resultsElement) {
-            console.log('📊 Results count calculation:', {
-                filteredDataLength: this.filteredData.length,
-                currentDataLength: this.currentData.length
-            });
             
             if (this.currentTab === 'campaigns') {
                 // For campaigns, show all results since they're aggregated

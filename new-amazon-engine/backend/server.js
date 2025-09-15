@@ -8,6 +8,10 @@ app.use(cors());
 app.use(express.json());
 // Enable gzip compression for faster responses
 try { app.use(require('compression')()); } catch (_) {}
+
+// Serve static files from the public directory
+app.use(express.static('../public'));
+
 // Avoid noisy 404s for browser favicon requests
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
