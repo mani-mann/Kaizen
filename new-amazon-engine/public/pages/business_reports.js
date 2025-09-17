@@ -1,6 +1,6 @@
 // Enable debug logging for troubleshooting
 (function() {
-    const ENABLE_DEBUG = true; // Changed to true for debugging
+    const ENABLE_DEBUG = false; // Disable debug logging in production
     if (!ENABLE_DEBUG && typeof console !== 'undefined') {
         const noops = ['log', 'debug', 'info', 'group', 'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'table'];
         noops.forEach(fn => { try { console[fn] = () => {}; } catch(_) {} });
@@ -13,11 +13,11 @@ constructor() {
         businessData: [],
         filteredData: [],
         currentPage: 1,
-        itemsPerPage: 25,
+        itemsPerPage: 23,
         sortColumn: '',
         sortDirection: 'desc',
         searchTerm: '',
-        dateRange: { start: null, end: null }
+        dateRange: this.getDefaultDateRange()
     };
     
     this.calendarState = {
@@ -28,8 +28,141 @@ constructor() {
     
     this.availableDateRange = null;
     this.availableDates = [];
+    // Comment out ASIN filtering to see all data from database
+    // this.allowedAsins = new Set([
+    //     'B0DNKGMNTP', // Trumps: Periodic Table
+    //     'B0CL3DGFPX', // Trumps: MBharat
+    //     'B0BRVSWCQH', // Trumps: Cars
+    //     'B0DYF6QYXG', // PTableChartCombo
+    //     'B0F25YYQBP', // Mbharat: BooknCards
+    //     'B0BY38CLYD', // Combo:KYWCountSolar
+    //     'B09LTBF4FX', // 3ComboGeo
+    //     'B089M671M6', // Country Trump Cards
+    //     'B0BRVRTRB1', // Trumps: Solar
+    //     'B0FBXFVZZH', // Trumps-Leaders
+    //     'B0FJYJXDYQ', // Trumps-Cities
+    //     'B0B52DLYW8', // Trumps: Dinosaurs
+    //     'B09XFJM4FT', // Combo: Aqua Predators
+    //     'B0DMPMGJFW', // Trumps: MbharatIS
+    //     'B09JMZ419K', // Trumps: Predators
+    //     'B09J69WBVW', // 2 + 1 Smart Cards Combo
+    //     'B0BXPLCVBR', // 3in1CountriesDinoCars
+    //     'B089M6YCJJ', // Know Your World Smart Cards
+    //     'B09X3FVY1F', // Greatest Women Ever
+    //     'B0C8HV88H4', // Trumps: CarsDinos
+    //     'B09JMZ6H8P', // Trumps: Indian States
+    //     'B09GB671ZH', // B8-VSR8-GXOR
+    //     'B0B531LGWQ'  // Trumps:DogsnPuppies
+    // ]);
+
+    // Additional friendly name fallbacks for code-like SKUs/ASINs used in sample data
+    this.skuCodeToName = new Map([
+        ['SKU001','Trumps: Periodic Table'],
+        ['SKU002','Trumps: MBharat'],
+        ['SKU003','Trumps: Cars'],
+        ['SKU004','PTableChartCombo'],
+        ['SKU005','Mbharat: BooknCards']
+    ]);
+    this.parentCodeToName = new Map([
+        ['B001','Trumps: Periodic Table'],
+        ['B002','Trumps: MBharat'],
+        ['B003','Trumps: Cars'],
+        ['B004','PTableChartCombo'],
+        ['B005','Mbharat: BooknCards']
+    ]);
+    // Map short internal parent codes to canonical live ASINs so both combine
+    this.aliasParentToRealAsin = new Map([
+        ['B001','B0DNKGMNTP'],
+        ['B002','B0CL3DGFPX'],
+        ['B003','B0BRVSWCQH'],
+        ['B004','B0DYF6QYXG'],
+        ['B005','B0F25YYQBP']
+    ]);
+
+    // Map ASIN -> Friendly Product Name for display (replaces codes in the table)
+    this.asinToName = new Map([
+        ['B0DNKGMNTP','Trumps: Periodic Table'],
+        ['B0CL3DGFPX','Trumps: MBharat'],
+        ['B0BRVSWCQH','Trumps: Cars'],
+        ['B0DYF6QYXG','PTableChartCombo'],
+        ['B0F25YYQBP','Mbharat: BooknCards'],
+        ['B0BY38CLYD','Combo:KYWCountSolar'],
+        ['B09LTBF4FX','3ComboGeo'],
+        ['B089M671M6','Country Trump Cards'],
+        ['B0BRVRTRB1','Trumps: Solar'],
+        ['B0FBXFVZZH','Trumps-Leaders'],
+        ['B0FJYJXDYQ','Trumps-Cities'],
+        ['B0B52DLYW8','Trumps: Dinosaurs'],
+        ['B09XFJM4FT','Combo: Aqua Predators'],
+        ['B0DMPMGJFW','Trumps: MbharatIS'],
+        ['B09JMZ419K','Trumps: Predators'],
+        ['B09J69WBVW','2 + 1 Smart Cards Combo'],
+        ['B0BXPLCVBR','3in1CountriesDinoCars'],
+        ['B089M6YCJJ','Know Your World Smart Cards'],
+        ['B09X3FVY1F','Greatest Women Ever'],
+        ['B0C8HV88H4','Trumps: CarsDinos'],
+        ['B09JMZ6H8P','Trumps: Indian States'],
+        ['B09GB671ZH','B8-VSR8-GXOR'],
+        ['B0B531LGWQ','Trumps:DogsnPuppies']
+    ]);
     
     this.init();
+}
+
+// Lightweight health check to avoid calling APIs while DB is disconnected
+async waitForBackendReady(apiBase, maxAttempts = 6, delayMs = 500) {
+    try {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            // Try primary base first
+            try {
+                const res = await fetch(`${apiBase}/health`);
+                if (res.ok) {
+                    const j = await res.json();
+                    if ((j?.database || '').toLowerCase() === 'connected') return true;
+                }
+            } catch (_) {}
+
+            // Fallback: explicitly try localhost:5000 if not already
+            try {
+                const localBase = 'http://localhost:5000';
+                if (!apiBase || !apiBase.includes('localhost:5000')) {
+                    const res2 = await fetch(`${localBase}/health`);
+                    if (res2.ok) {
+                        const j2 = await res2.json();
+                        if ((j2?.database || '').toLowerCase() === 'connected') return true;
+                    }
+                }
+            } catch (_) {}
+
+            await new Promise(r => setTimeout(r, delayMs));
+        }
+    } catch (_) {}
+    return false;
+}
+
+getApiBase() {
+    try {
+        // If not already on the backend origin, target localhost:5000 for API
+        const host = (typeof location !== 'undefined') ? location.hostname : '';
+        const port = (typeof location !== 'undefined') ? location.port : '';
+        const onBackend = (host === 'localhost' || host === '127.0.0.1') && port === '5000';
+        return onBackend ? '' : 'http://localhost:5000';
+    } catch (_) {
+        return 'http://localhost:5000';
+    }
+}
+
+getDefaultDateRange() {
+    // Default to Jan 1 of the current year through TODAY (skip future)
+    const today = new Date();
+    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    const start = new Date(today.getFullYear(), 0, 1, 0, 0, 0, 0);
+    return {
+        start: start,
+        end: end,
+        startStr: this.formatDate(start),
+        endStr: this.formatDate(end)
+    };
 }
 
 async init() {
@@ -41,70 +174,79 @@ async init() {
 }
 
 async initializeComponents() {
-    console.log('🔍 Initializing business reports dashboard components...');
-    
+    console.log('🔍 Initializing business reports components...');
     this.setupEventListeners();
-    console.log('✅ Event listeners setup complete');
-    
     this.initializeDatePicker();
-    console.log('✅ Date picker initialized');
     
-    console.log('🔍 Fetching available date range...');
-    await this.fetchAvailableDateRange();
-    console.log('✅ Date range fetched');
+    // Use default range (last 30 days) for better performance
+    // User can select "Lifetime" from the preset dropdown if they want all data
+    this.state.dateRange = this.getDefaultDateRange();
+    this.updateDateDisplay();
     
-    console.log('🔍 Loading initial data...');
+    // Skip the problematic date range fetch for now - load data directly
+    console.log('🔍 Skipping date range fetch, loading data directly');
+    
+    // Add a small delay to ensure DOM is fully ready
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    console.log('🔍 Loading data...');
     await this.loadData();
-    console.log('✅ Initial data loaded');
-    
-    this.startAutoRefresh();
-    console.log('✅ Auto refresh started');
-    
-    console.log('🎉 Business reports dashboard initialization complete');
+    // Auto-refresh intentionally disabled for consistent snapshots
+    console.log('🔍 Business reports initialization completed');
 }
 
 // removed debug connectivity probe
 
 async fetchAvailableDateRange() {
     try {
-        console.log('🔍 Fetching available date range...');
-        const rangeResponse = await fetch('http://localhost:5000/api/business-date-range');
-        console.log('🔍 Date range response status:', rangeResponse.status);
+        console.log('🔍 Fetching available date range from API...');
         
-        if (!rangeResponse.ok) {
-            console.error('❌ Failed to fetch date range:', rangeResponse.status, rangeResponse.statusText);
-            throw new Error('Failed to fetch date range');
+        const apiBase = this.getApiBase();
+        // Prefer business-specific date bounds
+        let businessRange = null;
+        try {
+            const br = await fetch(`${apiBase}/api/business-date-range`);
+            if (br.ok) {
+                const j = await br.json();
+                if (j && j.hasData && (j.minDate || j.min_date) && (j.maxDate || j.max_date)) {
+                    businessRange = {
+                        min: new Date(j.minDate || j.min_date),
+                        max: new Date(j.maxDate || j.max_date)
+                    };
+                }
+            }
+        } catch (_) {}
+        
+        // Also get a global analytics window as a fallback signal
+        const analyticsResponse = await fetch(`${apiBase}/api/analytics`);
+        
+        if (!analyticsResponse.ok) {
+            throw new Error('Failed to fetch analytics date range');
         }
         
-        const dateRange = await rangeResponse.json();
-        console.log('🔍 Date range response:', dateRange);
+        const analyticsData = await analyticsResponse.json();
+        console.log('🔍 Analytics date range response:', analyticsData.dataRange);
         
-        console.log('🔍 Fetching available dates...');
-        const datesResponse = await fetch('http://localhost:5000/api/business-available-dates');
-        console.log('🔍 Available dates response status:', datesResponse.status);
+        // Also get business-specific dates for the calendar grid
+        const datesResponse = await fetch(`${apiBase}/api/business-available-dates`);
         
         if (!datesResponse.ok) {
-            console.error('❌ Failed to fetch available dates:', datesResponse.status, datesResponse.statusText);
             throw new Error('Failed to fetch available dates');
         }
         
         const availableDates = await datesResponse.json();
-        console.log('🔍 Available dates response:', availableDates);
+        console.log('🔍 API available dates response:', availableDates);
         
-        if (dateRange.hasData && dateRange.minDate && dateRange.maxDate && availableDates.hasData) {
+        if ((businessRange && businessRange.min && businessRange.max) || (analyticsData.dataRange && analyticsData.dataRange.min && analyticsData.dataRange.max && availableDates.hasData)) {
             let maxDate, minDate;
             
             try {
-                if (dateRange.maxDate.includes('T') && (dateRange.maxDate.endsWith('Z') || dateRange.maxDate.includes('+'))) {
-                    maxDate = new Date(dateRange.maxDate);
+                if (businessRange) {
+                    maxDate = new Date(businessRange.max);
+                    minDate = new Date(businessRange.min);
                 } else {
-                    maxDate = new Date(dateRange.maxDate + 'T00:00:00');
-                }
-                
-                if (dateRange.minDate.includes('T') && (dateRange.minDate.endsWith('Z') || dateRange.minDate.includes('+'))) {
-                    minDate = new Date(dateRange.minDate);
-                } else {
-                    minDate = new Date(dateRange.minDate + 'T00:00:00');
+                    maxDate = new Date(analyticsData.dataRange.max);
+                    minDate = new Date(analyticsData.dataRange.min);
                 }
                 
                 if (isNaN(maxDate.getTime()) || isNaN(minDate.getTime())) {
@@ -112,12 +254,19 @@ async fetchAvailableDateRange() {
                 }
                 
             } catch (parseError) {
-                maxDate = new Date('2025-01-31T00:00:00');
-                minDate = new Date('2025-01-01T00:00:00');
+                console.log('🔍 Using fallback dates due to parse error');
+                // If we can't parse the dates from API, use a reasonable fallback
+                const end = new Date();
+                const start = new Date();
+                start.setDate(end.getDate() - 29);
+                start.setHours(0, 0, 0, 0);
+                end.setHours(23, 59, 59, 999);
                 
                 this.state.dateRange = {
-                    start: new Date('2025-01-01T00:00:00'),
-                    end: new Date('2025-01-31T23:59:59')
+                    start: start,
+                    end: end,
+                    startStr: this.formatDate(start),
+                    endStr: this.formatDate(end)
                 };
                 
                 this.updateDateDisplay();
@@ -128,12 +277,9 @@ async fetchAvailableDateRange() {
                 throw new Error('Invalid dates after parsing');
             }
             
-            const daysAvailable = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
-            const daysToShow = Math.min(30, daysAvailable);
-            
+            // Use the FULL date range from the database, not just 30 days
+            const start = new Date(minDate);
             const end = new Date(maxDate);
-            const start = new Date(maxDate);
-            start.setTime(end.getTime() - ((daysToShow - 1) * 24 * 60 * 60 * 1000));
             
             start.setHours(0, 0, 0, 0);
             end.setHours(23, 59, 59, 999);
@@ -148,6 +294,8 @@ async fetchAvailableDateRange() {
                 startStr: startDateStr,
                 endStr: endDateStr
             };
+            
+            console.log('🔍 Set date range from API:', this.state.dateRange);
             
             if (isNaN(start.getTime()) || isNaN(end.getTime())) {
                 throw new Error('Invalid dates calculated');
@@ -183,55 +331,23 @@ async fetchAvailableDateRange() {
             
             if (!this.state.dateRange.start || !this.state.dateRange.end || 
                 isNaN(this.state.dateRange.start.getTime()) || isNaN(this.state.dateRange.end.getTime())) {
-                const fallbackStart = new Date('2025-01-01T00:00:00');
-                const fallbackEnd = new Date('2025-01-31T23:59:59');
-                this.state.dateRange = {
-                    start: fallbackStart,
-                    end: fallbackEnd,
-                    startStr: this.formatDate(fallbackStart),
-                    endStr: this.formatDate(fallbackEnd)
-                };
+                // Use default date range as fallback
+                console.log('🔍 Using fallback date range');
+                this.state.dateRange = this.getDefaultDateRange();
                 this.updateDateDisplay();
             }
             
         } else {
-            const now = new Date();
-            const start = new Date(now.getFullYear(), now.getMonth(), 1);
-            const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-            
-            // Create date strings directly to avoid any timezone issues
-            const startDateStr = this.formatDate(start);
-            const endDateStr = this.formatDate(end);
-            
-            this.state.dateRange = { 
-                start, 
-                end,
-                startStr: startDateStr,
-                endStr: endDateStr
-            };
+            // Use default date range as fallback
+            console.log('🔍 No data from API, using fallback date range');
+            this.state.dateRange = this.getDefaultDateRange();
             this.updateDateDisplay();
         }
         
     } catch (error) {
-        console.error('❌ Error fetching available date range:', error);
-        console.error('❌ Error stack:', error.stack);
-        
-        const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        
-        // Create date strings directly to avoid any timezone issues
-        const startDateStr = this.formatDate(start);
-        const endDateStr = this.formatDate(end);
-        
-        console.log('🔍 Using fallback date range:', { startDateStr, endDateStr });
-        
-        this.state.dateRange = { 
-            start, 
-            end,
-            startStr: startDateStr,
-            endStr: endDateStr
-        };
+        // Use default date range as fallback
+        console.log('🔍 Error fetching date range, using fallback:', error.message);
+        this.state.dateRange = this.getDefaultDateRange();
         this.updateDateDisplay();
     }
 }
@@ -296,43 +412,217 @@ setupEventListeners() {
 
 async loadData() {
     try {
+        const apiBase = this.getApiBase();
+        const timestamp = Date.now(); // Cache busting
+        // Ensure backend DB is connected before we issue queries
+        const ready = await this.waitForBackendReady(apiBase, 4, 400);
+        if (!ready) {
+            console.warn('⚠️ Health probe failed; proceeding to fetch data anyway');
+        }
+        // Clamp end to TODAY to avoid requesting future dates
+        if (this.state.dateRange?.endStr) {
+            const today = new Date();
+            const todayStr = this.formatDate(new Date(today.getFullYear(), today.getMonth(), today.getDate()));
+            if (this.state.dateRange.endStr > todayStr) {
+                this.state.dateRange.endStr = todayStr;
+                this.state.dateRange.end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+            }
+        }
+        // Additionally clamp end to the latest available business date from backend (e.g., 16th if 17th has no data)
+        try {
+            const rangeRes = await fetch(`${apiBase}/api/business-date-range`);
+            if (rangeRes.ok) {
+                const rangeJson = await rangeRes.json();
+                const maxDateStr = rangeJson?.maxDate || rangeJson?.max_date || null;
+                if (maxDateStr) {
+                    if (!this.state.dateRange?.endStr || this.state.dateRange.endStr > maxDateStr) {
+                        this.state.dateRange.endStr = String(maxDateStr).slice(0, 10);
+                        const [y,m,d] = this.state.dateRange.endStr.split('-').map(Number);
+                        this.state.dateRange.end = new Date(y, m - 1, d, 23, 59, 59, 999);
+                    }
+                }
+            }
+        } catch (_) { /* ignore; fallback to today clamp */ }
         const url = this.state.dateRange.startStr && this.state.dateRange.endStr 
-            ? `http://localhost:5000/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}`
-            : 'http://localhost:5000/api/business-data';
+            ? `${apiBase}/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}&t=${timestamp}`
+            : `${apiBase}/api/business-data?t=${timestamp}`;
         
-        console.log('🔍 Loading business data from URL:', url);
-        console.log('🔍 Date range state:', this.state.dateRange);
+        console.log('🔍 Loading business data...');
+        console.log('🔍 Date range:', this.state.dateRange);
+        console.log('🔍 API URL:', url);
+        console.log('🔍 Start date:', this.state.dateRange.startStr);
+        console.log('🔍 End date:', this.state.dateRange.endStr);
         
-        const response = await fetch(url);
-        console.log('🔍 Response status:', response.status, response.statusText);
+        let response = await fetch(url);
+        // If backend returns 503 (e.g., end date has no data yet), retry once after clamping to DB max date
+        if (!response.ok && response.status === 503) {
+            try {
+                const rangeRes2 = await fetch(`${apiBase}/api/business-date-range`);
+                if (rangeRes2.ok) {
+                    const rj = await rangeRes2.json();
+                    const maxStr = (rj?.maxDate || rj?.max_date || '').slice(0,10);
+                    if (maxStr) {
+                        if (!this.state.dateRange?.endStr || this.state.dateRange.endStr > maxStr) {
+                            this.state.dateRange.endStr = maxStr;
+                            const [y,m,d] = maxStr.split('-').map(Number);
+                            this.state.dateRange.end = new Date(y, m - 1, d, 23,59,59,999);
+                        }
+                        const retryUrl = `${apiBase}/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}&t=${Date.now()}`;
+                        console.log('🔁 Retrying after 503 with clamped end date:', retryUrl);
+                        response = await fetch(retryUrl);
+                    }
+                }
+            } catch (_) { /* ignore */ }
+        }
         
         if (!response.ok) {
-            console.error('❌ Response not OK:', response.status, response.statusText);
             throw new Error(`Failed to fetch data: ${response.status} ${response.statusText}`);
         }
         
         const data = await response.json();
         console.log('🔍 Raw API response:', data);
-        console.log('🔍 Data array length:', data.data ? data.data.length : 'No data array');
+        console.log('🔍 Data length:', data.data?.length || 0);
         console.log('🔍 KPIs:', data.kpis);
         
-        this.state.businessData = this.transformData(data.data || []);
-        this.state.filteredData = [...this.state.businessData];
+        // Handle data display - show data for available dates, skip empty dates
+        if (!data.data || data.data.length === 0) {
+            console.log('⚠️ No data found for selected date range, trying to get any available data');
+            // Try to get data from the backend's available date range
+            try {
+                // Get the actual available date range from the backend
+                const availableDatesResponse = await fetch(`${apiBase}/api/business-available-dates`);
+                if (availableDatesResponse.ok) {
+                    const availableDates = await availableDatesResponse.json();
+                    if (availableDates.dates && availableDates.dates.length > 0) {
+                        // Use the most recent available dates
+                        const sortedDates = availableDates.dates.sort();
+                        const latestDate = sortedDates[sortedDates.length - 1];
+                        const earliestDate = sortedDates[0];
+                        
+                        // Create a range around the latest available data
+                        const fallbackEnd = new Date(latestDate);
+                        const fallbackStart = new Date(Math.max(
+                            new Date(earliestDate).getTime(),
+                            new Date(latestDate).getTime() - (29 * 24 * 60 * 60 * 1000) // 30 days before latest
+                        ));
+                        
+                        const fallbackUrl = `${apiBase}/api/business-data?start=${this.formatDate(fallbackStart)}&end=${this.formatDate(fallbackEnd)}&t=${Date.now()}`;
+                        console.log('🔍 Trying fallback to available data range:', fallbackUrl);
+                        
+                        const fallbackResponse = await fetch(fallbackUrl);
+                        if (fallbackResponse.ok) {
+                            const fallbackData = await fallbackResponse.json();
+                            if (fallbackData.data && fallbackData.data.length > 0) {
+                                console.log('✅ Found data in available range, using that instead');
+                                this.state.businessData = this.transformData(fallbackData.data || []);
+                                this.state.filteredData = this.aggregateBySku(this.state.businessData);
+                                this.updateKPIs(fallbackData.kpis || {});
+                                this.showNotification(`Showing available data from ${this.formatDate(fallbackStart)} to ${this.formatDate(fallbackEnd)} (no data in selected range)`, 'info');
+                                this.renderTable();
+                                this.updateResultsCount();
+                                return;
+                            }
+                        }
+                    }
+                }
+            } catch (fallbackError) {
+                console.log('🔍 Fallback also failed:', fallbackError.message);
+            }
+            
+            this.state.businessData = [];
+            this.state.filteredData = [];
+            
+            // Reset KPIs to zero values
+            const emptyKPIs = {
+                totalSessions: 0,
+                totalPageViews: 0,
+                totalUnitsOrdered: 0,
+                totalSales: 0,
+                avgSessionsPerDay: 0,
+                conversionRate: 0
+            };
+            
+            this.updateKPIs(emptyKPIs);
+            this.showNotification('No data available for the selected date range', 'warning');
+        } else {
+            this.state.businessData = this.transformData(data.data || []);
+            // Aggregate by SKU
+            this.state.filteredData = this.aggregateBySku(this.state.businessData);
+
+            // Ensure we only consider dates that actually exist (skip missing/zero days)
+            // Build totals per available date
+            const byDate = new Map();
+            (this.state.businessData || []).forEach(r => {
+                const key = String(r.date || '').slice(0,10);
+                if (!key) return;
+                const prev = byDate.get(key) || { s: 0, p: 0, u: 0, o: 0 };
+                byDate.set(key, {
+                    s: prev.s + Number(r.sessions || 0),
+                    p: prev.p + Number(r.pageViews || 0),
+                    u: prev.u + Number(r.unitsOrdered || 0),
+                    o: prev.o + Number(r.sales || 0)
+                });
+            });
+
+            // Drop trailing today if totals are zero (partial day)
+            const sortedKeys = Array.from(byDate.keys()).sort();
+            while (sortedKeys.length > 0) {
+                const last = sortedKeys[sortedKeys.length - 1];
+                const v = byDate.get(last) || { s:0,p:0,u:0,o:0 };
+                if ((v.s + v.p + v.u + v.o) > 0) break;
+                byDate.delete(last);
+                sortedKeys.pop();
+            }
+
+            // Nothing else to do for table because it already uses only available rows.
+            
+            console.log('🔍 Transformed data:', this.state.businessData.slice(0, 3));
+            console.log('🔍 Showing data for available dates within the selected range');
+            
+            // Prefer backend KPIs (SQL-accurate for the same date window)
+            // Also run a debug cross-check against the rows we display
+            const backendKpis = data.kpis || {};
+            const frontendKpis = this.computeKPIsFromRows(this.state.filteredData);
+            this.debugCompareKpis(backendKpis, frontendKpis);
+            this.updateKPIs(backendKpis);
+            
+            // Show success notification indicating data is displayed for available dates
+            const availableDates = [...new Set(this.state.businessData.map(row => row.date))];
+            if (availableDates.length > 0) {
+                // Check if we have data for all dates in the range or just some
+                const startDate = this.state.dateRange.startStr;
+                const endDate = this.state.dateRange.endStr;
+                
+                if (startDate && endDate) {
+                    // Calculate total days in range
+                    const start = new Date(startDate);
+                    const end = new Date(endDate);
+                    const totalDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                    
+                    if (availableDates.length === totalDays) {
+                        console.log(`✅ Data displayed for all ${availableDates.length} days in the selected range`);
+                    } else {
+                        console.log(`📊 Data displayed for ${availableDates.length} of ${totalDays} days in the selected range (some dates have no data)`);
+                        console.log(`📅 Available dates: ${availableDates.sort().join(', ')}`);
+                    }
+                } else {
+                    console.log(`✅ Data displayed for ${availableDates.length} available date(s)`);
+                }
+            }
+            
+            // Fallback: Try updating KPIs again after a short delay
+            // Keep KPIs stable to what is displayed; skip backend fallback
+        }
         
-        console.log('🔍 Transformed business data:', this.state.businessData);
-        console.log('🔍 Filtered data length:', this.state.filteredData.length);
-        
-        this.updateKPIs(data.kpis || {});
         // Also compute trend vs previous equal-length period
         await this.updateKPITrends(data.kpis || {});
         this.renderTable();
         this.updateResultsCount();
         
-        console.log('✅ Data loading completed successfully');
+        console.log('🔍 Data loading completed successfully');
         
     } catch (error) {
         console.error('❌ Error loading data:', error);
-        console.error('❌ Error stack:', error.stack);
         this.showError(`Failed to load data: ${error.message}`);
     }
 }
@@ -340,6 +630,7 @@ async loadData() {
 // ---------- Preset ranges ----------
 async applyPreset(key) {
     const now = new Date();
+    const apiBase = this.getApiBase();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999);
 
@@ -387,7 +678,29 @@ async applyPreset(key) {
             end = endOfToday;
             break;
         case 'lifetime':
-            start = this.availableDateRange?.minDate ? new Date(this.availableDateRange.minDate) : new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
+            // Prefer backend-provided minimum business date. If not loaded yet, fetch it once.
+            {
+                let minSource = this.availableDateRange?.min || this.availableDateRange?.minDate;
+                if (!minSource) {
+                    try {
+                        const res = await fetch(`${apiBase}/api/business-date-range`);
+                        if (res.ok) {
+                            const j = await res.json();
+                            // Normalize possible keys from backend
+                            minSource = j.minDate || j.min || j.min_date;
+                            // Cache for subsequent lifetime clicks
+                            this.availableDateRange = this.availableDateRange || {};
+                            if (minSource) this.availableDateRange.min = minSource;
+                        }
+                    } catch (_) {}
+                }
+                if (minSource) {
+                    start = new Date(minSource);
+                } else {
+                    // Fallback only if API couldn't provide min (keeps UI responsive)
+                    start = new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
+                }
+            }
             start.setHours(0,0,0,0);
             end = endOfToday;
             break;
@@ -410,7 +723,8 @@ async updateKPITrends(currentKpis) {
     const prev = this.computePreviousRange(this.state.dateRange.startStr, this.state.dateRange.endStr);
     if (!prev) return;
     try {
-        const prevUrl = `http://localhost:5000/api/business-data?start=${prev.startStr}&end=${prev.endStr}`;
+        const apiBase = this.getApiBase();
+        const prevUrl = `${apiBase}/api/business-data?start=${prev.startStr}&end=${prev.endStr}`;
         const res = await fetch(prevUrl);
         if (!res.ok) return;
         const prevData = await res.json();
@@ -498,14 +812,28 @@ transformData(data) {
             }
         } catch (_) {}
         
-        // Use the SKU as the product name (as shown in your screenshot)
-        const productName = row.sku || 'Unknown';
+        // Prefer friendly product names (mapping by Parent ASIN); fallback to DB values
+        let asin = String(row.parent_asin || '').toUpperCase() || 'Unknown';
+        // Normalize short internal codes (e.g., B001..B005) to canonical ASINs for display/grouping
+        try {
+            if (this.aliasParentToRealAsin && this.aliasParentToRealAsin.has(asin)) {
+                asin = this.aliasParentToRealAsin.get(asin) || asin;
+            }
+        } catch (_) {}
+        const friendlyFromAsin = this.asinToName ? (this.asinToName.get(asin) || null) : null;
+        const friendlyFromSku = this.skuCodeToName ? (this.skuCodeToName.get(String(row.sku || '').toUpperCase()) || null) : null;
+        const friendlyFromParentCode = this.parentCodeToName ? (this.parentCodeToName.get(String(row.parent_asin || '').toUpperCase()) || null) : null;
+        const friendly = friendlyFromAsin || friendlyFromSku || friendlyFromParentCode;
+        const sku = friendly || row.sku || 'Unknown';
+        const resolvedTitle = (
+            row.product_title || row.product_name || row.asin_title || row.title || (friendly ? `Product ${friendly}` : (row.parent_asin || row.sku || 'Unknown'))
+        );
         
         return {
             date: localDateStr,
-            sku: productName, // SKU column shows the product name
-            parentAsin: row.parent_asin || 'Unknown',
-            productTitle: `Product ${productName}`, // Product Title shows "Product [SKU]"
+            sku: sku,
+            parentAsin: asin || 'Unknown',
+            productTitle: resolvedTitle,
             sessions: parseInt(row.sessions || 0),
             pageViews: parseInt(row.page_views || 0),
             unitsOrdered: parseInt(row.units_ordered || 0),
@@ -517,6 +845,13 @@ transformData(data) {
 }
 
 updateKPIs(kpis) {
+    console.log('🔍 updateKPIs called with:', kpis);
+    
+    if (!kpis || typeof kpis !== 'object') {
+        console.error('❌ Invalid KPIs data:', kpis);
+        return;
+    }
+    
     const elements = {
         'totalSessions': kpis.totalSessions || 0,
         'pageViews': kpis.totalPageViews || 0,
@@ -526,20 +861,190 @@ updateKPIs(kpis) {
         'conversionRate': kpis.conversionRate || 0
     };
     
+    console.log('🔍 KPI elements to update:', elements);
+    
+    // Ensure DOM is ready
+    if (document.readyState !== 'complete') {
+        console.log('🔍 DOM not ready, retrying in 100ms...');
+        setTimeout(() => this.updateKPIs(kpis), 100);
+        return;
+    }
+    
     Object.entries(elements).forEach(([id, value]) => {
         const element = document.getElementById(id);
+        console.log(`🔍 Updating ${id}: ${value} (element found: ${!!element})`);
         if (element) {
-            if (id === 'totalSales') {
-                element.textContent = this.formatCurrency(value);
-            } else if (id === 'conversionRate') {
-                element.textContent = this.formatPercent(value);
-            } else if (id === 'avgSessionsPerDay') {
-                element.textContent = this.formatNumber(value, 1);
-            } else {
-                element.textContent = this.formatNumber(value);
+            try {
+                if (id === 'totalSales') {
+                    element.textContent = this.formatCurrency(value);
+                } else if (id === 'conversionRate') {
+                    element.textContent = this.formatPercent(value);
+                } else if (id === 'avgSessionsPerDay') {
+                    element.textContent = this.formatNumber(value, 1);
+                } else {
+                    element.textContent = this.formatNumber(value);
+                }
+                console.log(`✅ ${id} updated to: ${element.textContent}`);
+            } catch (error) {
+                console.error(`❌ Error updating ${id}:`, error);
+            }
+        } else {
+            console.error(`❌ Element not found: ${id}`);
+            // Try to find the element with a different selector
+            const altElement = document.querySelector(`[id="${id}"]`);
+            if (altElement) {
+                console.log(`🔍 Found element with alternative selector for ${id}`);
             }
         }
     });
+}
+
+computeKPIsFromRows(rows) {
+    try {
+        const totals = rows.reduce((acc, r) => {
+            acc.totalSessions += Number(r.sessions || 0);
+            acc.totalPageViews += Number(r.pageViews || 0);
+            acc.totalUnitsOrdered += Number(r.unitsOrdered || 0);
+            acc.totalSales += Number(r.sales || 0);
+            return acc;
+        }, { totalSessions: 0, totalPageViews: 0, totalUnitsOrdered: 0, totalSales: 0 });
+        const uniqueDates = new Set(rows.map(r => r.date)).size;
+        const avgSessionsPerDay = uniqueDates > 0 ? totals.totalSessions / uniqueDates : 0;
+        const conversionRate = totals.totalSessions > 0 ? (totals.totalUnitsOrdered / totals.totalSessions) * 100 : 0;
+        return {
+            totalSessions: totals.totalSessions,
+            totalPageViews: totals.totalPageViews,
+            totalUnitsOrdered: totals.totalUnitsOrdered,
+            totalSales: totals.totalSales,
+            avgSessionsPerDay,
+            conversionRate
+        };
+    } catch (_) {
+        return { totalSessions: 0, totalPageViews: 0, totalUnitsOrdered: 0, totalSales: 0, avgSessionsPerDay: 0, conversionRate: 0 };
+    }
+}
+
+debugCompareKpis(backend, frontend) {
+    try {
+        const fields = [
+            ['totalSessions','totalSessions'],
+            ['totalPageViews','totalPageViews'],
+            ['totalUnitsOrdered','totalUnitsOrdered'],
+            ['totalSales','totalSales']
+        ];
+        const diffs = [];
+        fields.forEach(([k]) => {
+            const b = Number(backend?.[k] || 0);
+            const f = Number(frontend?.[k] || 0);
+            if (Math.abs(b - f) > 0.001) diffs.push({ key: k, backend: b, frontend: f, delta: b - f });
+        });
+        if (diffs.length) {
+            console.log('🔍 KPI mismatch (backend vs frontend rows):', diffs);
+        } else {
+            console.log('🔍 KPI check OK: backend matches frontend aggregation');
+        }
+    } catch (e) {
+        // silent
+    }
+}
+
+aggregateByParentAsin(rows) {
+    try {
+        const map = new Map();
+        for (const r of rows) {
+            let asinCode = String(r.parentAsin || 'Unknown');
+            // Normalize short parent codes (B001..B005) to real ASINs so they combine with live rows
+            if (this.aliasParentToRealAsin && this.aliasParentToRealAsin.has(asinCode)) {
+                asinCode = this.aliasParentToRealAsin.get(asinCode);
+            }
+            const friendlyFromAsin = this.asinToName ? (this.asinToName.get(asinCode) || null) : null;
+            const friendlyFromSku = this.skuCodeToName ? (this.skuCodeToName.get(String(r.sku || '').toUpperCase()) || null) : null;
+            const friendlyFromParentCode = this.parentCodeToName ? (this.parentCodeToName.get(asinCode) || null) : null;
+            const displayName = friendlyFromAsin || friendlyFromSku || friendlyFromParentCode || r.sku || asinCode;
+            const key = asinCode; // combine by Parent ASIN to yield ~23 entities
+            if (!map.has(key)) {
+                map.set(key, {
+                    date: r.date,
+                    sku: displayName,
+                    parentAsin: asinCode,
+                    productTitle: `Product ${displayName}`,
+                    sessions: 0,
+                    pageViews: 0,
+                    unitsOrdered: 0,
+                    sales: 0,
+                    conversionRate: 0,
+                    avgOrderValue: 0
+                });
+            }
+            const acc = map.get(key);
+            acc.sessions += Number(r.sessions || 0);
+            acc.pageViews += Number(r.pageViews || 0);
+            acc.unitsOrdered += Number(r.unitsOrdered || 0);
+            acc.sales += Number(r.sales || 0);
+            // Prefer most descriptive SKU/title as friendly name
+            if ((r.sales || 0) > (acc._maxSales || 0)) { acc.sku = displayName; acc.productTitle = `Product ${displayName}`; acc._maxSales = Number(r.sales || 0); }
+        }
+        let combined = Array.from(map.values()).map(x => {
+            x.avgOrderValue = x.unitsOrdered > 0 ? (x.sales / x.unitsOrdered) : 0;
+            x.conversionRate = x.sessions > 0 ? (x.unitsOrdered / x.sessions) * 100 : 0;
+            delete x._maxSales;
+            return x;
+        });
+        // Keep only entities that actually have data in the selected range
+        combined = combined.filter(x => (x.sessions + x.pageViews + x.unitsOrdered + x.sales) > 0);
+        // Stable sort by sales desc
+        combined.sort((a,b) => b.sales - a.sales);
+        return combined;
+    } catch (_) {
+        return [...rows];
+    }
+}
+
+aggregateBySku(rows) {
+    try {
+        const map = new Map();
+        for (const r of rows) {
+            const skuName = r.sku || 'Unknown';
+            const key = skuName;
+            if (!map.has(key)) {
+                map.set(key, {
+                    date: r.date,
+                    sku: skuName,
+                    parentAsin: r.parentAsin || 'Unknown',
+                    productTitle: `Product ${skuName}`,
+                    sessions: 0,
+                    pageViews: 0,
+                    unitsOrdered: 0,
+                    sales: 0,
+                    conversionRate: 0,
+                    avgOrderValue: 0,
+                    _maxSales: 0
+                });
+            }
+            const acc = map.get(key);
+            acc.sessions += Number(r.sessions || 0);
+            acc.pageViews += Number(r.pageViews || 0);
+            acc.unitsOrdered += Number(r.unitsOrdered || 0);
+            acc.sales += Number(r.sales || 0);
+            if ((r.sales || 0) > acc._maxSales) {
+                acc.parentAsin = r.parentAsin || acc.parentAsin;
+                acc._maxSales = Number(r.sales || 0);
+            }
+        }
+        let combined = Array.from(map.values()).map(x => {
+            x.avgOrderValue = x.unitsOrdered > 0 ? (x.sales / x.unitsOrdered) : 0;
+            x.conversionRate = x.sessions > 0 ? (x.unitsOrdered / x.sessions) * 100 : 0;
+            delete x._maxSales;
+            return x;
+        });
+        // Filter out all-zero rows
+        combined = combined.filter(x => (x.sessions + x.pageViews + x.unitsOrdered + x.sales) > 0);
+        // Sort by sales desc
+        combined.sort((a,b) => b.sales - a.sales);
+        return combined;
+    } catch (_) {
+        return [...rows];
+    }
 }
 
 handleSearch(e) {
@@ -688,19 +1193,8 @@ updateResultsCount() {
 
 async exportData(format) {
     try {
-        // Show loading notification
-        this.showNotification('Preparing export...', 'info');
-        
-        // Fetch fresh data for the selected date range
-        const url = this.state.dateRange.startStr && this.state.dateRange.endStr 
-            ? `http://localhost:5000/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}`
-            : 'http://localhost:5000/api/business-data';
-        
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Failed to fetch data');
-        
-        const data = await response.json();
-        const exportData = this.transformData(data.data || []);
+        // Build export directly from what the user sees in the table to avoid mismatches
+        const exportData = [...this.state.filteredData];
         
         if (exportData.length === 0) {
             this.showNotification('No data available for export', 'warning');
@@ -712,7 +1206,6 @@ async exportData(format) {
         let csv = headers.join(',') + '\n';
         
         exportData.forEach(row => {
-            // Use the actual date from the database row, not the date range
             const actualDate = row.date || this.state.dateRange.startStr;
             csv += [
                 `"${actualDate}"`,
@@ -722,9 +1215,9 @@ async exportData(format) {
                 row.sessions,
                 row.pageViews,
                 row.unitsOrdered,
-                row.sales.toFixed(2),
-                row.conversionRate.toFixed(2),
-                row.avgOrderValue.toFixed(2)
+                Number(row.sales || 0).toFixed(2),
+                Number(row.conversionRate || 0).toFixed(2),
+                Number(row.avgOrderValue || 0).toFixed(2)
             ].join(',') + '\n';
         });
         
@@ -746,7 +1239,6 @@ async exportData(format) {
         this.showNotification(`Export successful! (${exportData.length} records)`, 'success');
         
     } catch (error) {
-        console.error('Export error:', error);
         this.showNotification('Export failed. Please try again.', 'error');
     }
 }
@@ -795,9 +1287,10 @@ openCalendar() {
         this.calendarState.tempRangeStart = new Date(this.state.dateRange.start);
         this.calendarState.tempRangeEnd = new Date(this.state.dateRange.end);
     } else {
-        const now = new Date();
-        this.calendarState.tempRangeStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        this.calendarState.tempRangeEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        // Use current date range as fallback
+        const defaultRange = this.getDefaultDateRange();
+        this.calendarState.tempRangeStart = new Date(defaultRange.start);
+        this.calendarState.tempRangeEnd = new Date(defaultRange.end);
     }
     
     this.calendarState.calendarMonth = new Date(this.calendarState.tempRangeEnd);
@@ -952,6 +1445,10 @@ renderCalendarDays() {
     const grid = document.getElementById('calendarGrid');
     if (!grid) return;
     
+    // Define current date once for the entire function
+    const currentDate = new Date();
+    currentDate.setHours(23, 59, 59, 999);
+    
     const firstDay = new Date(this.calendarState.calendarMonth);
     const lastDay = new Date(this.calendarState.calendarMonth.getFullYear(), this.calendarState.calendarMonth.getMonth() + 1, 0);
     const jsDay = firstDay.getDay();
@@ -994,30 +1491,26 @@ renderCalendarDays() {
         }
         if (isToday) classes += ' today';
         
-        if (this.availableDates && this.availableDates.length > 0) {
-            const dateStr = this.formatDate(date);
-            const hasBusinessData = this.availableDates.some(availableDate => 
-                this.formatDate(availableDate) === dateStr
-            );
-            
-            if (!hasBusinessData) {
-                classes += ' disabled';
-            }
-        } else if (this.availableDateRange) {
-            if (date < this.availableDateRange.min || date > this.availableDateRange.max) {
-                classes += ' disabled';
-            }
+        // Check if this date is in the future (disabled)
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // End of today
+        const isFuture = date > today;
+        
+        if (isFuture) {
+            classes += ' future-date';
         } else {
-            if (date > new Date()) classes += ' disabled';
+            classes += ' available-date';
         }
+        
+        // Allow selection of any date - we'll validate data availability on the backend
+        const dateStr = this.formatDate(date);
         
         const dayElement = document.createElement('div');
         dayElement.className = classes;
-        dayElement.dataset.date = this.formatDate(date);
+        dayElement.dataset.date = dateStr;
         dayElement.textContent = d;
         
-        const dateStr = this.formatDate(date);
-        const isDisabled = classes.includes('disabled');
+        const isDisabled = classes.includes('disabled') || classes.includes('future-date');
         
         dayElement.addEventListener('click', (e) => {
             e.preventDefault();
@@ -1025,21 +1518,7 @@ renderCalendarDays() {
             
             if (isDisabled) return;
             
-            if (this.availableDates && this.availableDates.length > 0) {
-                const hasBusinessData = this.availableDates.some(availableDate => 
-                    this.formatDate(availableDate) === dateStr
-                );
-                
-                if (!hasBusinessData) return;
-            } else if (this.availableDateRange) {
-                // Parse date string directly to avoid timezone issues
-                const [year, month, day] = dateStr.split('-').map(Number);
-                const clickedDate = new Date(year, month - 1, day);
-                if (clickedDate < this.availableDateRange.min || clickedDate > this.availableDateRange.max) {
-                    return;
-                }
-            }
-            
+            // Allow selection of any date up to today
             this.handleCalendarDayClick(dateStr);
         });
 
@@ -1053,27 +1532,7 @@ renderCalendarDays() {
         
         dayElement.style.cursor = 'pointer';
         
-        let tooltip = `Click to select: ${dateStr}`;
-        if (this.availableDates && this.availableDates.length > 0) {
-            const hasBusinessData = this.availableDates.some(availableDate => 
-                this.formatDate(availableDate) === dateStr
-            );
-            
-            if (hasBusinessData) {
-                tooltip += ' (Has business data)';
-            } else {
-                tooltip += ' (No business data)';
-            }
-        } else if (this.availableDateRange) {
-            // Parse date string directly to avoid timezone issues
-            const [year, month, day] = dateStr.split('-').map(Number);
-            const clickedDate = new Date(year, month - 1, day);
-            if (clickedDate >= this.availableDateRange.min && clickedDate <= this.availableDateRange.max) {
-                tooltip += ' (Has data)';
-            } else {
-                tooltip += ' (No data)';
-            }
-        }
+        const tooltip = `Click to select: ${dateStr}`;
         dayElement.title = tooltip;
         
         grid.appendChild(dayElement);
@@ -1130,12 +1589,8 @@ navigateMonth(direction) {
 }
 
 goToToday() {
-    console.log('🔄 Going to today...');
     const today = new Date();
     const todayMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    
-    console.log('📅 Current month was:', this.calendarState.calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
-    console.log('📅 Setting calendar to today\'s month:', todayMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
     
     this.calendarState.calendarMonth = todayMonth;
     this.renderCalendar();
@@ -1150,57 +1605,43 @@ handleCalendarDayClick(dateString) {
         const [year, month, day] = dateString.split('-').map(Number);
         const date = new Date(year, month - 1, day, 0, 0, 0, 0);
         
-        console.log('🔍 Parsed date:', {
-            dateString,
-            year, month, day,
-            date: date.toISOString(),
-            dateLocal: date.toLocaleDateString()
-        });
-        
         if (isNaN(date.getTime())) {
-            console.error('❌ Invalid date created from:', dateString);
+            console.error('❌ Invalid date:', dateString);
             return;
         }
         
-        console.log('🔍 Current temp range state:', {
-            tempRangeStart: this.calendarState.tempRangeStart?.toISOString(),
-            tempRangeEnd: this.calendarState.tempRangeEnd?.toISOString()
-        });
+        // Validate date is not in the future (up to current date)
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // End of today
+        
+        if (date > today) {
+            console.log('⚠️ Selected date is in the future');
+            this.showNotification('Cannot select future dates. Please select dates up to today.', 'warning');
+            return;
+        }
         
         if (!this.calendarState.tempRangeStart || (this.calendarState.tempRangeStart && this.calendarState.tempRangeEnd)) {
-            console.log('🔍 Setting new start date');
             this.calendarState.tempRangeStart = new Date(date);
             this.calendarState.tempRangeEnd = null;
+            console.log('🔍 Set start date:', this.calendarState.tempRangeStart);
         } else {
             const start = new Date(this.calendarState.tempRangeStart);
             start.setHours(0, 0, 0, 0);
             
-            console.log('🔍 Comparing dates:', {
-                clickedDate: date.toISOString(),
-                startDate: start.toISOString(),
-                isClickedBeforeStart: date < start
-            });
-            
             if (date < start) {
-                console.log('🔍 Clicked date is before start, swapping');
                 this.calendarState.tempRangeEnd = start;
                 this.calendarState.tempRangeStart = new Date(date);
             } else {
-                console.log('🔍 Clicked date is after start, setting as end');
                 this.calendarState.tempRangeEnd = new Date(date);
             }
+            console.log('🔍 Set end date:', this.calendarState.tempRangeEnd);
         }
-        
-        console.log('🔍 Updated temp range state:', {
-            tempRangeStart: this.calendarState.tempRangeStart?.toISOString(),
-            tempRangeEnd: this.calendarState.tempRangeEnd?.toISOString()
-        });
         
         this.renderCalendar();
         this.updateCalendarSummary();
         
     } catch (error) {
-        console.error('❌ Error handling calendar day click:', error);
+        // Silent error handling
     }
 }
 
@@ -1240,21 +1681,20 @@ updateCalendarSummary() {
 }
 
 async confirmDateRange() {
+    console.log('🔍 Confirm date range clicked');
+    
     if (!this.calendarState.tempRangeStart) {
-        console.warn('⚠️ No temp range start date - cannot confirm');
+        console.log('❌ No start date selected');
         return;
     }
     
+    console.log('🔍 Selected range:', {
+        start: this.calendarState.tempRangeStart,
+        end: this.calendarState.tempRangeEnd
+    });
+    
     // Hide calendar immediately when confirm is clicked
     this.closeCalendar();
-    
-    console.log('🔄 Confirming date range...');
-    console.log('📅 Temp range before confirmation:', {
-        tempStart: this.calendarState.tempRangeStart?.toISOString(),
-        tempEnd: this.calendarState.tempRangeEnd?.toISOString(),
-        tempStartLocal: this.calendarState.tempRangeStart?.toLocaleDateString(),
-        tempEndLocal: this.calendarState.tempRangeEnd?.toLocaleDateString()
-    });
     
     // Create dates without timezone issues by using local date components
     const startYear = this.calendarState.tempRangeStart.getFullYear();
@@ -1265,30 +1705,18 @@ async confirmDateRange() {
     const endMonth = (this.calendarState.tempRangeEnd || this.calendarState.tempRangeStart).getMonth();
     const endDay = (this.calendarState.tempRangeEnd || this.calendarState.tempRangeStart).getDate();
     
-    console.log('📅 Date components extracted:', {
-        start: { year: startYear, month: startMonth, day: startDay },
-        end: { year: endYear, month: endMonth, day: endDay }
-    });
-    
     // Create date strings FIRST directly from calendar values to avoid timezone conversion
     const startDateStr = `${startYear}-${String(startMonth + 1).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
     const endDateStr = `${endYear}-${String(endMonth + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
     
-    console.log('📅 Date strings created directly from calendar values:', { 
-        startDateStr: startDateStr,
-        endDateStr: endDateStr
-    });
-    
     // Create Date objects using local timezone to avoid UTC conversion
+    // Force exact single-day/multi-day ranges without drift
     const start = new Date(startYear, startMonth, startDay, 0, 0, 0, 0);
-    const end = new Date(endYear, endMonth, endDay, 23, 59, 59, 999);
-    
-    console.log('📅 Date objects created:', {
-        start: start.toISOString(),
-        end: end.toISOString(),
-        startLocal: start.toLocaleDateString(),
-        endLocal: end.toLocaleDateString()
-    });
+    let end = new Date(endYear, endMonth, endDay, 23, 59, 59, 999);
+    if (!this.calendarState.tempRangeEnd) {
+        // single day: end must equal start (23:59:59)
+        end = new Date(startYear, startMonth, startDay, 23, 59, 59, 999);
+    }
     
     this.state.dateRange = { 
         start, 
@@ -1297,21 +1725,21 @@ async confirmDateRange() {
         endStr: endDateStr
     };
     
-    console.log('📅 Final state verification:', {
-        startStr: this.state.dateRange.startStr,
-        endStr: this.state.dateRange.endStr,
-        startISO: this.state.dateRange.start.toISOString(),
-        endISO: this.state.dateRange.end.toISOString()
-    });
+    // Validate the selected date range is not in the future and not inverted
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // End of today
     
-    console.log('🔄 State updated:', this.state.dateRange);
-    console.log('🔄 Updating date display...');
+    if (this.state.dateRange.start > today || this.state.dateRange.end > today) {
+        this.showNotification('Cannot select future dates. Please select dates up to today.', 'warning');
+        return;
+    }
+    if (this.state.dateRange.end < this.state.dateRange.start) {
+        this.showNotification('Invalid range. End date cannot be before start date.', 'warning');
+        return;
+    }
+    
     this.updateDateDisplay();
-    
-    console.log('🔄 Loading data with new date range...');
     await this.loadData();
-    
-    console.log('✅ Date range confirmation complete');
 }
 
 updateDateDisplay() {
@@ -1383,62 +1811,12 @@ debounce(func, wait) {
 }
 
 showError(message) {
-    console.error(message);
     alert(message);
 }
 
 showNotification(message, type = 'info') {
-    // Create notification element
-    const notification = document.createElement('div');
-    notification.className = `notification notification-${type}`;
-    notification.innerHTML = `
-        <div class="notification-content">
-            <span class="material-icons">${this.getNotificationIcon(type)}</span>
-            <span>${message}</span>
-        </div>
-        <button class="notification-close" onclick="this.parentElement.remove()">
-            <span class="material-icons">close</span>
-        </button>
-    `;
-    
-    // Add notification styles
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-primary);
-        border-radius: 8px;
-        padding: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        z-index: 1002;
-        min-width: 300px;
-        box-shadow: var(--shadow-lg);
-        animation: slideInRight 0.3s ease-out;
-    `;
-    
-    // Type-specific styling
-    const colors = {
-        success: '#28a745',
-        error: '#dc3545',
-        warning: '#ffc107',
-        info: '#007bff'
-    };
-    
-    notification.style.borderLeftColor = colors[type] || colors.info;
-    notification.style.borderLeftWidth = '4px';
-    
-    document.body.appendChild(notification);
-    
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-        if (notification.parentElement) {
-            notification.remove();
-        }
-    }, 5000);
+    // Notifications disabled to avoid popup overlay
+    return;
 }
 
 getNotificationIcon(type) {
@@ -1452,14 +1830,35 @@ getNotificationIcon(type) {
 }
 
 startAutoRefresh() {
-    setInterval(() => {
-        this.loadData();
-    }, 5 * 60 * 1000);
+    // Auto-refresh disabled for stable snapshots
+    // setInterval(() => { this.loadData(); }, 5 * 60 * 1000);
 }
 
-// debug function removed
+// Debug function - can be called from browser console
+debugUpdateKPIs() {
+    console.log('🔍 Manual KPI update triggered');
+    const testKPIs = {
+        totalSessions: 1525,
+        totalPageViews: 2030,
+        totalUnitsOrdered: 103,
+        totalSales: 37965,
+        avgSessionsPerDay: 66.3,
+        conversionRate: 6.75
+    };
+    this.updateKPIs(testKPIs);
 }
+
+}
+
+// Make debug function available globally
+window.debugUpdateKPIs = () => {
+    if (window.businessReportsDashboard) {
+        window.businessReportsDashboard.debugUpdateKPIs();
+    } else {
+        console.error('❌ Business reports dashboard not found');
+    }
+};
 
 document.addEventListener('DOMContentLoaded', () => {
-new BusinessReportsDashboard();
+window.businessReportsDashboard = new BusinessReportsDashboard();
 });

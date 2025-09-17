@@ -3,7 +3,14 @@ const express = require('express');
 const { Client } = require('pg');
 const cors = require('cors');
 
+// Global backend debug toggle (no logic changes, only silences verbose logs)
+const DEBUG = String(process.env.DEBUG || '').toLowerCase() === 'true';
+if (!DEBUG && typeof console !== 'undefined') {
+  ['log','debug','info','group','groupCollapsed','groupEnd','time','timeEnd','table'].forEach(fn => { try { console[fn] = () => {}; } catch(_) {} });
+}
+
 const app = express();
+// Allow all origins so the frontend can be opened from file:// or any port during dev
 app.use(cors());
 app.use(express.json());
 // Enable gzip compression for faster responses
@@ -44,6 +51,12 @@ let dbConnected = false;
 // Simple in-memory cache for KPI calculations
 const kpiCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Clear cache function for debugging
+function clearCache() {
+  kpiCache.clear();
+  console.log('🧹 Cache cleared');
+}
 
 // Simple cache helper function
 function getCachedData(key) {
@@ -130,7 +143,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
   try {
     // Check if database is connected
     if (!dbConnected) {
-      console.log("⚠️ Database not connected, returning empty data");
+      console.log("⚠️ Database not connected, returning empty aggregated data (no mock)");
       return [];
     }
     
@@ -173,29 +186,180 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       return res.rows;
     }
     
-    // If date range provided, aggregate by Parent ASIN for specific date range
+    // If date range provided, aggregate by date for specific date range
+    // Use direct date comparison without timezone conversion to match stored dates
     let query = `
       SELECT 
-        parent_asin,
-        (array_agg(sku ORDER BY date DESC))[1] as sku,  -- Take the first SKU for each Parent ASIN
+        DATE(date) as date,
         SUM(CAST(sessions AS INTEGER)) as sessions,
         SUM(CAST(page_views AS INTEGER)) as page_views,
         SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
-        SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales,
-        MIN(date) as date  -- Take the earliest date for reference
+        SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
       FROM amazon_sales_traffic
-      WHERE date >= $1::date AND date <= $2::date
-      GROUP BY parent_asin
-      ORDER BY SUM(CAST(ordered_product_sales AS DECIMAL)) DESC
+      WHERE date::date >= $1::date 
+        AND date::date <= $2::date
+      GROUP BY DATE(date)
+      ORDER BY DATE(date) DESC
     `;
     
+    console.log('🔍 ===== EXECUTING BUSINESS DATA QUERY =====');
+    console.log('🔍 Query:', query);
+    console.log('🔍 Parameters:', [startDate, endDate]);
+    
+    // First, let's check what dates actually exist in the database
+    console.log('🔍 ===== DEBUGGING: CHECKING DATABASE DATES =====');
+    const debugQuery = `
+      SELECT DISTINCT DATE(date) as date, COUNT(*) as count
+      FROM amazon_sales_traffic 
+      GROUP BY DATE(date)
+      ORDER BY DATE(date) DESC
+      LIMIT 10
+    `;
+    const debugResult = await client.query(debugQuery);
+    console.log('🔍 Available dates in database (first 10):', debugResult.rows);
+    
+    // Check raw date values
+    const rawDateQuery = `SELECT date FROM amazon_sales_traffic ORDER BY date DESC LIMIT 5`;
+    const rawDateResult = await client.query(rawDateQuery);
+    console.log('🔍 Raw date values in database:', rawDateResult.rows.map(r => r.date));
+    
     const res = await client.query(query, [startDate, endDate]);
-    console.log(`📊 Aggregated ${res.rows.length} unique Parent ASINs from business data for date range (ALL products)`);
+    console.log(`📊 Found ${res.rows.length} records for date range ${startDate} to ${endDate}`);
+    console.log('🔍 Query result sample:', res.rows.slice(0, 3));
+    console.log('🔍 All dates in result:', res.rows.map(r => ({ date: r.date, sessions: r.sessions, sales: r.ordered_product_sales })));
+    
+    if (res.rows.length === 0) {
+      console.log('⚠️ ===== NO DATA FOUND - DEBUGGING =====');
+      console.log('🔍 Let me check what dates actually exist in the database...');
+      
+      // Check all available dates
+      const dateCheck = await client.query('SELECT DISTINCT date::date as date FROM amazon_sales_traffic ORDER BY date LIMIT 10');
+      console.log('🔍 Available dates in database:', dateCheck.rows.map(r => r.date));
+      
+      // Check raw date values
+      const rawDateCheck = await client.query('SELECT date FROM amazon_sales_traffic ORDER BY date LIMIT 5');
+      console.log('🔍 Raw date values:', rawDateCheck.rows.map(r => r.date));
+      
+      // Check if there's data in August 2025 at all
+      const augCheck = await client.query('SELECT COUNT(*) as count FROM amazon_sales_traffic WHERE EXTRACT(YEAR FROM date) = 2025 AND EXTRACT(MONTH FROM date) = 8');
+      console.log('🔍 Records in August 2025:', augCheck.rows[0].count);
+      
+      // Check what dates exist around the requested range
+      const rangeCheck = await client.query('SELECT DISTINCT date::date as date FROM amazon_sales_traffic WHERE date::date >= $1::date - INTERVAL \'7 days\' AND date::date <= $2::date + INTERVAL \'7 days\' ORDER BY date', [startDate, endDate]);
+      console.log('🔍 Dates around requested range (±7 days):', rangeCheck.rows.map(r => r.date));
+      
+      // Check total records in table
+      const totalCheck = await client.query('SELECT COUNT(*) as count FROM amazon_sales_traffic');
+      console.log('🔍 Total records in amazon_sales_traffic table:', totalCheck.rows[0].count);
+      
+      console.log('🔍 ===== CHECKING FOR AVAILABLE DATES WITHIN SELECTED RANGE =====');
+      
+      // Check if there are ANY dates within the selected range that have data
+      const availableDatesQuery = `
+        SELECT DISTINCT DATE(date) as date
+        FROM amazon_sales_traffic
+        WHERE date::date >= $1::date 
+          AND date::date <= $2::date
+        ORDER BY DATE(date) DESC
+      `;
+      
+      const availableDatesResult = await client.query(availableDatesQuery, [startDate, endDate]);
+      console.log('🔍 Available dates within selected range:', availableDatesResult.rows.map(r => r.date));
+      
+      if (availableDatesResult.rows.length > 0) {
+        // Get data for all available dates within the selected range
+        const availableDataQuery = `
+          SELECT 
+            DATE(date) as date,
+            SUM(CAST(sessions AS INTEGER)) as sessions,
+            SUM(CAST(page_views AS INTEGER)) as page_views,
+            SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
+            SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
+          FROM amazon_sales_traffic
+          WHERE date::date >= $1::date 
+            AND date::date <= $2::date
+          GROUP BY DATE(date)
+          ORDER BY DATE(date) DESC
+        `;
+        
+        const availableDataResult = await client.query(availableDataQuery, [startDate, endDate]);
+        console.log('✅ Found data for', availableDataResult.rows.length, 'dates within selected range');
+        console.log('🔍 Available dates with data:', availableDataResult.rows.map(r => r.date));
+        return availableDataResult.rows;
+      }
+      
+      console.log('🔍 No data found within selected range, returning empty array');
+      return [];
+    } else {
+      console.log('🔍 ===== DATA FOUND =====');
+      console.log('🔍 Sample data found:', res.rows.slice(0, 2));
+      console.log('🔍 Showing data for available dates within the selected range');
+      console.log('🔍 Found data for dates:', res.rows.map(r => r.date));
+      console.log('🔍 Data summary:', res.rows.map(r => ({
+        date: r.date,
+        sessions: r.sessions,
+        pageViews: r.page_views,
+        unitsOrdered: r.units_ordered,
+        sales: r.ordered_product_sales
+      })));
+    }
     
     return res.rows;
   } catch (err) {
     console.error("❌ Error fetching business data:", err);
     console.log("⚠️ Database error, returning empty data");
+    return [];
+  }
+}
+
+// --------------------
+// Fetch Business Rows (per SKU/ASIN) for Table View
+// --------------------
+async function fetchBusinessRows(startDate, endDate) {
+  try {
+    if (!dbConnected) {
+      console.log("⚠️ Database not connected, returning empty business rows (no mock)");
+      return [];
+    }
+
+    if (!startDate || !endDate) {
+      // Fallback: last 30 days if not provided
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 29);
+      const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      startDate = toYmd(start);
+      endDate = toYmd(end);
+    }
+
+    const query = `
+      SELECT 
+        DATE(date) as date,
+        COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin,
+        COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
+        COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
+        CAST(sessions AS INTEGER) as sessions,
+        CAST(page_views AS INTEGER) as page_views,
+        CAST(units_ordered AS INTEGER) as units_ordered,
+        CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
+      FROM amazon_sales_traffic
+      WHERE date::date >= $1::date 
+        AND date::date <= $2::date
+      ORDER BY DATE(date) DESC, ordered_product_sales DESC NULLS LAST
+    `;
+
+    const res = await client.query(query, [startDate, endDate]);
+    console.log(`📦 Fetched ${res.rows.length} business rows for table between ${startDate} and ${endDate}`);
+    
+    // If no data found for the specific date range, return empty array
+    if (res.rows.length === 0) {
+      console.log('🔍 No detailed rows found for selected date range - returning empty array');
+      return [];
+    }
+    
+    return res.rows;
+  } catch (err) {
+    console.error("❌ Error fetching business rows:", err);
     return [];
   }
 }
@@ -206,7 +370,7 @@ async function getGlobalDateRange() {
     if (!dbConnected) return null;
     const [adMinMax, bizMinMax] = await Promise.all([
       client.query('SELECT MIN(report_date) AS min, MAX(report_date) AS max FROM amazon_ads_reports'),
-      client.query('SELECT MIN(date) AS min, MAX(date) AS max FROM amazon_sales_traffic')
+      client.query('SELECT MIN(DATE(date)) AS min, MAX(DATE(date)) AS max FROM amazon_sales_traffic')
     ]);
     const dates = [];
     if (adMinMax.rows[0].min) { dates.push(new Date(adMinMax.rows[0].min)); }
@@ -275,7 +439,7 @@ function calculateDashboardKPIs(keywordData, businessData) {
   let totalAdSpend = 0, totalAdSales = 0, totalSales = 0, totalClicks = 0, totalImpressions = 0;
   let totalSessions = 0, totalPageViews = 0, totalUnitsOrdered = 0;
 
-  // Calculate from keyword data
+  // Calculate from keyword data (ads data)
   keywordData.forEach(row => {
     totalAdSpend += parseFloat(row.cost || 0);
     totalAdSales += parseFloat(row.sales_1d || 0);
@@ -283,7 +447,7 @@ function calculateDashboardKPIs(keywordData, businessData) {
     totalImpressions += parseInt(row.impressions || 0);
   });
 
-  // Calculate from business data (if available)
+  // Calculate from business data (ordered_product_sales = TOTAL SALES including ad + organic)
   if (businessData && businessData.length > 0) {
     businessData.forEach(row => {
       totalSales += parseFloat(row.ordered_product_sales || 0);
@@ -291,10 +455,29 @@ function calculateDashboardKPIs(keywordData, businessData) {
       totalPageViews += parseInt(row.page_views || 0);
       totalUnitsOrdered += parseInt(row.units_ordered || 0);
     });
-  } else {
-    // If no business data, use keyword data for total sales
-    totalSales = totalAdSales;
   }
+
+  // FIXED LOGIC: ordered_product_sales already includes both ad and organic sales
+  // Only use ad sales as fallback if NO business data is available at all
+  if (totalSales === 0 && totalAdSales > 0 && (!businessData || businessData.length === 0)) {
+    console.log('⚠️ No business data available, using ad sales as total sales fallback');
+    totalSales = totalAdSales;
+  } else if (totalSales > 0) {
+    console.log('✅ Using business data total sales (includes ad + organic)');
+  }
+
+  console.log('🔍 KPI Calculation Debug:', {
+    totalAdSpend,
+    totalAdSales,
+    totalSales,
+    businessDataLength: businessData ? businessData.length : 0,
+    keywordDataLength: keywordData ? keywordData.length : 0,
+    dataIntegrityCheck: totalSales >= totalAdSales ? 'PASS' : 'FAIL',
+    businessDataSample: businessData ? businessData.slice(0, 3).map(row => ({
+      date: row.date,
+      ordered_product_sales: row.ordered_product_sales
+    })) : 'No business data'
+  });
 
   return {
     adSpend: totalAdSpend,
@@ -314,10 +497,17 @@ function calculateDashboardKPIs(keywordData, businessData) {
   };
 }
 
+
 // --------------------
 // Transform Database Data for Frontend
 // --------------------
 function transformKeywordDataForFrontend(dbData, businessData = []) {
+  console.log('🔍 transformKeywordDataForFrontend called with:', {
+    dbDataLength: dbData.length,
+    businessDataLength: businessData.length,
+    sampleBusinessData: businessData.slice(0, 3)
+  });
+  
   // First, aggregate business data by date to get total sales per date
   const businessDataByDate = {};
   businessData.forEach(bizRow => {
@@ -347,6 +537,11 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
   // Debug: Show all available business dates
   console.log('🔍 All business dates available:', Object.keys(businessDataByDate));
 
+  // CRITICAL FIX: Create a map to track which dates have been processed for total sales
+  // This prevents duplicate total sales values when multiple keywords exist for the same date
+  const processedDates = new Set();
+  const totalSalesByDate = {};
+
   return dbData.map(row => {
     // Find matching business data for the same date to get real total sales
     // Use YYYY-MM-DD format to match business data keys
@@ -354,10 +549,27 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
     const keywordDateStr = keywordDate.toISOString().split('T')[0]; // YYYY-MM-DD format
     const matchingBusinessData = businessDataByDate[keywordDateStr];
     
-    // Use real business data if available, otherwise fall back to ad sales
-    const realTotalSales = matchingBusinessData 
-      ? matchingBusinessData.totalSales
-      : parseFloat(row.sales_1d || 0);
+    // FIXED LOGIC: ordered_product_sales = TOTAL SALES (ad + organic)
+    // Only use business data total sales once per date to avoid duplication
+    let realTotalSales = 0;
+    
+    if (matchingBusinessData && matchingBusinessData.totalSales > 0) {
+      // Use business data total sales only once per date
+      if (!processedDates.has(keywordDateStr)) {
+        realTotalSales = matchingBusinessData.totalSales;
+        totalSalesByDate[keywordDateStr] = realTotalSales;
+        processedDates.add(keywordDateStr);
+        console.log(`✅ Using business total sales for ${keywordDateStr}: ${realTotalSales}`);
+      } else {
+        // For subsequent keywords on the same date, use 0 to avoid duplication
+        realTotalSales = 0;
+        console.log(`⚠️ Duplicate date ${keywordDateStr}, using 0 for total sales`);
+      }
+    } else {
+      // No business data available - use 0 instead of ad sales to avoid confusion
+      realTotalSales = 0;
+      console.log(`❌ No business data for ${keywordDateStr}, using 0 for total sales`);
+    }
     
     // Debug: Check if we have business data for this date
     if (keywordDateStr.includes('2025-09-08') || keywordDateStr.includes('Sep 8')) {
@@ -366,7 +578,8 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
         businessDataAvailable: Object.keys(businessDataByDate),
         matchingBusinessData: matchingBusinessData ? matchingBusinessData.totalSales : 'No match',
         fallbackAdSales: parseFloat(row.sales_1d || 0),
-        finalTotalSales: realTotalSales
+        finalTotalSales: realTotalSales,
+        isFirstOccurrence: !processedDates.has(keywordDateStr)
       });
     }
     
@@ -386,7 +599,8 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
         realTotalSales,
         hasBusinessData: !!matchingBusinessData,
         businessDataValue: matchingBusinessData?.totalSales,
-        businessDataKeys: Object.keys(businessDataByDate)
+        businessDataKeys: Object.keys(businessDataByDate),
+        isFirstOccurrence: !processedDates.has(keywordDateStr)
       });
     }
     
@@ -396,7 +610,8 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
         index: dbData.indexOf(row),
         keywordDateStr,
         hasMatchingBusinessData: !!matchingBusinessData,
-        realTotalSales
+        realTotalSales,
+        isFirstOccurrence: !processedDates.has(keywordDateStr)
       });
     }
     
@@ -412,6 +627,16 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
       impressions: parseInt(row.impressions || 0),
       date: row.report_date
     };
+    
+    // Debug: Log when totalSales equals ad sales (indicates no business data match)
+    if (realTotalSales === parseFloat(row.sales_1d || 0) && parseFloat(row.sales_1d || 0) > 0) {
+      console.log('⚠️ No business data match for date:', {
+        date: keywordDateStr,
+        adSales: parseFloat(row.sales_1d || 0),
+        totalSales: realTotalSales,
+        hasBusinessData: !!matchingBusinessData
+      });
+    }
     
     // Debug: Log the final result for September 8th
     if (keywordDateStr.includes('2025-09-08')) {
@@ -436,11 +661,36 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
 
 // ✅ Health check endpoint
 app.get('/health', (req, res) => {
+  // Allow health to be called from any origin (covers file:// and other ports)
+  try {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+  } catch (_) {}
   res.json({ 
     status: 'OK', 
     message: 'Server is running',
     timestamp: new Date().toISOString(),
     database: dbConnected ? 'Connected' : 'Disconnected'
+  });
+});
+
+// ✅ Test endpoint to verify API calls are reaching the backend
+app.get('/api/test', (req, res) => {
+  console.log('🧪 TEST ENDPOINT CALLED - API is working!');
+  res.json({ 
+    message: 'Test endpoint working!', 
+    timestamp: new Date().toISOString(),
+    query: req.query
+  });
+});
+
+// ✅ Debug endpoint to clear cache and check status
+app.get('/debug/clear-cache', (req, res) => {
+  clearCache();
+  res.json({ 
+    message: 'Cache cleared',
+    database: dbConnected ? 'Connected' : 'Disconnected',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -477,12 +727,33 @@ app.get('/api/keywords', async (req, res) => {
   }
 });
 
-// ✅ Business data endpoint
+// Test endpoint removed - duplicate endpoint was causing conflicts
+
+// ✅ Business data endpoint - dedicated to business data only
 app.get('/api/business-data', async (req, res) => {
   try {
+    console.log('🚀 ===== BUSINESS DATA API ENDPOINT CALLED =====');
+    console.log('🔍 Request received at:', new Date().toISOString());
+    console.log('🔍 Query parameters:', req.query);
+    
+    if (!dbConnected) {
+      console.log('❌ Database not connected (business-data) - returning empty payload with 200');
+      const emptyKpis = {
+        totalSessions: 0,
+        totalPageViews: 0,
+        totalUnitsOrdered: 0,
+        totalSales: 0,
+        avgSessionsPerDay: 0,
+        conversionRate: 0
+      };
+      return res.json({ data: [], kpis: emptyKpis, hasData: false, reason: 'db_disconnected' });
+    }
     const { start, end } = req.query;
-    console.log('🔍 /api/business-data endpoint called with query params:', { start, end });
+    console.log('🔍 ===== BUSINESS DATA API CALLED - UPDATED VERSION =====');
+    console.log('🔍 Query params received:', { start, end });
     console.log('🔍 Full request query:', req.query);
+    console.log('🔍 Database connected status:', dbConnected);
+    // Use actual database data (no forced mock). If DB is unavailable, return empty data.
     
     let startDate = null, endDate = null;
     if (start && end) {
@@ -490,21 +761,90 @@ app.get('/api/business-data', async (req, res) => {
       startDate = start; // e.g., "2025-07-01"
       endDate = end;     // e.g., "2025-07-02"
       console.log('🔍 Date range set:', { startDate, endDate });
+
+      // Disable heuristic that widened single-day range to Lifetime to avoid hidden range changes
+      
+      // DEBUG: Check what dates exist in the database for this range
+      console.log('🔍 ===== CHECKING DATABASE FOR DATE RANGE =====');
+      try {
+        const dateCheckQuery = `
+          SELECT DISTINCT DATE(date) as date, COUNT(*) as record_count
+          FROM amazon_sales_traffic 
+          WHERE DATE(date) >= $1::date AND DATE(date) <= $2::date
+          GROUP BY DATE(date)
+          ORDER BY DATE(date)
+        `;
+        const dateCheckResult = await client.query(dateCheckQuery, [startDate, endDate]);
+        console.log('🔍 Dates found in database for range:', dateCheckResult.rows);
+        console.log('🔍 Total dates with data:', dateCheckResult.rows.length);
+        
+        // Also check what dates exist in the entire database
+        const allDatesQuery = `
+          SELECT DISTINCT DATE(date) as date
+          FROM amazon_sales_traffic 
+          ORDER BY DATE(date) DESC
+          LIMIT 20
+        `;
+        const allDatesResult = await client.query(allDatesQuery);
+        console.log('🔍 Recent dates in entire database:', allDatesResult.rows.map(r => r.date));
+        
+      } catch (debugErr) {
+        console.error('🔍 Error checking database dates:', debugErr);
+      }
     } else {
-      console.log('🔍 No date range provided, fetching all data');
+      console.log('🔍 No date range provided, computing Lifetime (DB min -> today)');
+      try {
+        const range = await getGlobalDateRange();
+        if (range && range.min && range.max) {
+          const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          startDate = toYmd(new Date(range.min));
+          // Lifetime goes through today, but also cap by DB max to avoid future gaps
+          const today = new Date();
+          const maxDb = new Date(range.max);
+          const endCap = (maxDb && maxDb < today) ? maxDb : today;
+          endDate = toYmd(endCap);
+          console.log('🔍 Lifetime resolved to:', { startDate, endDate });
+        }
+      } catch (e) {
+        console.log('⚠️ Could not compute global date range:', e?.message);
+      }
     }
 
-    console.log('🔍 Calling fetchBusinessData with:', { startDate, endDate });
-    const data = await fetchBusinessData(startDate, endDate);
-    const kpis = calculateBusinessKPIs(data);
-    
-    console.log('🔍 Returning response:', {
-      dataLength: data.length,
-      sampleDates: data.slice(0, 5).map(row => row.date),
-      kpis: kpis
+    // Fetch only detailed rows for this exact window and compute KPIs from them
+    let detailedData = [];
+    try {
+      console.log('🔍 ===== FETCHING DETAILED DATA (SINGLE SOURCE OF TRUTH) =====');
+      console.log('🔍 Parameters being passed to fetchBusinessRows:', { startDate, endDate });
+      detailedData = await fetchBusinessRows(startDate, endDate);
+    } catch (e) {
+      console.error('❌ Error fetching detailed rows:', e.message);
+      detailedData = [];
+    }
+
+    const sums = detailedData.reduce((acc, r) => {
+      acc.sessions += Number(r.sessions || 0);
+      acc.pageViews += Number(r.page_views || 0);
+      acc.units += Number(r.units_ordered || 0);
+      acc.sales += Number(r.ordered_product_sales || 0);
+      if (r.date) acc.dates.add(String(r.date).slice(0,10));
+      return acc;
+    }, { sessions: 0, pageViews: 0, units: 0, sales: 0, dates: new Set() });
+    const dayCount = sums.dates.size;
+    const kpis = {
+      totalSessions: sums.sessions,
+      totalPageViews: sums.pageViews,
+      totalUnitsOrdered: sums.units,
+      totalSales: sums.sales,
+      avgSessionsPerDay: dayCount > 0 ? (sums.sessions / dayCount) : 0,
+      conversionRate: sums.sessions > 0 ? (sums.units / sums.sessions) * 100 : 0
+    };
+    console.log('🔍 ===== FINAL RESPONSE (DETAILED-BASED KPIs) =====');
+    console.log('🔍 Response summary:', {
+      detailedDataLength: detailedData.length,
+      kpis,
+      dayCount
     });
-    
-    res.json({ data, kpis });
+    res.json({ data: detailedData, kpis });
   } catch (err) {
     console.error('❌ Error in /api/business-data endpoint:', err);
     res.status(500).json({ error: 'Failed to fetch business data' });
@@ -514,6 +854,24 @@ app.get('/api/business-data', async (req, res) => {
 // ✅ Analytics endpoint for dashboard with date filtering
 app.get('/api/analytics', async (req, res) => {
   try {
+    if (!dbConnected) {
+      // Graceful degrade: return empty payload instead of 503 to avoid UI errors
+      return res.json({
+        rows: [],
+        kpis: {
+          adSpend: 0,
+          adSales: 0,
+          totalSales: 0,
+          acos: 0,
+          tacos: 0,
+          roas: 0,
+          adClicks: 0,
+          avgCpc: 0
+        },
+        dataRange: null,
+        totalRows: 0
+      });
+    }
     const { start, end } = req.query;
     
     let startDate = null, endDate = null;
@@ -524,31 +882,86 @@ app.get('/api/analytics', async (req, res) => {
       endDate = end;     // e.g., "2025-07-02"
     }
     
+    // Use the exact start/end provided by the UI without modification
+    const effectiveEndDate = endDate;
+
     // Create cache key for this request
-    const cacheKey = `analytics_${startDate || 'all'}_${endDate || 'all'}`;
+    const cacheKey = `analytics_${startDate || 'all'}_${effectiveEndDate || endDate || 'all'}`;
     
+    // TEMPORARILY DISABLE CACHE to test the fix
     // Check cache first
     const cachedResult = getCachedData(cacheKey);
-    if (cachedResult) {
+    if (false && cachedResult) { // Disabled cache for testing
       console.log('📊 Returning cached analytics data');
       return res.json(cachedResult);
     }
     
-    // Fetch data - get business data based on date range
+    // Fetch data - ensure consistent date ranges for KPI calculations
     const [keywordData, businessDataForChart, businessDataForKPIs] = await Promise.all([
-      fetchKeywordData(startDate, endDate),
-      // For chart: Get ALL business data aggregated by date
-      fetchBusinessData(null, null),
-      // For KPIs: Get business data for the specific date range
-      fetchBusinessData(startDate, endDate)
+      // KPIs and rows should share the same effective range
+      fetchKeywordData(startDate, effectiveEndDate || endDate),
+      // For chart and KPIs: fetch business data directly for the requested range
+      fetchBusinessData(startDate, effectiveEndDate || endDate),
+      fetchBusinessData(startDate, effectiveEndDate || endDate)
     ]);
+    
+    // Already date-filtered from DB; use directly
+    let finalBusinessDataForKPIs = businessDataForKPIs || [];
+    let finalBusinessDataForFrontend = businessDataForKPIs || [];
+    
+    console.log('🔍 Business data strategy:', {
+      businessDataForKPIsLength: businessDataForKPIs.length,
+      businessDataForChartLength: businessDataForChart.length,
+      finalBusinessDataForKPIsLength: finalBusinessDataForKPIs.length,
+      finalBusinessDataForFrontendLength: finalBusinessDataForFrontend.length
+    });
+    
+    console.log('🔍 Data Fetch Results:', {
+      keywordDataLength: keywordData.length,
+      businessDataForChartLength: businessDataForChart.length,
+      businessDataForKPIsLength: businessDataForKPIs.length,
+      finalBusinessDataLength: finalBusinessDataForKPIs.length,
+      dateRange: { startDate, endDate, effectiveEndDate }
+    });
+    
+    // Debug: Show sample business data
+    if (finalBusinessDataForKPIs.length > 0) {
+      console.log('🔍 Sample business data for KPIs:', finalBusinessDataForKPIs.slice(0, 3).map(row => ({
+        date: row.date,
+        ordered_product_sales: row.ordered_product_sales
+      })));
+    } else {
+      console.log('❌ No business data available for KPI calculation');
+    }
     
     console.log(`📊 Fetched ${keywordData.length} keyword rows from database`);
     console.log(`📊 Fetched ${businessDataForChart.length} business rows for chart`);
     console.log(`📊 Fetched ${businessDataForKPIs.length} business rows for KPIs`);
+    console.log(`📊 Using ${finalBusinessDataForKPIs.length} business rows for final KPI calculation`);
+    console.log(`📊 Using ${finalBusinessDataForFrontend.length} business rows for frontend transformation`);
     
-    const kpis = calculateDashboardKPIs(keywordData, businessDataForKPIs);
-    const rows = transformKeywordDataForFrontend(keywordData, businessDataForChart);
+    let kpis = calculateDashboardKPIs(keywordData, finalBusinessDataForKPIs);
+
+    // Harden TOTAL SALES: compute directly via SQL SUM for the exact date window
+    try {
+      if (startDate && (effectiveEndDate || endDate)) {
+        const endBound = effectiveEndDate || endDate;
+        const totalSalesSql = `
+          SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
+          FROM amazon_sales_traffic
+          WHERE date::date >= $1::date 
+            AND date::date <= $2::date
+        `;
+        const totalSalesRes = await client.query(totalSalesSql, [startDate, endBound]);
+        const strictTotal = parseFloat(totalSalesRes.rows?.[0]?.total || 0);
+        // Override KPI totalSales and recompute dependent metrics
+        kpis.totalSales = strictTotal;
+        kpis.tacos = strictTotal > 0 ? (kpis.adSpend / strictTotal) * 100 : 0;
+      }
+    } catch (strictErr) {
+      console.log('⚠️ SQL strict total sales fallback failed:', strictErr.message);
+    }
+    const rows = transformKeywordDataForFrontend(keywordData, finalBusinessDataForFrontend);
     
     console.log(`📊 Transformed ${rows.length} rows for frontend`); 
     
@@ -652,10 +1065,10 @@ app.get('/api/business-date-range', async (req, res) => {
     // Only return dates that actually have business data
     const query = `
       SELECT 
-        MIN(date) as min_date,
-        MAX(date) as max_date,
+        MIN(DATE(date)) as min_date,
+        MAX(DATE(date)) as max_date,
         COUNT(*) as total_records,
-        COUNT(DISTINCT date) as unique_dates
+        COUNT(DISTINCT DATE(date)) as unique_dates
       FROM amazon_sales_traffic
       WHERE date IS NOT NULL
     `;
@@ -709,10 +1122,10 @@ app.get('/api/business-available-dates', async (req, res) => {
     
     // Get all unique dates that have business data
     const query = `
-      SELECT DISTINCT date
+      SELECT DISTINCT DATE(date) as date
       FROM amazon_sales_traffic
       WHERE date IS NOT NULL
-      ORDER BY date ASC
+      ORDER BY DATE(date) ASC
     `;
     
     const result = await client.query(query);
@@ -754,53 +1167,121 @@ app.get('/api/debug-dates', async (req, res) => {
     const { start, end } = req.query;
     console.log('🔍 Debug endpoint called with:', { start, end });
     
-    // Test 1: Get all dates in database
-    const allDatesQuery = `SELECT DISTINCT date FROM amazon_sales_traffic ORDER BY date DESC LIMIT 20`;
-    const allDatesResult = await client.query(allDatesQuery);
-    const allDates = allDatesResult.rows.map(row => row.date);
+    // Test 1: Get all dates in business table
+    const businessDatesQuery = `SELECT DISTINCT date FROM amazon_sales_traffic ORDER BY date DESC LIMIT 20`;
+    const businessDatesResult = await client.query(businessDatesQuery);
+    const businessDates = businessDatesResult.rows.map(row => row.date);
     
-    // Test 2: If date range provided, test the query
+    // Test 2: Get all dates in ads table
+    const adsDatesQuery = `SELECT DISTINCT report_date FROM amazon_ads_reports ORDER BY report_date DESC LIMIT 20`;
+    const adsDatesResult = await client.query(adsDatesQuery);
+    const adsDates = adsDatesResult.rows.map(row => row.report_date);
+    
+    // Test 3: Get date ranges for both tables
+    const businessRangeQuery = `SELECT MIN(date) as min_date, MAX(date) as max_date, COUNT(*) as count FROM amazon_sales_traffic`;
+    const businessRangeResult = await client.query(businessRangeQuery);
+    
+    const adsRangeQuery = `SELECT MIN(report_date) as min_date, MAX(report_date) as max_date, COUNT(*) as count FROM amazon_ads_reports`;
+    const adsRangeResult = await client.query(adsRangeQuery);
+    
+    // Test 4: If date range provided, test the query
     let rangeQueryResult = null;
     if (start && end) {
       const rangeQuery = `SELECT DISTINCT date FROM amazon_sales_traffic WHERE date >= $1::date AND date <= $2::date ORDER BY date`;
       rangeQueryResult = await client.query(rangeQuery, [start, end]);
     }
     
-    // Test 3: Get sample data
-    const sampleQuery = `SELECT date, parent_asin, sessions FROM amazon_sales_traffic ORDER BY date DESC LIMIT 10`;
-    const sampleResult = await client.query(sampleQuery);
+    // Test 5: Get sample data from both tables
+    const businessSampleQuery = `SELECT date, parent_asin, sessions FROM amazon_sales_traffic ORDER BY date DESC LIMIT 5`;
+    const businessSampleResult = await client.query(businessSampleQuery);
     
-    // Test 4: Check what happens with the exact same query as the main function (Asia/Kolkata date)
-    let mainQueryResult = null;
-    if (start && end) {
-      const mainQuery = `SELECT parent_asin, sku, sessions, page_views, units_ordered, ordered_product_sales, date FROM amazon_sales_traffic WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date ORDER BY date DESC LIMIT 5`;
-      mainQueryResult = await client.query(mainQuery, [start, end]);
-    }
-    
-    // Test 5: Test the new DATE() approach
-    let dateFunctionResult = null;
-    if (start && end) {
-      const dateFunctionQuery = `SELECT COUNT(*) as count FROM amazon_sales_traffic WHERE DATE(date) >= $1::date AND DATE(date) <= $2::date`;
-      const dateFunctionRes = await client.query(dateFunctionQuery, [start, end]);
-      dateFunctionResult = dateFunctionRes.rows[0].count;
-    }
+    const adsSampleQuery = `SELECT report_date, search_term, cost, sales_1d FROM amazon_ads_reports ORDER BY report_date DESC LIMIT 5`;
+    const adsSampleResult = await client.query(adsSampleQuery);
     
     res.json({
-      allDates: allDates,
+      businessDates: businessDates,
+      adsDates: adsDates,
+      businessRange: businessRangeResult.rows[0],
+      adsRange: adsRangeResult.rows[0],
       rangeQuery: start && end ? {
         start,
         end,
-        result: rangeQueryResult.rows.map(row => row.date)
+        result: rangeQueryResult ? rangeQueryResult.rows.map(row => row.date) : []
       } : null,
-      sampleData: sampleResult.rows,
-      mainQueryResult: mainQueryResult ? mainQueryResult.rows : null,
-      dateFunctionCount: dateFunctionResult,
-      totalRecords: allDatesResult.rowCount
+      businessSample: businessSampleResult.rows,
+      adsSample: adsSampleResult.rows,
+      totalBusinessRecords: businessDatesResult.rowCount,
+      totalAdsRecords: adsDatesResult.rowCount
     });
     
   } catch (error) {
     console.error('❌ Debug endpoint error:', error);
     res.status(500).json({ error: 'Debug endpoint failed' });
+  }
+});
+
+// ✅ Deterministic self-test endpoint: runs the same aggregation 3x and reports drift
+app.get('/api/self-test', async (req, res) => {
+  try {
+    if (!dbConnected) {
+      return res.status(500).json({ error: 'Database not connected' });
+    }
+    const { start, end } = req.query;
+    const startDate = start || (await getGlobalDateRange())?.min?.toISOString()?.slice(0,10);
+    const endDate = end || (await getGlobalDateRange())?.max?.toISOString()?.slice(0,10);
+
+    const runOnce = async () => {
+      const rows = await fetchBusinessRows(startDate, endDate);
+      const sums = rows.reduce((acc, r) => {
+        acc.sessions += Number(r.sessions || 0);
+        acc.pageViews += Number(r.page_views || 0);
+        acc.units += Number(r.units_ordered || 0);
+        acc.sales += Number(r.ordered_product_sales || 0);
+        if (r.date) acc.dates.add(String(r.date).slice(0,10));
+        return acc;
+      }, { sessions: 0, pageViews: 0, units: 0, sales: 0, dates: new Set() });
+      const dayCount = sums.dates.size;
+      const kpis = {
+        totalSessions: sums.sessions,
+        totalPageViews: sums.pageViews,
+        totalUnitsOrdered: sums.units,
+        totalSales: sums.sales,
+        avgSessionsPerDay: dayCount > 0 ? sums.sessions / dayCount : 0,
+        conversionRate: sums.sessions > 0 ? (sums.units / sums.sessions) * 100 : 0
+      };
+      return { rows: rows.length, kpis };
+    };
+
+    const r1 = await runOnce();
+    const r2 = await runOnce();
+    const r3 = await runOnce();
+
+    const norm = (v) => Math.round(Number(v || 0) * 1000) / 1000;
+    const normalize = (snap) => ({
+      rows: snap.rows,
+      kpis: {
+        totalSessions: norm(snap.kpis.totalSessions),
+        totalPageViews: norm(snap.kpis.totalPageViews),
+        totalUnitsOrdered: norm(snap.kpis.totalUnitsOrdered),
+        totalSales: norm(snap.kpis.totalSales),
+        avgSessionsPerDay: norm(snap.kpis.avgSessionsPerDay),
+        conversionRate: norm(snap.kpis.conversionRate)
+      }
+    });
+
+    const n1 = normalize(r1);
+    const n2 = normalize(r2);
+    const n3 = normalize(r3);
+
+    const consistent = JSON.stringify(n1) === JSON.stringify(n2) && JSON.stringify(n2) === JSON.stringify(n3);
+
+    res.json({
+      range: { start: startDate, end: endDate },
+      runs: { r1: n1, r2: n2, r3: n3 },
+      consistent
+    });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || 'Self-test failed' });
   }
 });
 
@@ -992,11 +1473,7 @@ app.get('/api/trend-reports', async (req, res) => {
         const clicks = parseInt(row.clicks || 0);
         const impressions = parseInt(row.impressions || 0);
         
-        // For search terms, estimate sessions from impressions and pageviews from clicks
-        // This provides meaningful data for the metrics that are selected
-        const estimatedSessions = impressions > 0 ? Math.round(impressions * 0.1) : clicks * 2; // 10% of impressions become sessions
-        const estimatedPageviews = clicks > 0 ? Math.round(clicks * 1.5) : estimatedSessions; // 1.5 pageviews per click
-        
+        // Do not estimate sessions/pageviews; show only actual ad metrics
         return {
           date: row.date,
           category: 'search-terms',
@@ -1009,9 +1486,9 @@ app.get('/api/trend-reports', async (req, res) => {
           acos: sales > 0 ? (spend / sales) * 100 : 0,
           tcos: sales > 0 ? (spend / sales) * 100 : 0,
           ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
-          sessions: estimatedSessions,
-          pageviews: estimatedPageviews,
-          conversionRate: estimatedSessions > 0 ? (clicks / estimatedSessions) * 100 : 0,
+          sessions: 0,
+          pageviews: 0,
+          conversionRate: 0,
           roas: spend > 0 ? sales / spend : 0
         };
       });
@@ -1025,6 +1502,8 @@ app.get('/api/trend-reports', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch trend reports data' });
   }
 });
+
+// Mock generators removed to avoid any possibility of non-real data
 
 // --------------------
 // Start Server

@@ -16,7 +16,7 @@
     <!-- Custom CSS -->
     <link rel="stylesheet" href="trend_reports.css">
 </head>
-<body>
+<body class="trend-page">
     <div class="dashboard-container">
         <!-- Hover trigger area for sidebar -->
         <div class="sidebar-trigger"></div>
@@ -206,6 +206,12 @@
                                             </div>
                                         </div>
                                     </div>
+
+                                    <!-- Mobile-only fullscreen rotate button -->
+                                    <button class="fullscreen-toggle-btn" id="trendChartRotateFullscreen" title="Rotate chart fullscreen on mobile">
+                                        <span class="material-icons">screen_rotation</span>
+                                        <span class="btn-text">Fullscreen</span>
+                                    </button>
                                 </div>
                             </div>
                             <div class="chart-wrapper">

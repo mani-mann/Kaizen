@@ -1,7 +1,7 @@
 // Amazon Analytics Dashboard JavaScript
 // Mute verbose console output in production to avoid noisy logs and any overhead
 (function() {
-    const ENABLE_DEBUG = true;
+    const ENABLE_DEBUG = false; // disable debug logs
     if (!ENABLE_DEBUG && typeof console !== 'undefined') {
         const noops = ['log', 'debug', 'info', 'group', 'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'table'];
         noops.forEach(fn => { try { console[fn] = () => {}; } catch(_) {} });
@@ -31,6 +31,16 @@ class AmazonDashboard {
         // Remove mock data - we'll get real data from database
         this.init();
     }
+    getApiBase() {
+        try {
+            const host = (typeof location !== 'undefined') ? location.hostname : '';
+            const port = (typeof location !== 'undefined') ? location.port : '';
+            const onBackend = (host === 'localhost' || host === '127.0.0.1') && port === '5000';
+            return onBackend ? '' : 'http://localhost:5000';
+        } catch (_) {
+            return 'http://localhost:5000';
+        }
+    }
     
     formatLabel(date, period) {
         if (period === 'monthly') {
@@ -45,22 +55,67 @@ class AmazonDashboard {
     }
 
     getDefaultDateRange() {
-        const end = new Date();
-        const start = new Date();
-        start.setDate(end.getDate() - 29);
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
-        
-        // Create date strings directly to avoid any timezone issues
-        const startDateStr = this.toInputDate(start);
-        const endDateStr = this.toInputDate(end);
-        
-        return { 
-            start, 
-            end,
-            startStr: startDateStr,
-            endStr: endDateStr
-        };
+        // Temporary fallback; will be replaced by backend min/max (lifetime)
+        const today = new Date();
+        const end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23,59,59,999);
+        const start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0,0,0,0);
+        return { start, end, startStr: this.toInputDate(start), endStr: this.toInputDate(end) };
+    }
+
+    async resolveDefaultRangeFromBackend() {
+        try {
+            const apiBase = this.getApiBase();
+
+            // Prefer ads (keywords) data range for the keywords page
+            let minDate = null;
+            let maxDate = null;
+
+            try {
+                const kwRes = await fetch(`${apiBase}/api/keywords`, { headers: { 'Accept': 'application/json' } });
+                if (kwRes.ok) {
+                    const kwPayload = await kwRes.json();
+                    const rows = Array.isArray(kwPayload?.data) ? kwPayload.data : [];
+                    rows.forEach(r => {
+                        const d = new Date(r.report_date || r.date);
+                        if (isNaN(d)) return;
+                        if (!minDate || d < minDate) minDate = new Date(d);
+                        if (!maxDate || d > maxDate) maxDate = new Date(d);
+                    });
+                }
+            } catch (_) { /* ignore keyword fetch errors */ }
+
+            // Fallback to global range if keywords had no dates
+            if (!minDate || !maxDate) {
+                try {
+                    const res = await fetch(`${apiBase}/api/analytics`, { headers: { 'Accept': 'application/json' } });
+                    if (res.ok) {
+                        const payload = await res.json();
+                        const range = payload?.dataRange;
+                        if (range && range.min && range.max) {
+                            minDate = new Date(range.min);
+                            maxDate = new Date(range.max);
+                        }
+                    }
+                } catch (_) { /* ignore */ }
+            }
+
+            if (!minDate || !maxDate || isNaN(minDate) || isNaN(maxDate)) return;
+
+            // Normalize bounds (no future)
+            minDate.setHours(0,0,0,0);
+            const today = new Date();
+            const latest = new Date(Math.min(new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23,59,59,999).getTime(), new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate(), 23,59,59,999).getTime()));
+
+            this.dateRange = {
+                start: minDate,
+                end: latest,
+                startStr: this.toInputDate(minDate),
+                endStr: this.toInputDate(latest)
+            };
+            this.dataMinDate = minDate;
+            this.dataMaxDate = latest;
+            this.updateDateDisplay();
+        } catch (_) { /* ignore */ }
     }
 
     stripTime(date) {
@@ -440,7 +495,8 @@ class AmazonDashboard {
 
     init() {
         this.bindEvents();
-        this.loadData();
+        // First resolve lifetime bounds so default shows all available data
+        this.resolveDefaultRangeFromBackend().then(() => this.loadData());
         this.startAutoRefresh();
         this.updateLastUpdateTime();
         this.initializeDatePicker();
@@ -493,6 +549,84 @@ class AmazonDashboard {
             const period = e.target.value;
             // Only update the chart, don't change table or other metrics
             this.updateChart(period);
+        });
+
+        // Fullscreen rotate button (mobile)
+        const fsBtn = document.getElementById('chartRotateFullscreen');
+        if (fsBtn) {
+            fsBtn.addEventListener('click', async () => {
+                try {
+                    const chartSection = document.querySelector('.chart-section .chart-container');
+                    if (!chartSection) return;
+                    // Toggle class for styling
+                    chartSection.classList.add('chart-fullscreen-active');
+                    // Request fullscreen on the container if supported
+                    if (chartSection.requestFullscreen) {
+                        await chartSection.requestFullscreen({ navigationUI: 'hide' });
+                    } else if (document.documentElement.requestFullscreen) {
+                        await document.documentElement.requestFullscreen();
+                    }
+                    // Attempt orientation lock; if not possible, enable rotate fallback class
+                    let locked = false;
+                    if (screen.orientation && screen.orientation.lock) {
+                        try { await screen.orientation.lock('landscape'); locked = true; } catch(_) { locked = false; }
+                    }
+                    if (!locked) {
+                        chartSection.classList.add('use-rotate-fallback');
+                    } else {
+                        chartSection.classList.remove('use-rotate-fallback');
+                    }
+                    // Resize the chart to fit fullscreen
+                    if (this.chart) {
+                        setTimeout(() => this.chart.resize(), 100);
+                    }
+                } catch (_) { /* no-op */ }
+            });
+        }
+
+        // Handle exiting fullscreen
+        document.addEventListener('fullscreenchange', () => {
+            const chartContainer = document.querySelector('.chart-section .chart-container');
+            if (!document.fullscreenElement && chartContainer) {
+                chartContainer.classList.remove('chart-fullscreen-active');
+                chartContainer.classList.remove('use-rotate-fallback');
+                if (this.chart) {
+                    setTimeout(() => this.chart.resize(), 100);
+                }
+                // Unlock orientation if supported
+                if (screen.orientation && screen.orientation.unlock) {
+                    try { screen.orientation.unlock(); } catch(_) {}
+                }
+            }
+        });
+
+        // Handle close button click (mobile fullscreen)
+        document.addEventListener('click', (e) => {
+            if (e.target.matches('.chart-fullscreen-active::before') || 
+                (e.target.parentElement && e.target.parentElement.classList.contains('chart-fullscreen-active'))) {
+                const chartContainer = document.querySelector('.chart-section .chart-container');
+                if (chartContainer && chartContainer.classList.contains('chart-fullscreen-active')) {
+                    // Exit fullscreen
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    } else if (document.mozCancelFullScreen) {
+                        document.mozCancelFullScreen();
+                    } else if (document.msExitFullscreen) {
+                        document.msExitFullscreen();
+                    }
+                    // Fallback: just remove classes if fullscreen API fails
+                    chartContainer.classList.remove('chart-fullscreen-active');
+                    chartContainer.classList.remove('use-rotate-fallback');
+                    if (this.chart) {
+                        setTimeout(() => this.chart.resize(), 100);
+                    }
+                    if (screen.orientation && screen.orientation.unlock) {
+                        try { screen.orientation.unlock(); } catch(_) {}
+                    }
+                }
+            }
         });
 
         // Date picker events
@@ -778,7 +912,7 @@ class AmazonDashboard {
             }
             
         } catch (error) {
-            console.error('Error loading data:', error);
+            // Error handling - data loading failed
             // Load sample data as fallback
             this.loadSampleData();
             // Ensure sample data is loaded before updating UI
@@ -819,7 +953,8 @@ class AmazonDashboard {
             });
             
             // Fetch data with same date filtering as KPIs
-            const res = await fetch(`http://localhost:5000/api/analytics?${params.toString()}`, { 
+            const apiBase = (location.port === '5000' || location.hostname !== '127.0.0.1') ? '' : 'http://localhost:5000';
+            const res = await fetch(`${apiBase}/api/analytics?${params.toString()}`, { 
                 headers: { 'Accept': 'application/json' } 
             });
             
@@ -867,7 +1002,7 @@ class AmazonDashboard {
             }
             
         } catch (e) {
-            console.error('loadChartData failed:', e);
+            // Chart data loading failed
             this.chartData = [];
         }
     }
@@ -884,7 +1019,8 @@ class AmazonDashboard {
             });
             
             // Use the backend server URL (port 5000)
-            const res = await fetch(`http://localhost:5000/api/analytics?${params.toString()}`, { 
+            const apiBase = (location.port === '5000' || location.hostname !== '127.0.0.1') ? '' : 'http://localhost:5000';
+            const res = await fetch(`${apiBase}/api/analytics?${params.toString()}`, { 
                 headers: { 'Accept': 'application/json' } 
             });
             
@@ -917,7 +1053,7 @@ class AmazonDashboard {
             }
             return payload;
         } catch (e) {
-            console.error('fetchAnalytics failed:', e);
+            // Analytics fetch failed
             return null; // Return null to trigger fallback
         }
     }
@@ -1646,10 +1782,7 @@ class AmazonDashboard {
                 weekEnd.setDate(weekStart.getDate() + 6);
                 periodKey = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
                 
-                // Debug weekly key generation for first few items
-                if (Object.keys(dataByPeriod).length < 3) {
-                    // Debug logging removed for performance
-                }
+                // Generate weekly key for data grouping
             } else {
                 periodKey = itemDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             }
@@ -1672,21 +1805,23 @@ class AmazonDashboard {
             // For totalSales, only add once per unique date to avoid duplication
             const dateKey = item.date; // Use the exact date as key
             if (!dataByPeriod[periodKey].datesProcessed.has(dateKey)) {
-                dataByPeriod[periodKey].totalSales += Number(item.totalSales || 0);
+                // CRITICAL FIX: Only add totalSales if it's greater than 0
+                // This prevents adding 0 values that were set to avoid duplication
+                const totalSalesValue = Number(item.totalSales || 0);
+                if (totalSalesValue > 0) {
+                    dataByPeriod[periodKey].totalSales += totalSalesValue;
+                }
                 dataByPeriod[periodKey].datesProcessed.add(dateKey);
                 
-                // Debug for Sep 8
-                if (dateKey.includes('2025-09-08')) {
-                    // Debug logging removed for performance
-                }
+                // Data processing complete
             }
         });
 
-        // Debug: Check if adSpend equals totalSales in aggregated data
+        // Data validation: Check for data consistency issues
         Object.keys(dataByPeriod).forEach(period => {
             const data = dataByPeriod[period];
             if (data.adSpend === data.totalSales) {
-                console.error(`🚨 FOUND THE BUG: Period ${period} has adSpend=${data.adSpend} equals totalSales=${data.totalSales}`);
+                // Data validation - adSpend equals totalSales indicates data issue
                 this.chartData.filter(item => {
                     const itemDate = new Date(item.date);
                     let periodKey;
@@ -1720,41 +1855,18 @@ class AmazonDashboard {
         // Debug: Show detailed weekly data if applicable
         if (period === 'weekly') {
             Object.keys(dataByPeriod).forEach(weekKey => {
-                // Debug logging removed for performance
+                // Data processing complete
             });
             
             // Check if we have any data
             if (Object.keys(dataByPeriod).length === 0) {
-                // Debug logging removed for performance
+                // Data processing complete
             }
         }
 
-        // Generate sample data if no real data available
+        // If no real data available, return empty datasets (no random/sample data)
         if (Object.keys(dataByPeriod).length === 0) {
-            const cursor = new Date(start);
-            while (cursor <= end) {
-                const periodKey = this.formatLabel(cursor, period);
-                labels.push(periodKey);
-                
-                // Generate sample data
-                adSpend.push(Math.random() * 3000 + 1000);
-                adSales.push(Math.random() * 5000 + 2000);
-                totalSales.push(Math.random() * 35000 + 15000);
-                acos.push(Math.random() * 50 + 20);
-                tacos.push(Math.random() * 30 + 10);
-
-                if (period === 'monthly') {
-                    cursor.setMonth(cursor.getMonth() + 1);
-                    cursor.setDate(1);
-                } else if (period === 'quarterly') {
-                    const nextMonth = cursor.getMonth() + 3;
-                    cursor.setMonth(nextMonth, 1);
-                } else if (period === 'weekly') {
-                    cursor.setDate(cursor.getDate() + 7);
-                } else {
-                    cursor.setDate(cursor.getDate() + 1);
-                }
-            }
+            return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
         } else {
             // Generate labels and populate data from real data
             // For weekly data, we need to ensure the labels match the keys in dataByPeriod
@@ -2497,7 +2609,7 @@ class AmazonDashboard {
                 this.exportToExcel();
             }
         } catch (error) {
-            console.error('Export error:', error);
+            // Export failed
             this.showNotification('Export failed. Please try again.', 'error');
         }
     }
@@ -2572,7 +2684,7 @@ class AmazonDashboard {
             this.showNotification(`CSV exported successfully! (${exportData.length} records)`, 'success');
             
         } catch (error) {
-            console.error('CSV export error:', error);
+            // CSV export failed
             this.showNotification('CSV export failed. Please try again.', 'error');
         }
     }
@@ -2648,7 +2760,7 @@ class AmazonDashboard {
             this.showNotification(`Excel file exported successfully! (${exportData.length} records)`, 'success');
             
         } catch (error) {
-            console.error('Excel export error:', error);
+            // Excel export failed
             this.showNotification('Excel export failed. Please try again.', 'error');
         }
     }
@@ -2730,11 +2842,12 @@ class AmazonDashboard {
     }
     
     startAutoRefresh() {
-        // Auto-refresh every 5 minutes
-        this.refreshInterval = setInterval(() => {
-            this.loadData();
-            this.updateLastUpdateTime();
-        }, 300000);
+        // Auto-refresh disabled for stable snapshots.
+        // If you want to re-enable, uncomment below.
+        // this.refreshInterval = setInterval(() => {
+        //     this.loadData();
+        //     this.updateLastUpdateTime();
+        // }, 300000);
     }
     
     stopAutoRefresh() {
