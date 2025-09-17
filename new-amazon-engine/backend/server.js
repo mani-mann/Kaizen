@@ -3,12 +3,6 @@ const express = require('express');
 const { Client } = require('pg');
 const cors = require('cors');
 
-// Global backend debug toggle (no logic changes, only silences verbose logs)
-const DEBUG = String(process.env.DEBUG || '').toLowerCase() === 'true';
-if (!DEBUG && typeof console !== 'undefined') {
-  ['log','debug','info','group','groupCollapsed','groupEnd','time','timeEnd','table'].forEach(fn => { try { console[fn] = () => {}; } catch(_) {} });
-}
-
 const app = express();
 // Allow all origins so the frontend can be opened from file:// or any port during dev
 app.use(cors());
