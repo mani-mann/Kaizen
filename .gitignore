@@ -1,1 +1,4 @@
 new-amazon-engine/**/node_modules/
+
+# Local task plan
+TASKS.md
