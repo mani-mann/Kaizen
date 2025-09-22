@@ -13,6 +13,12 @@
     <!-- Google Material Icons -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     
+    <!-- Shared Keyword UI Styles -->
+    <link rel="stylesheet" href="../keywordStyle.css">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <!-- Custom CSS -->
     <link rel="stylesheet" href="business_reports.css">
     <!-- Inline favicon to avoid 404 requests -->
@@ -197,6 +203,39 @@
                         </div>
                     </div>
 
+                    <!-- Performance Chart Section -->
+                    <div class="chart-section">
+                        <div class="chart-header">
+                            <div class="chart-title">
+                                <span class="material-icons">show_chart</span>
+                                <span>Business Performance Trends</span>
+                                <small>Track key metrics over time</small>
+                            </div>
+                            <div class="chart-controls">
+                                <div class="metric-selector">
+                                    <button class="metric-toggle-btn" id="metricToggle" title="Select metrics to display">
+                                        <span class="material-icons">visibility</span>
+                                        <span>Metrics</span>
+                                    </button>
+                                    <div class="metric-dropdown" id="metricDropdown" style="display:none">
+                                        <label><input type="checkbox" id="metric-sessions" checked> Sessions</label>
+                                        <label><input type="checkbox" id="metric-pageViews" checked> Page Views</label>
+                                        <label><input type="checkbox" id="metric-unitsOrdered" checked> Units Ordered</label>
+                                        <label><input type="checkbox" id="metric-sales" checked> Sales (₹)</label>
+                                    </div>
+                                </div>
+                                <select class="period-selector" id="chartPeriod" title="Change chart data aggregation period">
+                                    <option value="daily">Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="businessChart"></canvas>
+                        </div>
+                    </div>
+
                     <!-- Business Data Section -->
                     <div class="table-section">
                         <div class="table-header">
@@ -205,11 +244,11 @@
                                 <span>Product Performance Data</span>
                             </div>
                             <div class="table-actions">
-                                <button class="action-btn" id="exportExcel">
+                                <button class="action-btn" id="exportExcelComplete">
                                     <span class="material-icons">download</span>
                                     <span>Excel</span>
                                 </button>
-                                <button class="action-btn" id="exportCSV">
+                                <button class="action-btn" id="exportCSVComplete">
                                     <span class="material-icons">description</span>
                                     <span>CSV</span>
                                 </button>

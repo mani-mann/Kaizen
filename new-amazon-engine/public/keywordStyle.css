@@ -1,3 +1,16 @@
+/* Fullscreen chart breathing room */
+.chart-section .chart-container.chart-fullscreen-active {
+  padding: 12px;
+  margin: 8px;
+  border-radius: 12px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.chart-section .chart-container.chart-fullscreen-active canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
 /* CSS Custom Properties (Variables) */
 :root {
   /* Light theme colors to match your reference */
@@ -517,6 +530,35 @@ body {
   max-height: 340px;
   overflow-y: auto;
 }
+
+/* Mobile-specific dropdown improvements */
+@media (max-width: 768px) {
+  .preset-dropdown {
+    position: fixed;
+    top: auto;
+    right: 16px;
+    left: 16px;
+    width: auto;
+    max-width: calc(100vw - 32px);
+    max-height: 50vh;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.15);
+    border-radius: 12px;
+    padding: 12px;
+    z-index: 10020;
+  }
+  
+  .preset-dropdown button {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 14px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+  }
+  
+  .preset-dropdown button:last-child {
+    margin-bottom: 0;
+  }
+}
 .preset-dropdown button {
   display: block;
   width: 180px;
@@ -622,10 +664,81 @@ body {
   border-color: var(--orange);
 }
 
+/* Metric Selector Styles */
+.metric-selector {
+  position: relative;
+}
+
+.metric-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+}
+
+.metric-toggle-btn:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+  background-color: var(--bg-hover);
+}
+
+.metric-toggle-btn .material-icons {
+  font-size: 16px;
+}
+
+.metric-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+  z-index: 1002;
+  min-width: 180px;
+}
+
+.metric-dropdown label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+  transition: color var(--transition-fast);
+}
+
+.metric-dropdown label:hover {
+  color: var(--orange);
+}
+
+.metric-dropdown input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--orange);
+}
+
 .chart-container {
   padding: var(--spacing-lg);
   height: 300px;
   position: relative;
+  overflow: visible;
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+  border: 2px solid #e0e6ed;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 /* Fullscreen landscape mode */
@@ -675,6 +788,51 @@ body {
     background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%) !important;
   }
   
+  /* Ensure mobile navigation is visible in fullscreen */
+  .chart-fullscreen-active .mobile-week-nav {
+    display: flex !important;
+    position: fixed !important;
+    bottom: 20px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    z-index: 10020 !important;
+    background: rgba(255, 255, 255, 0.95) !important;
+    backdrop-filter: blur(10px) !important;
+    border: none !important;
+    border-radius: 16px !important;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2) !important;
+    /* Make it more compact */
+    padding: 12px 16px !important;
+    max-width: 320px !important;
+    width: auto !important;
+    gap: 12px !important;
+  }
+  
+  /* Fullscreen navigation buttons styling */
+  .chart-fullscreen-active .mobile-nav-btn {
+    width: 50px !important;
+    height: 50px !important;
+    background: #007bff !important;
+    border: none !important;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4) !important;
+  }
+  
+  .chart-fullscreen-active .mobile-nav-btn .material-icons {
+    font-size: 28px !important;
+    font-weight: bold !important;
+  }
+  
+  .chart-fullscreen-active .current-week {
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    color: #007bff !important;
+  }
+  
+  .chart-fullscreen-active .week-counter {
+    font-size: 12px !important;
+    color: #6c757d !important;
+  }
+  
   .chart-fullscreen-active canvas {
     width: 95vw !important;
     height: 50vh !important;
@@ -682,7 +840,7 @@ body {
     max-height: 50vh !important;
     padding: 0 !important;
     margin: 0 !important;
-    border: none !important;
+    border: 3px solid #007bff !important;
     border-radius: 12px !important;
     box-shadow: 0 10px 30px rgba(0,0,0,0.1) !important;
     background: white !important;
@@ -695,19 +853,21 @@ body {
     top: 20px !important;
     right: 20px !important;
     z-index: 10020 !important;
-    background: rgba(0,0,0,0.7) !important;
+    background: rgba(0,0,0,0.8) !important;
     color: white !important;
-    width: 40px !important;
-    height: 40px !important;
+    width: 44px !important;
+    height: 44px !important;
     border-radius: 50% !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    font-size: 18px !important;
+    font-size: 20px !important;
     font-weight: bold !important;
     cursor: pointer !important;
     transition: all 0.3s ease !important;
     backdrop-filter: blur(10px) !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+    border: 2px solid rgba(255,255,255,0.2) !important;
   }
   
   .chart-fullscreen-active::before:hover {
@@ -1401,6 +1561,14 @@ body {
   /* Mobile: Prevent horizontal scroll - 100% width */
   * {
     box-sizing: border-box;
+    max-width: 100% !important;
+  }
+  
+  /* Prevent any horizontal scrolling */
+  html, body {
+    overflow-x: hidden !important;
+    width: 100% !important;
+    max-width: 100vw !important;
   }
   
   /* Add top padding to prevent mobile menu button overlap */
@@ -1487,8 +1655,15 @@ body {
   .chart-container {
     width: 100% !important;
     max-width: 100% !important;
-    height: 250px;
-    overflow-x: hidden !important;
+    height: auto !important;
+    min-height: 250px;
+    overflow: visible !important;
+    box-sizing: border-box !important;
+    padding-bottom: 80px;
+    border: none !important;
+    border-radius: 12px !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
   }
   
   /* Mobile: Full width table section - CONTROLLED SCROLL */
@@ -1625,7 +1800,9 @@ body {
   
   /* Enhanced Chart Mobile Styles */
   .chart-container {
-    height: 250px !important;
+    height: auto !important;
+    min-height: 250px;
+    padding-bottom: 100px !important;
   }
   
   .chart-header {
@@ -2178,5 +2355,92 @@ body {
   .range-calendar-confirm {
     width: 100%;
     min-width: auto;
+  }
+}
+
+/* Mobile Week Navigation */
+.mobile-week-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-primary);
+  border: none;
+  border-radius: 12px;
+  margin: 12px auto;
+  gap: 12px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 340px;
+  box-sizing: border-box;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.mobile-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: #007bff;
+  border: none;
+  border-radius: 10px;
+  color: white;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+  box-shadow: 0 3px 8px rgba(0,123,255,0.3);
+}
+
+.mobile-nav-btn:hover:not(:disabled) {
+  background: #0056b3;
+  border-color: #004085;
+  color: white;
+  transform: scale(1.05);
+  box-shadow: 0 6px 12px rgba(0,123,255,0.4);
+}
+
+.mobile-nav-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mobile-nav-btn .material-icons {
+  font-size: 26px;
+  font-weight: bold;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+.mobile-week-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.current-week {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.week-counter {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 769px) {
+  .mobile-week-nav {
+    display: none;
   }
 }

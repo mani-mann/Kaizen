@@ -92,6 +92,31 @@ client.on('end', () => {
   console.warn('⚠️ PostgreSQL connection ended');
 });
 
+// Lightweight DB probe and reconnect helpers used by health checks
+async function probeDb() {
+  try {
+    // Use a very cheap query
+    await client.query('SELECT 1');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function reconnectDbIfNeeded() {
+  if (dbConnected) return true;
+  try {
+    // Attempt to connect; pg Client.connect() is idempotent if already connected
+    await client.connect();
+    dbConnected = true;
+    console.log('🔌 Reconnected to PostgreSQL');
+    return true;
+  } catch (err) {
+    console.warn('⚠️ Reconnect attempt failed:', err?.message || err);
+    return false;
+  }
+}
+
 // --------------------
 // Fetch Keyword Data with Date Filtering
 // --------------------
@@ -148,15 +173,15 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       console.log('📊 Fetching ALL business data aggregated by date for chart');
       const query = `
         SELECT 
-          DATE(date) as date,
+          (date AT TIME ZONE 'Asia/Kolkata')::date as date,
           SUM(CAST(sessions AS INTEGER)) as sessions,
           SUM(CAST(page_views AS INTEGER)) as page_views,
           SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
           SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
         FROM amazon_sales_traffic
         WHERE date IS NOT NULL
-        GROUP BY DATE(date)
-        ORDER BY DATE(date) DESC
+        GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
+        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
       `;
       
       const res = await client.query(query);
@@ -184,16 +209,16 @@ async function fetchBusinessData(startDate = null, endDate = null) {
     // Use direct date comparison without timezone conversion to match stored dates
     let query = `
       SELECT 
-        DATE(date) as date,
+        (date AT TIME ZONE 'Asia/Kolkata')::date as date,
         SUM(CAST(sessions AS INTEGER)) as sessions,
         SUM(CAST(page_views AS INTEGER)) as page_views,
         SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
         SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
       FROM amazon_sales_traffic
-      WHERE date::date >= $1::date 
-        AND date::date <= $2::date
-      GROUP BY DATE(date)
-      ORDER BY DATE(date) DESC
+      WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+        AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+      GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
+      ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
     `;
     
     console.log('🔍 ===== EXECUTING BUSINESS DATA QUERY =====');
@@ -203,10 +228,10 @@ async function fetchBusinessData(startDate = null, endDate = null) {
     // First, let's check what dates actually exist in the database
     console.log('🔍 ===== DEBUGGING: CHECKING DATABASE DATES =====');
     const debugQuery = `
-      SELECT DISTINCT DATE(date) as date, COUNT(*) as count
+      SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date, COUNT(*) as count
       FROM amazon_sales_traffic 
-      GROUP BY DATE(date)
-      ORDER BY DATE(date) DESC
+      GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
+      ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
       LIMIT 10
     `;
     const debugResult = await client.query(debugQuery);
@@ -227,7 +252,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       console.log('🔍 Let me check what dates actually exist in the database...');
       
       // Check all available dates
-      const dateCheck = await client.query('SELECT DISTINCT date::date as date FROM amazon_sales_traffic ORDER BY date LIMIT 10');
+      const dateCheck = await client.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic ORDER BY date LIMIT 10");
       console.log('🔍 Available dates in database:', dateCheck.rows.map(r => r.date));
       
       // Check raw date values
@@ -239,7 +264,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       console.log('🔍 Records in August 2025:', augCheck.rows[0].count);
       
       // Check what dates exist around the requested range
-      const rangeCheck = await client.query('SELECT DISTINCT date::date as date FROM amazon_sales_traffic WHERE date::date >= $1::date - INTERVAL \'7 days\' AND date::date <= $2::date + INTERVAL \'7 days\' ORDER BY date', [startDate, endDate]);
+      const rangeCheck = await client.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date - INTERVAL '7 days' AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date + INTERVAL '7 days' ORDER BY date", [startDate, endDate]);
       console.log('🔍 Dates around requested range (±7 days):', rangeCheck.rows.map(r => r.date));
       
       // Check total records in table
@@ -250,11 +275,11 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       
       // Check if there are ANY dates within the selected range that have data
       const availableDatesQuery = `
-        SELECT DISTINCT DATE(date) as date
+        SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date
         FROM amazon_sales_traffic
-        WHERE date::date >= $1::date 
-          AND date::date <= $2::date
-        ORDER BY DATE(date) DESC
+        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
       `;
       
       const availableDatesResult = await client.query(availableDatesQuery, [startDate, endDate]);
@@ -264,16 +289,16 @@ async function fetchBusinessData(startDate = null, endDate = null) {
         // Get data for all available dates within the selected range
         const availableDataQuery = `
           SELECT 
-            DATE(date) as date,
+            (date AT TIME ZONE 'Asia/Kolkata')::date as date,
             SUM(CAST(sessions AS INTEGER)) as sessions,
             SUM(CAST(page_views AS INTEGER)) as page_views,
             SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
             SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
           FROM amazon_sales_traffic
-          WHERE date::date >= $1::date 
-            AND date::date <= $2::date
-          GROUP BY DATE(date)
-          ORDER BY DATE(date) DESC
+          WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+            AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+          GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
+          ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
         `;
         
         const availableDataResult = await client.query(availableDataQuery, [startDate, endDate]);
@@ -309,7 +334,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
 // --------------------
 // Fetch Business Rows (per SKU/ASIN) for Table View
 // --------------------
-async function fetchBusinessRows(startDate, endDate) {
+async function fetchBusinessRows(startDate, endDate, includeAll = false) {
   try {
     if (!dbConnected) {
       console.log("⚠️ Database not connected, returning empty business rows (no mock)");
@@ -326,21 +351,46 @@ async function fetchBusinessRows(startDate, endDate) {
       endDate = toYmd(end);
     }
 
-    const query = `
-      SELECT 
-        DATE(date) as date,
-        COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin,
-        COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
-        COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
-        CAST(sessions AS INTEGER) as sessions,
-        CAST(page_views AS INTEGER) as page_views,
-        CAST(units_ordered AS INTEGER) as units_ordered,
-        CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
-      FROM amazon_sales_traffic
-      WHERE date::date >= $1::date 
-        AND date::date <= $2::date
-      ORDER BY DATE(date) DESC, ordered_product_sales DESC NULLS LAST
-    `;
+    let query;
+    if (includeAll) {
+      // Include ALL individual entries (for complete export)
+      query = `
+        SELECT 
+          (date AT TIME ZONE 'Asia/Kolkata')::date as date,
+          COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin,
+          COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
+          COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
+          CAST(sessions AS INTEGER) as sessions,
+          CAST(page_views AS INTEGER) as page_views,
+          CAST(units_ordered AS INTEGER) as units_ordered,
+          CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
+        FROM amazon_sales_traffic
+        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC, ordered_product_sales DESC NULLS LAST
+      `;
+    } else {
+      // Only include rows with activity (for frontend table)
+      query = `
+        SELECT 
+          (date AT TIME ZONE 'Asia/Kolkata')::date as date,
+          COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin,
+          COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
+          COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
+          CAST(sessions AS INTEGER) as sessions,
+          CAST(page_views AS INTEGER) as page_views,
+          CAST(units_ordered AS INTEGER) as units_ordered,
+          CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
+        FROM amazon_sales_traffic
+        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+          AND (CAST(sessions AS INTEGER) > 0 
+               OR CAST(page_views AS INTEGER) > 0 
+               OR CAST(units_ordered AS INTEGER) > 0 
+               OR CAST(ordered_product_sales AS DECIMAL) > 0)
+        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC, ordered_product_sales DESC NULLS LAST
+      `;
+    }
 
     const res = await client.query(query, [startDate, endDate]);
     console.log(`📦 Fetched ${res.rows.length} business rows for table between ${startDate} and ${endDate}`);
@@ -364,7 +414,7 @@ async function getGlobalDateRange() {
     if (!dbConnected) return null;
     const [adMinMax, bizMinMax] = await Promise.all([
       client.query('SELECT MIN(report_date) AS min, MAX(report_date) AS max FROM amazon_ads_reports'),
-      client.query('SELECT MIN(DATE(date)) AS min, MAX(DATE(date)) AS max FROM amazon_sales_traffic')
+      client.query("SELECT MIN((date AT TIME ZONE 'Asia/Kolkata')::date) AS min, MAX((date AT TIME ZONE 'Asia/Kolkata')::date) AS max FROM amazon_sales_traffic")
     ]);
     const dates = [];
     if (adMinMax.rows[0].min) { dates.push(new Date(adMinMax.rows[0].min)); }
@@ -654,17 +704,27 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
 // --------------------
 
 // ✅ Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   // Allow health to be called from any origin (covers file:// and other ports)
   try {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
   } catch (_) {}
-  res.json({ 
-    status: 'OK', 
+  // Live-check DB; auto-reconnect if needed
+  let database = dbConnected ? 'Connected' : 'Disconnected';
+  if (!dbConnected) {
+    const re = await reconnectDbIfNeeded();
+    database = re ? 'Connected' : 'Disconnected';
+  }
+  if (database === 'Connected') {
+    const ok = await probeDb();
+    if (!ok) database = 'Disconnected';
+  }
+  res.json({
+    status: 'OK',
     message: 'Server is running',
     timestamp: new Date().toISOString(),
-    database: dbConnected ? 'Connected' : 'Disconnected'
+    database
   });
 });
 
@@ -742,9 +802,9 @@ app.get('/api/business-data', async (req, res) => {
       };
       return res.json({ data: [], kpis: emptyKpis, hasData: false, reason: 'db_disconnected' });
     }
-    const { start, end } = req.query;
+    const { start, end, includeAll } = req.query;
     console.log('🔍 ===== BUSINESS DATA API CALLED - UPDATED VERSION =====');
-    console.log('🔍 Query params received:', { start, end });
+    console.log('🔍 Query params received:', { start, end, includeAll });
     console.log('🔍 Full request query:', req.query);
     console.log('🔍 Database connected status:', dbConnected);
     // Use actual database data (no forced mock). If DB is unavailable, return empty data.
@@ -762,11 +822,11 @@ app.get('/api/business-data', async (req, res) => {
       console.log('🔍 ===== CHECKING DATABASE FOR DATE RANGE =====');
       try {
         const dateCheckQuery = `
-          SELECT DISTINCT DATE(date) as date, COUNT(*) as record_count
+          SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date, COUNT(*) as record_count
           FROM amazon_sales_traffic 
-          WHERE DATE(date) >= $1::date AND DATE(date) <= $2::date
-          GROUP BY DATE(date)
-          ORDER BY DATE(date)
+          WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+          GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
+          ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date
         `;
         const dateCheckResult = await client.query(dateCheckQuery, [startDate, endDate]);
         console.log('🔍 Dates found in database for range:', dateCheckResult.rows);
@@ -774,9 +834,9 @@ app.get('/api/business-data', async (req, res) => {
         
         // Also check what dates exist in the entire database
         const allDatesQuery = `
-          SELECT DISTINCT DATE(date) as date
+          SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date
           FROM amazon_sales_traffic 
-          ORDER BY DATE(date) DESC
+          ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
           LIMIT 20
         `;
         const allDatesResult = await client.query(allDatesQuery);
@@ -809,7 +869,7 @@ app.get('/api/business-data', async (req, res) => {
     try {
       console.log('🔍 ===== FETCHING DETAILED DATA (SINGLE SOURCE OF TRUTH) =====');
       console.log('🔍 Parameters being passed to fetchBusinessRows:', { startDate, endDate });
-      detailedData = await fetchBusinessRows(startDate, endDate);
+      detailedData = await fetchBusinessRows(startDate, endDate, includeAll === 'true');
     } catch (e) {
       console.error('❌ Error fetching detailed rows:', e.message);
       detailedData = [];
@@ -943,8 +1003,8 @@ app.get('/api/analytics', async (req, res) => {
         const totalSalesSql = `
           SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
           FROM amazon_sales_traffic
-          WHERE date::date >= $1::date 
-            AND date::date <= $2::date
+          WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+            AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
         `;
         const totalSalesRes = await client.query(totalSalesSql, [startDate, endBound]);
         const strictTotal = parseFloat(totalSalesRes.rows?.[0]?.total || 0);
@@ -1059,10 +1119,10 @@ app.get('/api/business-date-range', async (req, res) => {
     // Only return dates that actually have business data
     const query = `
       SELECT 
-        MIN(DATE(date)) as min_date,
-        MAX(DATE(date)) as max_date,
+        MIN((date AT TIME ZONE 'Asia/Kolkata')::date) as min_date,
+        MAX((date AT TIME ZONE 'Asia/Kolkata')::date) as max_date,
         COUNT(*) as total_records,
-        COUNT(DISTINCT DATE(date)) as unique_dates
+        COUNT(DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date) as unique_dates
       FROM amazon_sales_traffic
       WHERE date IS NOT NULL
     `;
@@ -1116,10 +1176,10 @@ app.get('/api/business-available-dates', async (req, res) => {
     
     // Get all unique dates that have business data
     const query = `
-      SELECT DISTINCT DATE(date) as date
+      SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date
       FROM amazon_sales_traffic
       WHERE date IS NOT NULL
-      ORDER BY DATE(date) ASC
+      ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date ASC
     `;
     
     const result = await client.query(query);
@@ -1155,7 +1215,8 @@ app.get('/api/business-available-dates', async (req, res) => {
 app.get('/api/debug-dates', async (req, res) => {
   try {
     if (!dbConnected) {
-      return res.status(500).json({ error: 'Database not connected' });
+      // Fail-soft: expose state but do not 500
+      return res.json({ error: 'Database not connected', data: null });
     }
     
     const { start, end } = req.query;
@@ -1209,8 +1270,9 @@ app.get('/api/debug-dates', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Debug endpoint error:', error);
-    res.status(500).json({ error: 'Debug endpoint failed' });
+    console.error('❌ Debug endpoint error (soft return):', error?.message || error);
+    // Fail-soft to avoid breaking frontend probes
+    res.json({ error: 'Debug endpoint failed', data: null });
   }
 });
 
@@ -1492,8 +1554,9 @@ app.get('/api/trend-reports', async (req, res) => {
     res.json({ data, category, timePeriod });
     
   } catch (error) {
-    console.error('❌ Trend Reports endpoint error:', error);
-    res.status(500).json({ error: 'Failed to fetch trend reports data' });
+    console.error('❌ Trend Reports endpoint error (soft return):', error?.message || error);
+    const { category, timePeriod } = req.query || {};
+    return res.json({ data: [], category: category || null, timePeriod: timePeriod || null });
   }
 });
 
@@ -1503,5 +1566,5 @@ app.get('/api/trend-reports', async (req, res) => {
 // Start Server
 // --------------------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on http://localhost:${PORT}`));
 

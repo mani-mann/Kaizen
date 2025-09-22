@@ -28,6 +28,13 @@ class AmazonDashboard {
         this.rowsPerPage = 25; // Show 25 entries per page like reference image
         this.activeFilters = { campaign: '', keyword: '', campaigns: [], keywords: [] };
         
+        // Mobile navigation state for daily view
+        this.mobileWeekIndex = 0;
+        this.mobileWeekPeriods = [];
+        
+        // Selected metrics for chart (persist across period changes)
+        this.selectedMetrics = ['totalSales', 'adSales', 'adSpend', 'acos', 'tcos'];
+        
         // Remove mock data - we'll get real data from database
         this.init();
     }
@@ -35,8 +42,20 @@ class AmazonDashboard {
         try {
             const host = (typeof location !== 'undefined') ? location.hostname : '';
             const port = (typeof location !== 'undefined') ? location.port : '';
-            const onBackend = (host === 'localhost' || host === '127.0.0.1') && port === '5000';
-            return onBackend ? '' : 'http://localhost:5000';
+            const protocol = (typeof location !== 'undefined') ? location.protocol : 'http:';
+            
+            // If accessing through ngrok, use the ngrok URL for backend
+            if (host.includes('ngrok-free.app') || host.includes('ngrok.io')) {
+                return `${protocol}//${host}`;
+            }
+            
+            // If on port 5000 (backend serving frontend), use relative URLs
+            if (port === '5000' || (host === 'localhost' && port === '')) {
+                return '';
+            }
+            
+            // If on Live Server (port 5500) or other ports, connect to backend on port 5000
+            return 'http://localhost:5000';
         } catch (_) {
             return 'http://localhost:5000';
         }
@@ -55,10 +74,27 @@ class AmazonDashboard {
     }
 
     getDefaultDateRange() {
-        // Temporary fallback; will be replaced by backend min/max (lifetime)
-        const today = new Date();
-        const end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23,59,59,999);
-        const start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0,0,0,0);
+        // Show lifetime data by default (from May 6 to actual last data date)
+        // Start from May 6, 2024 (when ads data begins)
+        const start = new Date(2024, 4, 6, 0, 0, 0, 0); // Month is 0-indexed, so 4 = May
+        
+        // Use actual last date from database if available, otherwise use today
+        let end;
+        if (this.chartData && this.chartData.length > 0) {
+            const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
+            if (allDates.length > 0) {
+                end = new Date(Math.max(...allDates));
+                end.setHours(23, 59, 59, 999); // Set to end of day
+            } else {
+                end = new Date();
+                end.setHours(23, 59, 59, 999);
+            }
+        } else {
+            // Fallback to today if no chart data loaded yet
+            end = new Date();
+            end.setHours(23, 59, 59, 999);
+        }
+        
         return { start, end, startStr: this.toInputDate(start), endStr: this.toInputDate(end) };
     }
 
@@ -66,25 +102,24 @@ class AmazonDashboard {
         try {
             const apiBase = this.getApiBase();
 
-            // Prefer ads (keywords) data range for the keywords page
+            // Prefer ADS table min/max so start shows true ads start (e.g., May 5)
             let minDate = null;
             let maxDate = null;
 
+            // 1) Try ads range from debug endpoint
             try {
-                const kwRes = await fetch(`${apiBase}/api/keywords`, { headers: { 'Accept': 'application/json' } });
-                if (kwRes.ok) {
-                    const kwPayload = await kwRes.json();
-                    const rows = Array.isArray(kwPayload?.data) ? kwPayload.data : [];
-                    rows.forEach(r => {
-                        const d = new Date(r.report_date || r.date);
-                        if (isNaN(d)) return;
-                        if (!minDate || d < minDate) minDate = new Date(d);
-                        if (!maxDate || d > maxDate) maxDate = new Date(d);
-                    });
+                const dbg = await fetch(`${apiBase}/api/debug-dates`, { headers: { 'Accept': 'application/json' } });
+                if (dbg.ok) {
+                    const j = await dbg.json();
+                    const ar = j?.adsRange;
+                    if (ar && ar.min_date && ar.max_date) {
+                        minDate = new Date(ar.min_date);
+                        maxDate = new Date(ar.max_date);
+                    }
                 }
-            } catch (_) { /* ignore keyword fetch errors */ }
+            } catch (_) { /* ignore */ }
 
-            // Fallback to global range if keywords had no dates
+            // 2) Fallback to global range if adsRange not available
             if (!minDate || !maxDate) {
                 try {
                     const res = await fetch(`${apiBase}/api/analytics`, { headers: { 'Accept': 'application/json' } });
@@ -97,6 +132,23 @@ class AmazonDashboard {
                         }
                     }
                 } catch (_) { /* ignore */ }
+            }
+
+            // Fallback to keywords scan if global range unavailable
+            if (!minDate || !maxDate) {
+                try {
+                    const kwRes = await fetch(`${apiBase}/api/keywords`, { headers: { 'Accept': 'application/json' } });
+                    if (kwRes.ok) {
+                        const kwPayload = await kwRes.json();
+                        const rows = Array.isArray(kwPayload?.data) ? kwPayload.data : [];
+                        rows.forEach(r => {
+                            const d = new Date(r.report_date || r.date);
+                            if (isNaN(d)) return;
+                            if (!minDate || d < minDate) minDate = new Date(d);
+                            if (!maxDate || d > maxDate) maxDate = new Date(d);
+                        });
+                    }
+                } catch (_) { /* ignore keyword fetch errors */ }
             }
 
             if (!minDate || !maxDate || isNaN(minDate) || isNaN(maxDate)) return;
@@ -115,6 +167,8 @@ class AmazonDashboard {
             this.dataMinDate = minDate;
             this.dataMaxDate = latest;
             this.updateDateDisplay();
+            // Ensure opening calendar starts at the first month of data
+            this.calendarMonth = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
         } catch (_) { /* ignore */ }
     }
 
@@ -503,6 +557,8 @@ class AmazonDashboard {
         this.updateDateDisplay();
         // Ensure filters reflect default tab at startup
         this.updateFilterVisibility();
+        // Initialize metric checkboxes to match selected metrics
+        this.syncMetricCheckboxes();
     }
     
     bindEvents() {
@@ -549,7 +605,51 @@ class AmazonDashboard {
             const period = e.target.value;
             // Only update the chart, don't change table or other metrics
             this.updateChart(period);
+            
+            // Update mobile navigation when period changes
+            const isMobile = window.innerWidth <= 768;
+            if (isMobile) {
+                setTimeout(() => {
+                    this.addMobileNavigation();
+                }, 100);
+            }
         });
+
+        // Metric selector functionality
+        const metricToggle = document.getElementById('metricToggle');
+        const metricDropdown = document.getElementById('metricDropdown');
+        
+        if (metricToggle && metricDropdown) {
+            metricToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isOpen = metricDropdown.style.display === 'block';
+                metricDropdown.style.display = isOpen ? 'none' : 'block';
+            });
+
+            // Handle metric checkbox changes
+            document.querySelectorAll('#metricDropdown input[type="checkbox"]').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    const metric = e.target.id.replace('metric-', '');
+                    if (e.target.checked) {
+                        if (!this.selectedMetrics.includes(metric)) {
+                            this.selectedMetrics.push(metric);
+                        }
+                    } else {
+                        this.selectedMetrics = this.selectedMetrics.filter(m => m !== metric);
+                    }
+                    // Update chart with new metric selection
+                    const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
+                    this.updateChart(currentPeriod);
+                });
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!metricDropdown.contains(e.target) && !metricToggle.contains(e.target)) {
+                    metricDropdown.style.display = 'none';
+                }
+            });
+        }
 
         // Fullscreen rotate button (mobile)
         const fsBtn = document.getElementById('chartRotateFullscreen');
@@ -576,10 +676,70 @@ class AmazonDashboard {
                     } else {
                         chartSection.classList.remove('use-rotate-fallback');
                     }
+                    // Add a real close button (pseudo-elements can't receive clicks)
+                    let closeBtn = document.getElementById('chartFsCloseBtn');
+                    if (!closeBtn) {
+                        closeBtn = document.createElement('button');
+                        closeBtn.id = 'chartFsCloseBtn';
+                        closeBtn.setAttribute('type', 'button');
+                        closeBtn.setAttribute('aria-label', 'Close fullscreen');
+                        closeBtn.style.position = 'fixed';
+                        closeBtn.style.top = '16px';
+                        closeBtn.style.right = '16px';
+                        closeBtn.style.zIndex = '10020';
+                        closeBtn.style.width = '40px';
+                        closeBtn.style.height = '40px';
+                        closeBtn.style.borderRadius = '50%';
+                        closeBtn.style.border = 'none';
+                        closeBtn.style.cursor = 'pointer';
+                        closeBtn.style.background = 'rgba(0,0,0,0.7)';
+                        closeBtn.style.color = '#fff';
+                        closeBtn.style.fontSize = '18px';
+                        closeBtn.style.fontWeight = '700';
+                        closeBtn.textContent = '✕';
+                        closeBtn.addEventListener('click', async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            try {
+                                if (document.exitFullscreen) await document.exitFullscreen();
+                            } catch (_) {}
+                            chartSection.classList.remove('chart-fullscreen-active');
+                            chartSection.classList.remove('use-rotate-fallback');
+                            if (screen.orientation && screen.orientation.unlock) { try { screen.orientation.unlock(); } catch(_) {} }
+                            closeBtn.remove();
+                            if (this.chart) setTimeout(() => this.chart.resize(), 100);
+                            
+                            // Restore mobile navigation when exiting fullscreen
+                            setTimeout(() => {
+                                const isMobile = window.innerWidth <= 768;
+                                if (isMobile) {
+                                    this.addMobileNavigation();
+                                }
+                            }, 200);
+                        });
+                        document.body.appendChild(closeBtn);
+                    }
+
                     // Resize the chart to fit fullscreen
                     if (this.chart) {
                         setTimeout(() => this.chart.resize(), 100);
                     }
+                    
+                    // Ensure mobile navigation is visible in fullscreen
+                    setTimeout(() => {
+                        const isMobile = window.innerWidth <= 768;
+                        if (isMobile) {
+                            this.addMobileNavigation();
+                        }
+                    }, 200);
+                    
+                    // Add backup close functionality for CSS pseudo-element
+                    chartSection.addEventListener('click', (e) => {
+                        if (e.target === chartSection && e.offsetX > chartSection.offsetWidth - 60 && e.offsetY < 60) {
+                            // Clicked in top-right corner area
+                            this.exitFullscreen();
+                        }
+                    });
                 } catch (_) { /* no-op */ }
             });
         }
@@ -597,11 +757,18 @@ class AmazonDashboard {
                 if (screen.orientation && screen.orientation.unlock) {
                     try { screen.orientation.unlock(); } catch(_) {}
                 }
+                const btn = document.getElementById('chartFsCloseBtn');
+                if (btn) btn.remove();
             }
         });
 
-        // Handle close button click (mobile fullscreen)
+        // Handle close button click (mobile fullscreen) - but exclude chart legend clicks
         document.addEventListener('click', (e) => {
+            // Don't handle clicks on chart legend or chart canvas
+            if (e.target.closest('canvas') || e.target.closest('.chartjs-legend')) {
+                return;
+            }
+            
             if (e.target.matches('.chart-fullscreen-active::before') || 
                 (e.target.parentElement && e.target.parentElement.classList.contains('chart-fullscreen-active'))) {
                 const chartContainer = document.querySelector('.chart-section .chart-container');
@@ -667,7 +834,21 @@ class AmazonDashboard {
             // Presets
             presetToggle?.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (presetDropdown) presetDropdown.style.display = presetDropdown.style.display === 'block' ? 'none' : 'block';
+                if (presetDropdown) {
+                    const isMobile = window.innerWidth <= 768;
+                    if (presetDropdown.style.display === 'block') {
+                        presetDropdown.style.display = 'none';
+                    } else {
+                        presetDropdown.style.display = 'block';
+                        // On mobile, position dropdown better
+                        if (isMobile) {
+                            // Add mobile-specific class for better positioning
+                            presetDropdown.classList.add('mobile-dropdown');
+                        } else {
+                            presetDropdown.classList.remove('mobile-dropdown');
+                        }
+                    }
+                }
             });
             presetDropdown?.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -953,7 +1134,7 @@ class AmazonDashboard {
             });
             
             // Fetch data with same date filtering as KPIs
-            const apiBase = (location.port === '5000' || location.hostname !== '127.0.0.1') ? '' : 'http://localhost:5000';
+            const apiBase = this.getApiBase();
             const res = await fetch(`${apiBase}/api/analytics?${params.toString()}`, { 
                 headers: { 'Accept': 'application/json' } 
             });
@@ -996,14 +1177,35 @@ class AmazonDashboard {
                         ordered_product_sales: Number(b.ordered_product_sales || 0)
                     }));
                 }
-            } else {
-                this.chartData = [];
-                this.businessSeries = [];
-            }
-            
+                } else {
+                    this.chartData = [];
+                    this.businessSeries = [];
+                }
+                
+                // Update the date range to show the actual last day of data
+                this.updateDateRangeToActualData();
+                
         } catch (e) {
             // Chart data loading failed
             this.chartData = [];
+        }
+    }
+
+    updateDateRangeToActualData() {
+        // Update the date range to show the actual last day of data from database
+        if (this.chartData && this.chartData.length > 0) {
+            const allDates = this.chartData.map(item => new Date(item.date || item.report_date)).filter(date => !isNaN(date.getTime()));
+            if (allDates.length > 0) {
+                const actualLastDate = new Date(Math.max(...allDates));
+                actualLastDate.setHours(23, 59, 59, 999);
+                
+                // Update the date range to include the actual last day
+                this.dateRange.end = actualLastDate;
+                this.dateRange.endStr = this.toInputDate(actualLastDate);
+                
+                // Update the date display to show the actual range
+                this.updateDateDisplay();
+            }
         }
     }
 
@@ -1019,7 +1221,7 @@ class AmazonDashboard {
             });
             
             // Use the backend server URL (port 5000)
-            const apiBase = (location.port === '5000' || location.hostname !== '127.0.0.1') ? '' : 'http://localhost:5000';
+            const apiBase = this.getApiBase();
             const res = await fetch(`${apiBase}/api/analytics?${params.toString()}`, { 
                 headers: { 'Accept': 'application/json' } 
             });
@@ -1451,10 +1653,6 @@ class AmazonDashboard {
                     <span>Impressions</span>
                     <span class="material-icons">keyboard_arrow_down</span>
                 </th>
-                <th class="sortable" data-sort="purchases">
-                    <span>Purchases</span>
-                    <span class="material-icons">keyboard_arrow_down</span>
-                </th>
             `;
         }
 
@@ -1513,7 +1711,6 @@ class AmazonDashboard {
                     <td>${ctr.toFixed(2)}%</td>
                     <td>${clicks.toLocaleString('en-IN')}</td>
                     <td>${impressions.toLocaleString('en-IN')}</td>
-                    <td>${(item.purchases || 0).toLocaleString('en-IN')}</td>
                 </tr>
             `;
         }).join('');
@@ -1525,6 +1722,331 @@ class AmazonDashboard {
         
         // Rebind sort events for new headers
         this.bindSortEvents();
+    }
+    
+    // Mobile navigation for Daily (7-day groups) and Weekly (8-week groups) tabs
+    addMobileNavigation() {
+        const chartContainer = document.querySelector('.chart-container');
+        if (!chartContainer) return;
+        
+        // Show navigation for Daily and Weekly tabs
+        const periodSelector = document.getElementById('chartPeriod');
+        const currentPeriod = periodSelector ? periodSelector.value : 'daily';
+        
+        if (currentPeriod !== 'daily' && currentPeriod !== 'weekly') {
+            // Remove navigation if not daily or weekly (monthly works like desktop)
+            const existingNav = chartContainer.querySelector('.mobile-week-nav');
+            if (existingNav) existingNav.remove();
+            return;
+        }
+        
+        // Remove existing mobile navigation if any
+        const existingNav = chartContainer.querySelector('.mobile-week-nav');
+        if (existingNav) existingNav.remove();
+        
+        // Initialize mobile navigation state
+        if (!this.mobileWeekIndex) {
+            this.mobileWeekIndex = 0; // Start from most recent period
+        }
+        
+        // Generate periods based on current tab (daily: 7-day groups, weekly: 8-week groups)
+        const lastPeriod = this.lastMobilePeriod || '';
+        if (!this.mobileWeekPeriods || this.mobileWeekPeriods.length === 0 || lastPeriod !== currentPeriod) {
+            if (currentPeriod === 'daily') {
+                this.mobileWeekPeriods = this.generateDailyWeekPeriods();
+            } else if (currentPeriod === 'weekly') {
+                this.mobileWeekPeriods = this.generateWeekly8WeekPeriods();
+            }
+            this.lastMobilePeriod = currentPeriod;
+            this.mobileWeekIndex = this.mobileWeekPeriods.length - 1; // Start from most recent period
+        }
+        
+        const currentWeek = this.mobileWeekPeriods[this.mobileWeekIndex];
+        if (!currentWeek) return;
+        
+        // Create navigation buttons
+        const navContainer = document.createElement('div');
+        navContainer.className = 'mobile-week-nav';
+               const periodText = currentPeriod === 'daily' ? 'Week' : 'Group'; // Daily: Week, Weekly: Group
+               
+               navContainer.innerHTML = `
+                   <button class="mobile-nav-btn prev-week" ${this.mobileWeekIndex === 0 ? 'disabled' : ''}>
+                       <span class="material-icons">chevron_left</span>
+                   </button>
+                   <div class="mobile-week-info">
+                       <span class="current-week">${currentWeek.label}</span>
+                       <span class="week-counter">${periodText} ${this.mobileWeekIndex + 1} of ${this.mobileWeekPeriods.length}</span>
+                   </div>
+                   <button class="mobile-nav-btn next-week" ${this.mobileWeekIndex === this.mobileWeekPeriods.length - 1 ? 'disabled' : ''}>
+                       <span class="material-icons">chevron_right</span>
+                   </button>
+               `;
+        
+        chartContainer.appendChild(navContainer);
+        
+        // Add event listeners
+        navContainer.querySelector('.prev-week').addEventListener('click', () => {
+            if (this.mobileWeekIndex > 0) {
+                this.mobileWeekIndex--;
+                this.updateMobileNavigation();
+                this.updateChart(currentPeriod); // Refresh chart with current period
+            }
+        });
+        
+        navContainer.querySelector('.next-week').addEventListener('click', () => {
+            if (this.mobileWeekIndex < this.mobileWeekPeriods.length - 1) {
+                this.mobileWeekIndex++;
+                this.updateMobileNavigation();
+                this.updateChart(currentPeriod); // Refresh chart with current period
+            }
+        });
+    }
+    
+    // Generate weekly periods for daily navigation (Monday to Sunday)
+    generateDailyWeekPeriods() {
+        if (!this.chartData || this.chartData.length === 0) return [];
+        
+        const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
+        if (allDates.length === 0) return [];
+        
+        const start = new Date(Math.min(...allDates));
+        const end = new Date(Math.max(...allDates));
+        
+        const weeks = [];
+        
+        // Find the Monday of the first week
+        const firstMonday = new Date(start);
+        const dayOfWeek = firstMonday.getDay();
+        const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Monday = 1, Sunday = 0
+        firstMonday.setDate(firstMonday.getDate() - daysToSubtract);
+        firstMonday.setHours(0, 0, 0, 0);
+        
+        const cursor = new Date(firstMonday);
+        
+        // Create weekly periods (Monday to Sunday)
+        while (cursor <= end) {
+            const weekStart = new Date(cursor);
+            let weekEnd = new Date(cursor);
+            weekEnd.setDate(cursor.getDate() + 6); // Sunday
+            weekEnd.setHours(23, 59, 59, 999);
+            
+            // CRITICAL FIX: If this week extends beyond our actual data, truncate it to the last data date
+            if (weekEnd > end) {
+                weekEnd = new Date(end);
+                weekEnd.setHours(23, 59, 59, 999);
+            }
+            
+            // Only add week if it has at least some data within our range
+            if (weekStart <= end) {
+                weeks.push({
+                    startDate: new Date(weekStart),
+                    endDate: new Date(weekEnd),
+                    label: `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                });
+            }
+            
+            cursor.setDate(cursor.getDate() + 7); // Move to next Monday
+        }
+        
+        return weeks;
+    }
+    
+    // Generate weekly periods for weekly navigation (Monday to Sunday)
+    generateWeeklyPeriods() {
+        if (!this.chartData || this.chartData.length === 0) return [];
+        
+        const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
+        if (allDates.length === 0) return [];
+        
+        const start = new Date(Math.min(...allDates));
+        const end = new Date(Math.max(...allDates));
+        
+        const weeks = [];
+        
+        // Find the Monday of the first week
+        const firstMonday = new Date(start);
+        const dayOfWeek = firstMonday.getDay();
+        const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Monday = 1, Sunday = 0
+        firstMonday.setDate(firstMonday.getDate() - daysToSubtract);
+        firstMonday.setHours(0, 0, 0, 0);
+        
+        const cursor = new Date(firstMonday);
+        
+        // Create weekly periods (Monday to Sunday)
+        while (cursor <= end) {
+            const weekStart = new Date(cursor);
+            let weekEnd = new Date(cursor);
+            weekEnd.setDate(cursor.getDate() + 6); // Sunday
+            weekEnd.setHours(23, 59, 59, 999);
+            
+            // If this week extends beyond our actual data, truncate it to the last data date
+            if (weekEnd > end) {
+                weekEnd = new Date(end);
+                weekEnd.setHours(23, 59, 59, 999);
+            }
+            
+            // Only add week if it has at least some data within our range
+            if (weekStart <= end) {
+                weeks.push({
+                    startDate: new Date(weekStart),
+                    endDate: new Date(weekEnd),
+                    label: `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                });
+            }
+            
+            cursor.setDate(cursor.getDate() + 7); // Move to next Monday
+        }
+        
+        return weeks;
+    }
+    
+    // Generate 8-week periods for weekly navigation
+    generateWeekly8WeekPeriods() {
+        if (!this.chartData || this.chartData.length === 0) return [];
+        
+        const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
+        if (allDates.length === 0) return [];
+        
+        const start = new Date(Math.min(...allDates));
+        const end = new Date(Math.max(...allDates));
+        
+        const weekGroups = [];
+        
+        // Find the Monday of the first week
+        const firstMonday = new Date(start);
+        const dayOfWeek = firstMonday.getDay();
+        const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Monday = 1, Sunday = 0
+        firstMonday.setDate(firstMonday.getDate() - daysToSubtract);
+        firstMonday.setHours(0, 0, 0, 0);
+        
+        const cursor = new Date(firstMonday);
+        
+        // Create 8-week periods (56 days = 8 weeks)
+        while (cursor <= end) {
+            const groupStart = new Date(cursor);
+            let groupEnd = new Date(cursor);
+            groupEnd.setDate(cursor.getDate() + 55); // 8 weeks - 1 day = 55 days
+            groupEnd.setHours(23, 59, 59, 999);
+            
+            // If this group extends beyond our actual data, truncate it to the last data date
+            if (groupEnd > end) {
+                groupEnd = new Date(end);
+                groupEnd.setHours(23, 59, 59, 999);
+            }
+            
+            // Only add group if it has at least some data within our range
+            if (groupStart <= end) {
+                weekGroups.push({
+                    startDate: new Date(groupStart),
+                    endDate: new Date(groupEnd),
+                    label: `${groupStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${groupEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                });
+            }
+            
+            cursor.setDate(cursor.getDate() + 56); // Move to next 8-week group
+        }
+        
+        return weekGroups;
+    }
+    
+    // Get mobile week data for daily view
+    getMobileWeekData(weekPeriod) {
+        if (!this.chartData || !weekPeriod) return this.chartData;
+        
+        return this.chartData.filter(item => {
+            const itemDate = new Date(item.date);
+            return itemDate >= weekPeriod.startDate && itemDate <= weekPeriod.endDate;
+        });
+    }
+    
+    // Update mobile navigation display
+    updateMobileNavigation() {
+        const navContainer = document.querySelector('.mobile-week-nav');
+        if (!navContainer) return;
+        
+        const currentWeek = this.mobileWeekPeriods[this.mobileWeekIndex];
+        if (!currentWeek) return;
+        
+        navContainer.querySelector('.current-week').textContent = currentWeek.label;
+        navContainer.querySelector('.week-counter').textContent = `Week ${this.mobileWeekIndex + 1} of ${this.mobileWeekPeriods.length}`;
+        
+        navContainer.querySelector('.prev-week').disabled = this.mobileWeekIndex === 0;
+        navContainer.querySelector('.next-week').disabled = this.mobileWeekIndex === this.mobileWeekPeriods.length - 1;
+    }
+
+    // Sync metric checkboxes with selected metrics
+    syncMetricCheckboxes() {
+        document.querySelectorAll('#metricDropdown input[type="checkbox"]').forEach(checkbox => {
+            const metric = checkbox.id.replace('metric-', '');
+            checkbox.checked = this.selectedMetrics.includes(metric);
+        });
+    }
+
+    // Helper method to create dataset configuration for a metric
+    createMetricDataset(metric, data, isMobile) {
+        const configs = {
+            totalSales: {
+                label: 'Total Sales',
+                borderColor: '#28a745',
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                yAxisID: 'y'
+            },
+            adSales: {
+                label: 'Ad Sales',
+                borderColor: '#ffc107',
+                backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                yAxisID: 'y'
+            },
+            adSpend: {
+                label: 'Ad Spend',
+                borderColor: '#007bff',
+                backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                yAxisID: 'y'
+            },
+            acos: {
+                label: 'ACOS (%)',
+                borderColor: '#dc3545',
+                backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                yAxisID: 'y1'
+            },
+            tcos: {
+                label: 'TCOS (%)',
+                borderColor: '#6f42c1',
+                backgroundColor: 'rgba(111, 66, 193, 0.1)',
+                yAxisID: 'y1'
+            }
+        };
+
+        const config = configs[metric];
+        if (!config) return null;
+
+        return {
+            label: config.label,
+            data: data,
+            borderColor: config.borderColor,
+            backgroundColor: config.backgroundColor,
+            tension: 0.4,
+            fill: false,
+            pointRadius: isMobile ? 4 : 3,
+            pointHoverRadius: isMobile ? 8 : 6,
+            borderWidth: isMobile ? 4 : 3,
+            showLine: true,
+            spanGaps: true,
+            pointStyle: 'circle',
+            capBezierPoints: true,
+            cubicInterpolationMode: 'monotone',
+            yAxisID: config.yAxisID,
+            elements: {
+                point: {
+                    hoverRadius: isMobile ? 8 : 6
+                },
+                line: {
+                    tension: 0.4,
+                    borderJoinStyle: 'round',
+                    borderCapStyle: 'round'
+                }
+            }
+        };
     }
     
     updateChart(period = 'daily') {
@@ -1547,94 +2069,38 @@ class AmazonDashboard {
             return;
         }
         
+        // Check if mobile view for enhanced chart styling
+        const isMobile = window.innerWidth <= 768;
+        
+        // Create datasets for all metrics (but respect visibility state)
+        const datasets = [];
+        const metricDataMap = {
+            totalSales: chartData.totalSales,
+            adSales: chartData.adSales,
+            adSpend: chartData.adSpend,
+            acos: chartData.acos,
+            tcos: chartData.tacos
+        };
+
+        // Always include all metrics, but set hidden state based on selectedMetrics
+        const allMetrics = ['totalSales', 'adSales', 'adSpend', 'acos', 'tcos'];
+        allMetrics.forEach(metric => {
+            const data = metricDataMap[metric];
+            if (data) {
+                const dataset = this.createMetricDataset(metric, data, isMobile);
+                if (dataset) {
+                    // Set hidden state based on whether metric is in selectedMetrics
+                    dataset.hidden = !this.selectedMetrics.includes(metric);
+                    datasets.push(dataset);
+                }
+            }
+        });
+        
         this.chart = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: chartData.labels,
-                datasets: [
-                    {
-                        label: 'Total Sales',
-                        data: chartData.totalSales,
-                        borderColor: '#28a745',
-                        backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                        tension: 0.4,
-                        fill: false,
-                        pointRadius: 3,
-                        pointHoverRadius: 6,
-                        borderWidth: 3,
-                        showLine: true,
-                        spanGaps: true,
-                        pointStyle: 'circle',
-                        capBezierPoints: true,
-                        cubicInterpolationMode: 'monotone'
-                    },
-                    {
-                        label: 'Ad Sales',
-                        data: chartData.adSales,
-                        borderColor: '#ffc107',
-                        backgroundColor: 'rgba(255, 193, 7, 0.1)',
-                        tension: 0.4,
-                        fill: false,
-                        pointRadius: 3,
-                        pointHoverRadius: 6,
-                        borderWidth: 3,
-                        showLine: true,
-                        spanGaps: true,
-                        pointStyle: 'circle',
-                        capBezierPoints: true,
-                        cubicInterpolationMode: 'monotone'
-                    },
-                    {
-                        label: 'Ad Spend',
-                        data: chartData.adSpend,
-                        borderColor: '#007bff',
-                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
-                        tension: 0.4,
-                        fill: false,
-                        pointRadius: 3,
-                        pointHoverRadius: 6,
-                        borderWidth: 3,
-                        showLine: true,
-                        spanGaps: true,
-                        pointStyle: 'circle',
-                        capBezierPoints: true,
-                        cubicInterpolationMode: 'monotone'
-                    },
-                    {
-                        label: 'ACOS (%)',
-                        data: chartData.acos,
-                        borderColor: '#dc3545',
-                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
-                        tension: 0.4,
-                        fill: false,
-                        pointRadius: 3,
-                        pointHoverRadius: 6,
-                        borderWidth: 3,
-                        showLine: true,
-                        spanGaps: true,
-                        pointStyle: 'circle',
-                        capBezierPoints: true,
-                        cubicInterpolationMode: 'monotone',
-                        yAxisID: 'y1'
-                    },
-                    {
-                        label: 'TCOS (%)',
-                        data: chartData.tacos,
-                        borderColor: '#6f42c1',
-                        backgroundColor: 'rgba(111, 66, 193, 0.1)',
-                        tension: 0.4,
-                        fill: false,
-                        pointRadius: 3,
-                        pointHoverRadius: 6,
-                        borderWidth: 3,
-                        showLine: true,
-                        spanGaps: true,
-                        pointStyle: 'circle',
-                        capBezierPoints: true,
-                        cubicInterpolationMode: 'monotone',
-                        yAxisID: 'y1'
-                    }
-                ]
+                datasets: datasets
             },
             options: {
                 responsive: true,
@@ -1650,26 +2116,61 @@ class AmazonDashboard {
                 elements: {
                     line: {
                         tension: 0.4,
-                        borderWidth: 3,
+                        borderJoinStyle: 'round',
                         borderCapStyle: 'round',
-                        borderJoinStyle: 'round'
+                        fill: false
                     },
                     point: {
-                        radius: 3,
-                        hoverRadius: 6,
-                        borderWidth: 2,
-                        borderColor: '#ffffff'
+                        radius: isMobile ? 4 : 3,
+                        hoverRadius: isMobile ? 8 : 6
                     }
                 },
                 plugins: {
                     legend: {
                         display: true,
                         position: 'bottom',
+                        onClick: (e, legendItem, legend) => {
+                            // Toggle dataset visibility using Chart.js built-in functionality
+                            const index = legendItem.datasetIndex;
+                            const chart = legend.chart;
+                            const meta = chart.getDatasetMeta(index);
+                            
+                            // Toggle visibility
+                            meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null;
+                            chart.update();
+                            
+                            // Also sync with dropdown checkboxes
+                            const dataset = chart.data.datasets[index];
+                            const metricName = dataset.label;
+                            
+                            // Map display names to internal metric keys
+                            const metricMap = {
+                                'Total Sales': 'totalSales',
+                                'Ad Sales': 'adSales', 
+                                'Ad Spend': 'adSpend',
+                                'ACOS (%)': 'acos',
+                                'TCOS (%)': 'tcos'
+                            };
+                            
+                            const metricKey = metricMap[metricName];
+                            if (metricKey) {
+                                // Update selectedMetrics array based on visibility
+                                const isVisible = !meta.hidden;
+                                if (isVisible && !this.selectedMetrics.includes(metricKey)) {
+                                    this.selectedMetrics.push(metricKey);
+                                } else if (!isVisible && this.selectedMetrics.includes(metricKey)) {
+                                    this.selectedMetrics = this.selectedMetrics.filter(m => m !== metricKey);
+                                }
+                                
+                                // Sync the dropdown checkboxes
+                                this.syncMetricCheckboxes();
+                            }
+                        },
                         labels: {
                             color: '#6c757d',
                             usePointStyle: true,
-                            padding: 20,
-                            font: { size: 11 }
+                            padding: isMobile ? 15 : 20,
+                            font: { size: isMobile ? 12 : 11 }
                         }
                     },
                     tooltip: {
@@ -1680,6 +2181,8 @@ class AmazonDashboard {
                         borderWidth: 1,
                         cornerRadius: 8,
                         displayColors: true,
+                        titleFont: { size: isMobile ? 13 : 12 },
+                        bodyFont: { size: isMobile ? 12 : 11 },
                         callbacks: {
                             label: function(context) {
                                 let label = context.dataset.label || '';
@@ -1704,7 +2207,7 @@ class AmazonDashboard {
                         },
                         ticks: {
                             color: '#6c757d',
-                            font: { size: 11 }
+                            font: { size: isMobile ? 12 : 11 }
                         }
                     },
                     y: {
@@ -1715,7 +2218,7 @@ class AmazonDashboard {
                         },
                         ticks: {
                             color: '#6c757d',
-                            font: { size: 11 },
+                            font: { size: isMobile ? 12 : 11 },
                             callback: function(value) {
                                 return '₹' + value.toLocaleString('en-IN');
                             }
@@ -1723,15 +2226,30 @@ class AmazonDashboard {
                     },
                     y1: {
                         type: 'linear',
-                        display: false, // Hide secondary y-axis to match your reference
+                        display: isMobile ? true : false, // Show secondary y-axis on mobile for better readability
                         position: 'right',
                         grid: {
                             drawOnChartArea: false,
+                        },
+                        ticks: {
+                            color: '#6c757d',
+                            font: { size: isMobile ? 12 : 11 },
+                            callback: function(value) {
+                                return value.toFixed(0) + '%';
+                            }
                         }
                     }
                 }
             }
         });
+        
+        // Add simple mobile navigation buttons (only on mobile, doesn't affect desktop)
+        const isMobileView = window.innerWidth <= 768;
+        if (isMobileView) {
+            setTimeout(() => {
+                this.addMobileNavigation();
+            }, 100);
+        }
         
     }
     
@@ -1742,14 +2260,21 @@ class AmazonDashboard {
             return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
         }
         
-        // Find the actual date range from chart data (same as KPIs)
-        const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
-        if (allDates.length === 0) {
-            return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
+        // For monthly, use all data; for daily/weekly, use selected date range
+        let start, end;
+        if (period === 'monthly') {
+            // Monthly shows ALL data from beginning
+            const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
+            if (allDates.length === 0) {
+                return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
+            }
+            start = new Date(Math.min(...allDates));
+            end = new Date(Math.max(...allDates));
+        } else {
+            // Daily and Weekly use selected calendar date range
+            start = new Date(this.dateRange.start);
+            end = new Date(this.dateRange.end);
         }
-        
-        const start = new Date(Math.min(...allDates));
-        const end = new Date(Math.max(...allDates));
 
         const labels = [];
         const adSpend = [];
@@ -1762,7 +2287,26 @@ class AmazonDashboard {
         const dataByPeriod = {};
         const businessDataPerPeriod = {}; // Track business data separately to avoid duplication
         
-        this.chartData.forEach(item => {
+        // For monthly, use all chart data; for daily/weekly, filter by selected date range
+        let chartDataToProcess;
+        if (period === 'monthly') {
+            // Monthly uses ALL chart data
+            chartDataToProcess = this.chartData;
+        } else {
+            // Daily and Weekly filter by selected date range
+            chartDataToProcess = this.chartData.filter(item => {
+                const itemDate = new Date(item.date);
+                return itemDate >= start && itemDate <= end;
+            });
+        }
+        
+        // For mobile daily and weekly views, use current period data if navigation is active
+        const isMobile = window.innerWidth <= 768;
+        if (isMobile && (period === 'daily' || period === 'weekly') && this.mobileWeekPeriods && this.mobileWeekPeriods.length > 0 && this.mobileWeekPeriods[this.mobileWeekIndex]) {
+            chartDataToProcess = this.getMobileWeekData(this.mobileWeekPeriods[this.mobileWeekIndex]);
+        }
+        
+        chartDataToProcess.forEach(item => {
             const itemDate = new Date(item.date);
             // Use chart data with same date filtering as KPIs
             let periodKey;
@@ -2839,6 +3383,57 @@ class AmazonDashboard {
                 this.chart.resize();
             }, 100);
         }
+        
+        // Handle mobile navigation on resize
+        const isMobileResize = window.innerWidth <= 768;
+        const existingNav = document.querySelector('.mobile-week-nav');
+        
+        if (isMobileResize && !existingNav) {
+            // Add mobile navigation if switching to mobile
+            setTimeout(() => {
+                this.addMobileNavigation();
+            }, 100);
+        } else if (!isMobileResize && existingNav) {
+            // Remove mobile navigation if switching to desktop
+            existingNav.remove();
+        }
+    }
+    
+    exitFullscreen() {
+        const chartSection = document.querySelector('.chart-section .chart-container');
+        const closeBtn = document.getElementById('chartFsCloseBtn');
+        
+        if (chartSection) {
+            chartSection.classList.remove('chart-fullscreen-active');
+            chartSection.classList.remove('use-rotate-fallback');
+        }
+        
+        if (closeBtn) {
+            closeBtn.remove();
+        }
+        
+        // Unlock orientation if supported
+        if (screen.orientation && screen.orientation.unlock) {
+            try { screen.orientation.unlock(); } catch(_) {}
+        }
+        
+        // Exit fullscreen if supported
+        if (document.exitFullscreen) {
+            document.exitFullscreen().catch(_ => {});
+        }
+        
+        // Resize chart
+        if (this.chart) {
+            setTimeout(() => this.chart.resize(), 100);
+        }
+        
+        // Restore mobile navigation
+        setTimeout(() => {
+            const isMobile = window.innerWidth <= 768;
+            if (isMobile) {
+                this.addMobileNavigation();
+            }
+        }, 200);
     }
     
     startAutoRefresh() {

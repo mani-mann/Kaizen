@@ -11,6 +11,7 @@ class TrendReports {
         this.filteredData = [];
         this.groupedTableData = [];
         this.selectedName = '';
+        this.selectedNames = new Set(); // multi-select names
         this.currentPage = 1;
         this.itemsPerPage = 20;
         this.sortColumn = 'date';
@@ -107,7 +108,8 @@ class TrendReports {
 
         // Search functionality removed - using name filter only
 
-        // Name filter functionality
+        // Name filter functionality (multi-select)
+        // Name filter functionality (multi-select)
         this.setupNameFilter();
 
         // Pagination
@@ -134,6 +136,37 @@ class TrendReports {
                     const chartSection = document.querySelector('.charts-section .chart-container');
                     if (!chartSection) return;
                     chartSection.classList.add('chart-fullscreen-active');
+                    
+                    // Add close button functionality
+                    const closeBtn = document.createElement('button');
+                    closeBtn.innerHTML = '✕';
+                    closeBtn.style.cssText = `
+                        position: absolute;
+                        top: 16px;
+                        right: 16px;
+                        width: 40px;
+                        height: 40px;
+                        background: rgba(0, 0, 0, 0.7);
+                        color: white;
+                        border: none;
+                        border-radius: 50%;
+                        font-size: 18px;
+                        font-weight: bold;
+                        cursor: pointer;
+                        z-index: 10000;
+                        transition: background-color 0.2s ease;
+                    `;
+                    closeBtn.addEventListener('click', () => {
+                        this.exitFullscreen();
+                    });
+                    closeBtn.addEventListener('mouseenter', () => {
+                        closeBtn.style.background = 'rgba(0, 0, 0, 0.9)';
+                    });
+                    closeBtn.addEventListener('mouseleave', () => {
+                        closeBtn.style.background = 'rgba(0, 0, 0, 0.7)';
+                    });
+                    chartSection.appendChild(closeBtn);
+                    
                     if (chartSection.requestFullscreen) {
                         await chartSection.requestFullscreen({ navigationUI: 'hide' });
                     } else if (document.documentElement.requestFullscreen) {
@@ -144,7 +177,23 @@ class TrendReports {
                         try { await screen.orientation.lock('landscape'); locked = true; } catch(_) { locked = false; }
                     }
                     if (!locked) { chartSection.classList.add('use-rotate-fallback'); } else { chartSection.classList.remove('use-rotate-fallback'); }
-                    if (this.trendChart) { setTimeout(() => this.trendChart.resize(), 100); }
+                    if (this.trendChart) { 
+                        setTimeout(() => {
+                            this.trendChart.resize();
+                            // Ensure chart maintains proper aspect ratio in fullscreen
+                            this.trendChart.options.maintainAspectRatio = false;
+                            // Add padding to ensure axes are visible
+                            this.trendChart.options.layout = {
+                                padding: {
+                                    top: 20,
+                                    right: 20,
+                                    bottom: 40,
+                                    left: 40
+                                }
+                            };
+                            this.trendChart.update();
+                        }, 100); 
+                    }
                 } catch (_) {}
             });
         }
@@ -153,10 +202,28 @@ class TrendReports {
         document.addEventListener('fullscreenchange', () => {
             const chartContainer = document.querySelector('.charts-section .chart-container');
             if (!document.fullscreenElement && chartContainer) {
-                chartContainer.classList.remove('chart-fullscreen-active');
-                chartContainer.classList.remove('use-rotate-fallback');
-                if (this.trendChart) { setTimeout(() => this.trendChart.resize(), 100); }
-                if (screen.orientation && screen.orientation.unlock) { try { screen.orientation.unlock(); } catch(_) {} }
+                this.exitFullscreen();
+            }
+        });
+
+        // Handle close button click (mobile fullscreen)
+        document.addEventListener('click', (e) => {
+            // Only handle clicks on the close button or outside chart area
+            if (e.target.matches('.chart-fullscreen-active::before') || 
+                (e.target.parentElement && e.target.parentElement.classList.contains('chart-fullscreen-active'))) {
+                const chartContainer = document.querySelector('.charts-section .chart-container');
+                if (chartContainer && chartContainer.classList.contains('chart-fullscreen-active')) {
+                    // Exit fullscreen
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    } else if (document.mozCancelFullScreen) {
+                        document.mozCancelFullScreen();
+                    } else if (document.msExitFullscreen) {
+                        document.msExitFullscreen();
+                    }
+                }
             }
         });
 
@@ -600,7 +667,14 @@ class TrendReports {
         // Reset pagination and filters when switching categories
         this.currentPage = 1;
         this.selectedName = '';
-        document.getElementById('nameFilterInput').value = '';
+        // Clear multi-select names to avoid carrying selection across tabs
+        if (this.selectedNames && this.selectedNames.size) {
+            this.selectedNames.clear();
+        } else {
+            this.selectedNames = new Set();
+        }
+        const nameInputEl = document.getElementById('nameFilterInput');
+        if (nameInputEl) nameInputEl.value = '';
         
         // Restore per-category metric selections or set defaults
         let saved = this.selectedMetricsByCategory[this.currentCategory] || [];
@@ -721,7 +795,15 @@ class TrendReports {
                 params.append('aggregate', 'date');
             }
 
-            const apiBase = (location.port === '5000' || location.hostname !== '127.0.0.1') ? '' : 'http://localhost:5000';
+            // If accessing through ngrok, use the ngrok URL for backend
+            let apiBase = '';
+            if (location.hostname.includes('ngrok-free.app') || location.hostname.includes('ngrok.io')) {
+                apiBase = `${location.protocol}//${location.hostname}`;
+            } else if (location.port === '5000' || (location.hostname === 'localhost' && location.port === '')) {
+                apiBase = '';
+            } else {
+                apiBase = 'http://localhost:5000';
+            }
             const apiUrl = `${apiBase}/api/trend-reports?${params.toString()}`;
             
             const response = await fetch(apiUrl);
@@ -859,10 +941,81 @@ class TrendReports {
                             acos,
                             tcos,
                         sessions: Number(r.sessions || 0),
+                        totalSales: Number(r.totalSales || 0),
                         pageviews: Number(r.page_views || r.pageviews || 0),
                         conversionRate: Number(r.conversionRate || 0)
                         };
                     });
+
+                    // Enrich with business totals by date for Total Sales and Sessions
+                    try {
+                        const bdParams = new URLSearchParams();
+                        if (this.currentDateRange.start && this.currentDateRange.end) {
+                            bdParams.append('start', this.formatLocalDate(this.currentDateRange.start));
+                            bdParams.append('end', this.formatLocalDate(this.currentDateRange.end));
+                        }
+                        const bdRes = await fetch(`${apiBase}/api/business-data?${bdParams.toString()}`);
+                        if (bdRes.ok) {
+                            const bdJson = await bdRes.json();
+                            const byDate = {};
+                            (bdJson.data || []).forEach(row => {
+                                const key = this.normalizeDateKey(row.date);
+                                if (!byDate[key]) byDate[key] = { totalSales: 0, sessions: 0 };
+                                byDate[key].totalSales += Number(row.ordered_product_sales || 0);
+                                byDate[key].sessions += Number(row.sessions || 0);
+                            });
+                            normalized = normalized.map(r => {
+                                const key = this.normalizeDateKey(r.date);
+                                const add = byDate[key] || { totalSales: 0, sessions: r.sessions || 0 };
+                                const totalSales = add.totalSales;
+                                const sessions = add.sessions || r.sessions;
+                                const tcos = totalSales > 0 ? (Number(r.spend || 0) / totalSales) * 100 : 0;
+                                return { ...r, totalSales, sessions, tcos };
+                            });
+                        }
+                    } catch (_) { /* silent */ }
+
+                    // For search-terms, additionally enrich with pageviews when available
+                    if (result.category === 'search-terms') {
+                        try {
+                            const bdParams = new URLSearchParams();
+                            if (this.currentDateRange.start && this.currentDateRange.end) {
+                                bdParams.append('start', this.formatLocalDate(this.currentDateRange.start));
+                                bdParams.append('end', this.formatLocalDate(this.currentDateRange.end));
+                            }
+                            const bdRes = await fetch(`${apiBase}/api/business-data?${bdParams.toString()}`);
+                            if (bdRes.ok) {
+                                const bdJson = await bdRes.json();
+                                const byDate = {};
+                                (bdJson.data || []).forEach(row => {
+                                    const key = this.normalizeDateKey(row.date);
+                                    if (!byDate[key]) byDate[key] = { sessions: 0, pageviews: 0 };
+                                    byDate[key].sessions += Number(row.sessions || 0);
+                                    byDate[key].pageviews += Number(row.page_views || 0);
+                                });
+                                const additions = Object.entries(byDate).map(([key, totals]) => ({
+                                    date: key,
+                                    category: 'search-terms',
+                                    name: '📊 DAILY TOTAL',
+                                    displayName: '📊 DAILY TOTAL',
+                                    spend: 0,
+                                    sales: 0,
+                                    clicks: 0,
+                                    cpc: 0,
+                                    roas: 0,
+                                    ctr: 0,
+                                    acos: 0,
+                                    tcos: 0,
+                                    sessions: totals.sessions,
+                                    pageviews: totals.pageviews,
+                                    conversionRate: 0
+                                }));
+                                if (additions.length > 0) {
+                                    normalized = normalized.concat(additions);
+                                }
+                            }
+                        } catch (_) { /* silent */ }
+                    }
                 }
                 this.currentData = normalized;
                 this.filteredData = [...normalized];
@@ -1083,13 +1236,8 @@ class TrendReports {
             this.trendChart = null;
         }
         
-        // Use the same data that's being used for the table
+        // For the chart, ignore name selection. Chart should be driven only by date range.
         let data = this.currentData.filter(item => item.category === this.currentCategory);
-        
-        // Apply name filter if selected (same as table)
-        if (this.selectedName) {
-            data = data.filter(item => (item.displayName || item.name) === this.selectedName);
-        }
         
         // Apply date range filter (same as table)
         data = this.filterDataByDateRange(data);
@@ -1097,10 +1245,13 @@ class TrendReports {
         // Always try to show chart - let Chart.js handle empty data
         
         // Group data by time period for each selected metric
-        // If on Campaigns, constrain to only the six allowed metrics
-        const allowedCampaignMetrics = ['spend','cpc','clicks','roas','acos','tcos'];
+        // Constrain allowed metrics per category
+        const allowedCampaignMetrics = ['spend','cpc','clicks','sales','sessions','totalSales','roas','acos','tcos'];
+        const allowedSearchMetrics = ['cpc','clicks','sales','sessions','totalSales','roas','acos','tcos'];
         if (this.currentCategory === 'campaigns') {
             this.selectedMetrics = this.selectedMetrics.filter(m => allowedCampaignMetrics.includes(m));
+        } else if (this.currentCategory === 'search-terms') {
+            this.selectedMetrics = this.selectedMetrics.filter(m => allowedSearchMetrics.includes(m));
         }
 
         const datasets = this.selectedMetrics.map((metric, index) => {
@@ -1334,8 +1485,14 @@ class TrendReports {
         
         const values = sortedKeys.map(key => {
             const group = groups[key] || { values: [], count: 0 };
-            if (['spend','sales','sessions','pageviews','orders','clicks'].includes(metric)) {
+            // Sum standard additive metrics
+            if (['spend','sales','clicks','orders','pageviews'].includes(metric)) {
                 return group.values.reduce((sum, val) => sum + (Number(val)||0), 0);
+            }
+            // For account-level daily totals injected per row (totalSales, sessions in campaigns/search-terms),
+            // multiple rows share the same value. Use the maximum to avoid multiplying by number of rows.
+            if (metric === 'totalSales' || (metric === 'sessions' && this.currentCategory !== 'products')) {
+                return group.values.length ? Math.max(...group.values.map(v => Number(v)||0)) : 0;
             }
             if (metric === 'roas') {
                 // Estimate ROAS via available fields when we grouped by value only
@@ -1440,9 +1597,10 @@ class TrendReports {
             'roas': 'ROAS',
             'acos': 'ACOS',
             'tcos': 'TCOS',
-            'sales': 'Sales',
+            'sales': (this.currentCategory === 'campaigns' ? 'Ad Sales' : 'Sales'),
             'orders': 'No of Orders',
             'sessions': 'Sessions',
+            'totalSales': 'Total Sales',
             'pageviews': 'Page Views',
             'conversionRate': 'Conversion Rate'
         };
@@ -1451,7 +1609,7 @@ class TrendReports {
 
     updateMetricOptionsVisibility() {
         const ids = [
-            'metric-sales','metric-spend','metric-orders','metric-sessions','metric-pageviews',
+            'metric-sales','metric-totalSales','metric-spend','metric-orders','metric-sessions','metric-pageviews',
             'metric-cpc','metric-clicks','metric-roas','metric-acos','metric-tcos',
             'metric-searchVolume','metric-searchClicks','metric-conversionRate'
         ];
@@ -1460,8 +1618,9 @@ class TrendReports {
         const show = (id, visible) => { if (containers[id]) containers[id].style.display = visible ? 'flex' : 'none'; };
         if (this.currentCategory === 'campaigns') {
             // Show campaign-related metrics
-            // Only these six in dropdown
-            show('metric-sales', false);
+            // Only these in dropdown (include ad sales, total sales, sessions)
+            show('metric-sales', true);
+            show('metric-totalSales', true);
             show('metric-spend', true);
             show('metric-cpc', true);
             show('metric-clicks', true);
@@ -1469,14 +1628,24 @@ class TrendReports {
             show('metric-acos', true);
             show('metric-tcos', true);
             show('metric-orders', false);
-            show('metric-sessions', false);
+            show('metric-sessions', true);
             show('metric-pageviews', false);
             show('metric-searchVolume', false);
             show('metric-searchClicks', false);
             show('metric-conversionRate', false);
 
+            // Update visible label texts to exact names for Campaigns
+            const salesLbl = document.querySelector('label[for="metric-sales"]');
+            if (salesLbl) salesLbl.textContent = 'Ad Sales';
+            const clicksLbl = document.querySelector('label[for="metric-clicks"]');
+            if (clicksLbl) clicksLbl.textContent = 'Ad Clicks';
+            const totalSalesLbl = document.querySelector('label[for="metric-totalSales"]');
+            if (totalSalesLbl) totalSalesLbl.textContent = 'Total Sales';
+            const sessionsLbl = document.querySelector('label[for="metric-sessions"]');
+            if (sessionsLbl) sessionsLbl.textContent = 'Sessions';
+
             // Ensure at least one metric is selected; default to Ad Spend
-            const allowed = ['metric-spend','metric-cpc','metric-clicks','metric-roas','metric-acos','metric-tcos'];
+            const allowed = ['metric-spend','metric-cpc','metric-clicks','metric-sales','metric-sessions','metric-totalSales','metric-roas','metric-acos','metric-tcos'];
             const checkedAllowed = allowed.filter(id => {
                 const el = document.getElementById(id);
                 return el && el.checked;
@@ -1487,29 +1656,46 @@ class TrendReports {
                 this.updateSelectedMetrics();
             }
         } else if (this.currentCategory === 'search-terms') {
-            // Search terms: show clicks (most consistently available)
-            show('metric-sales', false);
+            // Search terms: show similar metrics as Campaigns (no spend)
+            const salesLbl = document.querySelector('label[for="metric-sales"]');
+            if (salesLbl) salesLbl.textContent = 'Ad Sales';
+            const clicksLbl = document.querySelector('label[for="metric-clicks"]');
+            if (clicksLbl) clicksLbl.textContent = 'Ad Clicks';
+            const totalSalesLbl = document.querySelector('label[for="metric-totalSales"]');
+            if (totalSalesLbl) totalSalesLbl.textContent = 'Total Sales';
+            const sessionsLbl = document.querySelector('label[for="metric-sessions"]');
+            if (sessionsLbl) sessionsLbl.textContent = 'Sessions';
+            show('metric-sales', true);
+            show('metric-totalSales', true);
             show('metric-spend', false);
-            show('metric-orders', false);
-            show('metric-sessions', false);
-            show('metric-pageviews', false);
-            show('metric-cpc', false);
+            show('metric-cpc', true);
             show('metric-clicks', true);
-            show('metric-roas', false);
-            show('metric-acos', false);
-            show('metric-tcos', false);
+            show('metric-roas', true);
+            show('metric-acos', true);
+            show('metric-tcos', true);
+            show('metric-orders', false);
+            show('metric-sessions', true);
+            show('metric-pageviews', false);
             show('metric-searchVolume', false);
             show('metric-searchClicks', false);
             show('metric-conversionRate', false);
-            // Ensure at least one metric is active
-            const clicksCb = document.getElementById('metric-clicks');
-            if (clicksCb && !clicksCb.checked) {
-                clicksCb.checked = true;
+            // Ensure at least one metric is active (default to Ad Clicks)
+            const allowed = ['metric-cpc','metric-clicks','metric-sales','metric-sessions','metric-totalSales','metric-roas','metric-acos','metric-tcos'];
+            const checkedAllowed = allowed.filter(id => {
+                const el = document.getElementById(id);
+                return el && el.checked;
+            });
+            if (checkedAllowed.length === 0) {
+                const clicksCb = document.getElementById('metric-clicks');
+                if (clicksCb) clicksCb.checked = true;
                 this.updateSelectedMetrics();
             }
         } else {
             // Products: limited standard metrics
+            const salesLbl = document.querySelector('label[for="metric-sales"]');
+            if (salesLbl) salesLbl.textContent = 'Sales';
             show('metric-sales', true);
+            show('metric-totalSales', false);
             show('metric-spend', false);
             show('metric-orders', true);
             show('metric-sessions', true);
@@ -1566,6 +1752,10 @@ class TrendReports {
         const nameMap = {};
         categoryData.forEach(item => {
             const name = item.displayName || item.name;
+            // Do not include total helper rows in selectable names
+            if ((name || '').includes('📊') || (name || '').toLowerCase().includes('daily total') || (name || '').toLowerCase().includes('total')) {
+                return;
+            }
             if (!nameMap[name]) {
                 nameMap[name] = new Set();
             }
@@ -1583,7 +1773,7 @@ class TrendReports {
         const nameFilterDropdown = document.getElementById('nameFilterDropdown');
         const nameFilterInput = document.getElementById('nameFilterInput');
         
-        // Clear existing options except "All Names"
+        // Clear existing options and add "All Names" (clears selection)
         nameFilterDropdown.innerHTML = '<div class="filter-option" data-value="">All Names</div>';
         
         // Add click event for "All Names" option
@@ -1591,16 +1781,30 @@ class TrendReports {
         allNamesOption.addEventListener('mousedown', (e) => {
             e.preventDefault();
             this.selectedName = '';
+            this.selectedNames.clear();
             nameFilterInput.value = '';
+            // If dropdown is open, uncheck all visible checkboxes immediately
+            try {
+                nameFilterDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+            } catch (_) {}
             nameFilterDropdown.style.display = 'none';
             this.currentPage = 1;
+            this.updateChart();
             this.renderTable();
         });
         
-        // Filter and add options
-        const filteredNames = Object.keys(this.nameMap || {})
-            .filter(name => name.toLowerCase().includes(searchTerm.toLowerCase()))
-            .sort();
+        // Filter names
+        const allNames = Object.keys(this.nameMap || {})
+            .filter(name => name.toLowerCase().includes(searchTerm.toLowerCase()));
+        // Sort: selected names first (keep alphabetical inside groups)
+        const selectedFirst = [];
+        const unselected = [];
+        allNames.forEach(n => {
+            if (this.selectedNames && this.selectedNames.has(n)) selectedFirst.push(n); else unselected.push(n);
+        });
+        selectedFirst.sort();
+        unselected.sort();
+        const filteredNames = [...selectedFirst, ...unselected];
         
         filteredNames.forEach(name => {
             const dates = Array.from(this.nameMap[name]).sort();
@@ -1630,16 +1834,48 @@ class TrendReports {
                 if (dates.length > 3) dateText += `... (+${dates.length - 3} more)`;
             }
             
-            option.textContent = `${name} (${dateCount} dates: ${dateText})`;
-            
-            // Add click event
+            // Render with a checkbox for multi-select
+            const id = `name-opt-${Math.random().toString(36).slice(2)}`;
+            option.innerHTML = `
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="${id}">
+                    <span>${name} (${dateCount} dates: ${dateText})</span>
+                </label>
+            `;
+            const cb = option.querySelector('input');
+            cb.checked = this.selectedNames.has(name);
             option.addEventListener('mousedown', (e) => {
-                e.preventDefault(); // Prevent input blur
-                this.selectedName = option.dataset.value;
-                nameFilterInput.value = this.selectedName || '';
-                nameFilterDropdown.style.display = 'none';
+                e.preventDefault(); // keep dropdown
+                cb.checked = !cb.checked;
+                if (cb.checked) this.selectedNames.add(name); else this.selectedNames.delete(name);
+                // Update input text
+                const count = this.selectedNames.size;
+                nameFilterInput.value = count === 0 ? '' : `${count} selected`;
                 this.currentPage = 1;
+                this.updateChart();
                 this.renderTable();
+                // Re-render dropdown so selected items jump to top without reopening
+                const term = (nameFilterInput.value === `${count} selected`) ? '' : nameFilterInput.value;
+                const previousScroll = nameFilterDropdown.scrollTop;
+                this.filterNameOptions(term);
+                nameFilterDropdown.style.display = 'block';
+                nameFilterDropdown.scrollTop = previousScroll;
+            });
+
+            // Also support direct checkbox click without closing
+            cb.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (cb.checked) this.selectedNames.add(name); else this.selectedNames.delete(name);
+                const count = this.selectedNames.size;
+                nameFilterInput.value = count === 0 ? '' : `${count} selected`;
+                this.currentPage = 1;
+                this.updateChart();
+                this.renderTable();
+                const term = (nameFilterInput.value === `${count} selected`) ? '' : nameFilterInput.value;
+                const previousScroll = nameFilterDropdown.scrollTop;
+                this.filterNameOptions(term);
+                nameFilterDropdown.style.display = 'block';
+                nameFilterDropdown.scrollTop = previousScroll;
             });
             
             nameFilterDropdown.appendChild(option);
@@ -1778,13 +2014,55 @@ class TrendReports {
         // Get individual records
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
-        // Apply name filter if selected
-        if (this.selectedName) {
+        // Apply name filter if multi-select has items; keep DAILY TOTAL rows
+        if (this.selectedNames && this.selectedNames.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                return isTotal || this.selectedNames.has(nm);
+            });
+        } else if (this.selectedName) {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
         
         // Apply date range filter
         data = this.filterDataByDateRange(data);
+
+        // If we're on campaigns and user selected specific names,
+        // recompute DAILY TOTAL for the filtered subset so totals reflect selection.
+        if (this.currentCategory === 'campaigns' && this.selectedNames && this.selectedNames.size > 0) {
+            const totalsByDate = {};
+            // Build totals from only non-total rows (selected names already applied above)
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                if (nm.includes('📊')) return; // skip existing totals to avoid double-counting
+                const key = this.normalizeDateKey(item.date);
+                if (!totalsByDate[key]) {
+                    totalsByDate[key] = { spend: 0, sales: 0, clicks: 0 };
+                }
+                totalsByDate[key].spend += Number(item.spend || 0);
+                totalsByDate[key].sales += Number(item.sales || 0);
+                totalsByDate[key].clicks += Number(item.clicks || 0);
+            });
+            // Remove any pre-existing DAILY TOTAL rows
+            data = data.filter(r => !String(r.name || '').includes('📊'));
+            Object.entries(totalsByDate).forEach(([key, t]) => {
+                const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
+                const roas = t.spend > 0 ? t.sales / t.spend : 0;
+                const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
+                const tcos = 0; // not defined; keep 0 unless available
+                data.push({
+                    date: key,
+                    category: 'campaigns',
+                    name: '📊 DAILY TOTAL',
+                    displayName: '📊 DAILY TOTAL',
+                    spend: t.spend,
+                    sales: t.sales,
+                    clicks: t.clicks,
+                    cpc, roas, acos, tcos
+                });
+            });
+        }
         
         
         // Build date buckets based on currentTimePeriod
@@ -1825,9 +2103,10 @@ class TrendReports {
         const pageData = sortedData.slice(startIndex, endIndex);
         
         // Render dynamic header (name + metric + date columns)
+        const nameHeader = this.currentCategory === 'campaigns' ? 'Campaign Name' : (this.currentCategory === 'search-terms' ? 'Search Term' : 'Product Name');
         theadRow.innerHTML = `
             <th class="sortable" data-sort="name">
-                <span>Product Name</span>
+                <span>${nameHeader}</span>
                 <span class="material-icons">keyboard_arrow_down</span>
             </th>
             <th>
@@ -2061,23 +2340,12 @@ class TrendReports {
     }
 
     exportData(format) {
-        const data = this.filteredData.map(item => ({
-            Date: new Date(item.date).toLocaleDateString(),
-            Category: item.category.replace('-', ' ').toUpperCase(),
-            Spend: `₹${this.formatNumber(item.spend)}`,
-            CPC: `₹${item.cpc}`,
-            Sales: `₹${this.formatNumber(item.sales)}`,
-            ACOS: `${item.acos}%`,
-            TCOS: `${item.tcos}%`,
-            CPR: `₹${item.cpr}`,
-            Sessions: this.formatNumber(item.sessions),
-            'Page Views': this.formatNumber(item.pageviews)
-        }));
-        
+        // Build a pivoted dataset exactly like the table (current tab + filters)
+        const pivot = this.buildPivotDataset();
         if (format === 'csv') {
-            this.downloadCSV(data);
+            this.downloadCSVPivot(pivot.headers, pivot.rows);
         } else if (format === 'excel') {
-            this.downloadExcel(data);
+            this.downloadExcelPivot(pivot.headers, pivot.rows);
         }
     }
 
@@ -2098,12 +2366,259 @@ class TrendReports {
     }
 
     downloadExcel(data) {
-        // Simple Excel export using CSV format with .xlsx extension
-        this.downloadCSV(data);
+        if (!data || data.length === 0) return;
+        const headers = Object.keys(data[0]);
+        const escapeXml = (text) => String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+
+        let xml = '<?xml version="1.0"?>\n';
+        xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n';
+        xml += ' xmlns:o="urn:schemas-microsoft-com:office:office"\n';
+        xml += ' xmlns:x="urn:schemas-microsoft-com:office:excel"\n';
+        xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n';
+        xml += ' xmlns:html="http://www.w3.org/TR/REC-html40">\n';
+        xml += '<Styles>\n';
+        xml += '<Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#EEEEEE" ss:Pattern="Solid"/></Style>\n';
+        xml += '<Style ss:ID="Currency"><NumberFormat ss:Format="Currency"/></Style>\n';
+        xml += '<Style ss:ID="Percent"><NumberFormat ss:Format="Percent"/></Style>\n';
+        xml += '</Styles>\n';
+        xml += '<Worksheet ss:Name="Trend Reports">\n<Table>\n<Row>\n';
+        headers.forEach(h => { xml += `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>\n`; });
+        xml += '</Row>\n';
+        data.forEach(row => {
+            xml += '<Row>\n';
+            headers.forEach(h => {
+                const v = row[h];
+                if (typeof v === 'number') {
+                    xml += `<Cell><Data ss:Type="Number">${v}</Data></Cell>\n`;
+                } else if (typeof v === 'string' && v.trim().startsWith('₹')) {
+                    const n = Number(v.replace(/[^0-9.-]/g, '')) || 0;
+                    xml += `<Cell ss:StyleID=\"Currency\"><Data ss:Type=\"Number\">${n.toFixed(2)}</Data></Cell>\n`;
+                } else if (typeof v === 'string' && v.trim().endsWith('%')) {
+                    const n = (Number(v.replace('%','')) || 0) / 100;
+                    xml += `<Cell ss:StyleID=\"Percent\"><Data ss:Type=\"Number\">${n}</Data></Cell>\n`;
+                } else {
+                    xml += `<Cell><Data ss:Type="String">${escapeXml(v ?? '')}</Data></Cell>\n`;
+                }
+            });
+            xml += '</Row>\n';
+        });
+        xml += '</Table>\n</Worksheet>\n</Workbook>';
+
+        const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `trend-reports-${new Date().toISOString().split('T')[0]}.xls`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+
+    // ------- PIVOT EXPORT (matches table) -------
+    buildPivotDataset() {
+        // Prepare the same data used by the table
+        let data = this.currentData.filter(item => item.category === this.currentCategory);
+        // Name filter like table (keeps DAILY TOTAL rows regardless)
+        if (this.selectedNames && this.selectedNames.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                return isTotal || this.selectedNames.has(nm);
+            });
+        } else if (this.selectedName) {
+            data = data.filter(item => (item.displayName || item.name) === this.selectedName);
+        }
+        data = this.filterDataByDateRange(data);
+        if (this.currentCategory === 'campaigns' && this.selectedNames && this.selectedNames.size > 0) {
+            const totalsByDate = {};
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                if (nm.includes('📊')) return;
+                const key = this.normalizeDateKey(item.date);
+                if (!totalsByDate[key]) totalsByDate[key] = { spend: 0, sales: 0, clicks: 0 };
+                totalsByDate[key].spend += Number(item.spend || 0);
+                totalsByDate[key].sales += Number(item.sales || 0);
+                totalsByDate[key].clicks += Number(item.clicks || 0);
+            });
+            data = data.filter(r => !String(r.name || '').includes('📊'));
+            Object.entries(totalsByDate).forEach(([key, t]) => {
+                const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
+                const roas = t.spend > 0 ? t.sales / t.spend : 0;
+                const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
+                data.push({ date: key, category: 'campaigns', name: '📊 DAILY TOTAL', displayName: '📊 DAILY TOTAL', spend: t.spend, sales: t.sales, clicks: t.clicks, cpc, roas, acos, tcos: 0 });
+            });
+        }
+
+        const buckets = this.buildDateBuckets(data);
+        let grouped = this.groupDataByProductForPivot(data, buckets);
+
+        // Ensure DAILY TOTAL group appears on top in exports
+        const isTotalName = (nm) => {
+            const s = String(nm || '');
+            return s.includes('📊') || s.toLowerCase().includes('daily total');
+        };
+        const totalsFirst = [];
+        const others = [];
+        grouped.forEach(g => {
+            if (isTotalName(g.name)) totalsFirst.push(g); else others.push(g);
+        });
+        grouped = [...totalsFirst, ...others];
+
+        // Headers
+        const nameHeader = this.currentCategory === 'campaigns' ? 'Campaign Name' : (this.currentCategory === 'search-terms' ? 'Search Term' : 'Product Name');
+        const headers = [nameHeader, 'Metric', ...buckets.labels];
+
+        // Row builder like table
+        const rows = [];
+        const pushMetricRow = (name, metricLabel, keyed, format) => {
+            const row = [name, metricLabel];
+            buckets.keys.forEach(k => {
+                const v = keyed[k] || 0;
+                row.push({ v, format });
+            });
+            rows.push(row);
+        };
+
+        grouped.forEach(product => {
+            // Determine metrics per category
+            const allMetrics = [];
+            if (this.currentCategory === 'products') {
+                allMetrics.push({ key: 'sales', label: 'Sales', data: product.salesByKey, format: 'currency' });
+                allMetrics.push({ key: 'orders', label: 'No of Orders', data: product.ordersByKey, format: 'number' });
+                allMetrics.push({ key: 'sessions', label: 'Sessions', data: product.sessionsByKey, format: 'number' });
+                allMetrics.push({ key: 'pageviews', label: 'Page Views', data: product.pageviewsByKey, format: 'number' });
+                allMetrics.push({ key: 'conversionRate', label: 'Conversion Rate', data: product.conversionRateByKey, format: 'percent' });
+            } else if (this.currentCategory === 'campaigns') {
+                allMetrics.push({ key: 'spend', label: 'Ad Spend', data: product.spendByKey, format: 'currency' });
+                allMetrics.push({ key: 'cpc', label: 'AVG. CPC', data: product.cpcByKey, format: 'currency' });
+                allMetrics.push({ key: 'clicks', label: 'Ad Clicks', data: product.clicksByKey, format: 'number' });
+                // ROAS should be approximate (e.g., 2 decimals)
+                allMetrics.push({ key: 'roas', label: 'ROAS', data: product.roasByKey, format: 'decimal2' });
+                allMetrics.push({ key: 'acos', label: 'ACOS', data: product.acosByKey, format: 'percent' });
+                allMetrics.push({ key: 'tcos', label: 'TCOS', data: product.tcosByKey, format: 'percent' });
+            } else { // search-terms
+                allMetrics.push({ key: 'clicks', label: 'Ad Clicks', data: product.clicksByKey, format: 'number' });
+                allMetrics.push({ key: 'sessions', label: 'Sessions', data: product.sessionsByKey, format: 'number' });
+                allMetrics.push({ key: 'pageviews', label: 'Page Views', data: product.pageviewsByKey, format: 'number' });
+                allMetrics.push({ key: 'sales', label: 'Sales', data: product.salesByKey, format: 'currency' });
+            }
+            const active = this.selectedMetrics && this.selectedMetrics.length ? allMetrics.filter(m => this.selectedMetrics.includes(m.key)) : allMetrics;
+            active.forEach(m => pushMetricRow(product.name, m.label, m.data, m.format));
+        });
+
+        return { headers, rows };
+    }
+
+	downloadCSVPivot(headers, rows) {
+		const flat = [headers.join(',')];
+		let previousName = null;
+		rows.forEach(r => {
+			const first = r[0] === previousName ? '' : r[0];
+			previousName = r[0];
+			const line = [first, ...r.slice(1)].map(c => {
+				if (typeof c === 'object') {
+					if (c.format === 'currency') return `\"₹${(Number(c.v||0)).toFixed(2)}\"`;
+					if (c.format === 'percent') return `\"${(Number(c.v||0)).toFixed(2)}%\"`;
+					if (c.format === 'decimal2') return `\"${(Number(c.v||0)).toFixed(2)}\"`;
+					return `\"${Number(c.v||0)}\"`;
+				}
+				return `\"${c}\"`;
+			}).join(',');
+			flat.push(line);
+		});
+		const blob = new Blob([flat.join('\n')], { type: 'text/csv' });
+		const url = window.URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `trend-pivot-${new Date().toISOString().split('T')[0]}.csv`;
+		a.click();
+		window.URL.revokeObjectURL(url);
+	}
+
+	downloadExcelPivot(headers, rows) {
+        const escapeXml = (text) => String(text)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&apos;');
+        let xml = '<?xml version="1.0"?>\n';
+        xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:html="http://www.w3.org/TR/REC-html40">\n';
+        xml += '<Styles>\n';
+        xml += '<Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#EEEEEE" ss:Pattern="Solid"/></Style>\n';
+        xml += '<Style ss:ID="Currency"><NumberFormat ss:Format="\u20B9#,##0.00"/></Style>\n';
+        xml += '<Style ss:ID="Percent"><NumberFormat ss:Format="0.00%"/></Style>\n';
+        xml += '<Style ss:ID="Decimal2"><NumberFormat ss:Format="0.00"/></Style>\n';
+        xml += '</Styles>\n';
+        xml += '<Worksheet ss:Name="Trend Pivot">\n<Table>\n<Row>\n';
+        headers.forEach(h => { xml += `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>\n`; });
+        xml += '</Row>\n';
+		let previousName = null;
+		rows.forEach(r => {
+            xml += '<Row>\n';
+			// blank repeat for first column
+			const first = r[0] === previousName ? '' : r[0];
+			previousName = r[0];
+			const cells = [first, ...r.slice(1)];
+			cells.forEach(c => {
+                if (typeof c === 'object') {
+                    if (c.format === 'currency') xml += `<Cell ss:StyleID="Currency"><Data ss:Type="Number">${Number(c.v || 0).toFixed(2)}</Data></Cell>\n`;
+                    else if (c.format === 'percent') xml += `<Cell ss:StyleID="Percent"><Data ss:Type="Number">${Number(c.v || 0)/100}</Data></Cell>\n`;
+                    else if (c.format === 'decimal2') xml += `<Cell ss:StyleID=\"Decimal2\"><Data ss:Type=\"Number\">${Number(c.v || 0).toFixed(2)}</Data></Cell>\n`;
+                    else xml += `<Cell><Data ss:Type="Number">${Number(c.v || 0)}</Data></Cell>\n`;
+                } else {
+                    xml += `<Cell><Data ss:Type="String">${escapeXml(c)}</Data></Cell>\n`;
+                }
+			});
+            xml += '</Row>\n';
+		});
+        xml += '</Table>\n</Worksheet>\n</Workbook>';
+        const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `trend-pivot-${new Date().toISOString().split('T')[0]}.xls`;
+        a.click();
+        window.URL.revokeObjectURL(url);
     }
 
     showChartNoData() {
         // Don't replace the canvas - just show empty chart
+    }
+
+    exitFullscreen() {
+        const chartContainer = document.querySelector('.charts-section .chart-container');
+        if (chartContainer) {
+            chartContainer.classList.remove('chart-fullscreen-active');
+            chartContainer.classList.remove('use-rotate-fallback');
+            
+            // Remove close button if it exists
+            const closeBtn = chartContainer.querySelector('button[style*="position: absolute"]');
+            if (closeBtn) {
+                closeBtn.remove();
+            }
+            
+            if (this.trendChart) { 
+                setTimeout(() => {
+                    this.trendChart.resize();
+                    // Restore proper aspect ratio when exiting fullscreen
+                    this.trendChart.options.maintainAspectRatio = false;
+                    // Reset layout padding to normal
+                    this.trendChart.options.layout = {
+                        padding: {
+                            top: 10,
+                            right: 10,
+                            bottom: 20,
+                            left: 20
+                        }
+                    };
+                    this.trendChart.update();
+                }, 100); 
+            }
+            if (screen.orientation && screen.orientation.unlock) { 
+                try { screen.orientation.unlock(); } catch(_) {} 
+            }
+        }
     }
 }
 

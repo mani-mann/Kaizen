@@ -28,6 +28,15 @@ constructor() {
     
     this.availableDateRange = null;
     this.availableDates = [];
+    
+    // Chart properties
+    this.chart = null;
+    this.chartData = [];
+    this.chartAllData = null; // lifetime data cache for Monthly view
+    this.loadingAllChartData = false;
+    
+    // Selected metrics for chart (persist across period changes)
+    this.selectedMetrics = ['sessions', 'pageViews', 'unitsOrdered', 'sales'];
     // Comment out ASIN filtering to see all data from database
     // this.allowedAsins = new Set([
     //     'B0DNKGMNTP', // Trumps: Periodic Table
@@ -142,11 +151,15 @@ async waitForBackendReady(apiBase, maxAttempts = 6, delayMs = 500) {
 
 getApiBase() {
     try {
-        // If not already on the backend origin, target localhost:5000 for API
         const host = (typeof location !== 'undefined') ? location.hostname : '';
         const port = (typeof location !== 'undefined') ? location.port : '';
-        const onBackend = (host === 'localhost' || host === '127.0.0.1') && port === '5000';
-        return onBackend ? '' : 'http://localhost:5000';
+        const protocol = (typeof location !== 'undefined') ? location.protocol : 'http:';
+        // Always prefer same-origin backend unless explicitly on localhost:5000
+        if (host === 'localhost' && (port === '5000' || port === '')) {
+            return '';
+        }
+        // Use same origin for deployed environments (run.app, vercel, etc.)
+        return `${protocol}//${host}${port ? `:${port}` : ''}`;
     } catch (_) {
         return 'http://localhost:5000';
     }
@@ -177,6 +190,10 @@ async initializeComponents() {
     console.log('🔍 Initializing business reports components...');
     this.setupEventListeners();
     this.initializeDatePicker();
+    this.initializeChart();
+    
+    // Initialize metric checkboxes to match selected metrics
+    this.syncMetricCheckboxes();
     
     // Use default range (last 30 days) for better performance
     // User can select "Lifetime" from the preset dropdown if they want all data
@@ -358,10 +375,11 @@ setupEventListeners() {
         searchInput.addEventListener('input', this.debounce(this.handleSearch.bind(this), 300));
     }
     
-    const exportExcel = document.getElementById('exportExcel');
-    const exportCSV = document.getElementById('exportCSV');
-    if (exportExcel) exportExcel.addEventListener('click', () => this.exportData('excel'));
-    if (exportCSV) exportCSV.addEventListener('click', () => this.exportData('csv'));
+    const exportExcelComplete = document.getElementById('exportExcelComplete');
+    const exportCSVComplete = document.getElementById('exportCSVComplete');
+    
+    if (exportExcelComplete) exportExcelComplete.addEventListener('click', () => this.exportData('excel', true));
+    if (exportCSVComplete) exportCSVComplete.addEventListener('click', () => this.exportData('csv', true));
     
     const prevPage = document.getElementById('prevPage');
     const nextPage = document.getElementById('nextPage');
@@ -380,6 +398,50 @@ setupEventListeners() {
         });
     }
     
+    // Chart period selector
+    const chartPeriod = document.getElementById('chartPeriod');
+    if (chartPeriod) {
+        chartPeriod.addEventListener('change', (e) => {
+            this.updateChart(e.target.value);
+        });
+    }
+    
+    // Metric selector functionality
+    const metricToggle = document.getElementById('metricToggle');
+    const metricDropdown = document.getElementById('metricDropdown');
+    
+    if (metricToggle && metricDropdown) {
+        metricToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = metricDropdown.style.display === 'block';
+            metricDropdown.style.display = isOpen ? 'none' : 'block';
+        });
+
+        // Handle metric checkbox changes
+        document.querySelectorAll('#metricDropdown input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const metric = e.target.id.replace('metric-', '');
+                if (e.target.checked) {
+                    if (!this.selectedMetrics.includes(metric)) {
+                        this.selectedMetrics.push(metric);
+                    }
+                } else {
+                    this.selectedMetrics = this.selectedMetrics.filter(m => m !== metric);
+                }
+                // Update chart with new metric selection
+                const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
+                this.updateChart(currentPeriod);
+            });
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!metricDropdown.contains(e.target) && !metricToggle.contains(e.target)) {
+                metricDropdown.style.display = 'none';
+            }
+        });
+    }
+    
     // Close sidebar when clicking outside on mobile
     document.addEventListener('click', (e) => {
         if (window.innerWidth <= 992) {
@@ -395,7 +457,25 @@ setupEventListeners() {
     if (presetToggle && presetDropdown) {
         presetToggle.addEventListener('click', (e) => {
             e.stopPropagation();
-            presetDropdown.style.display = presetDropdown.style.display === 'block' ? 'none' : 'block';
+            const isMobile = window.innerWidth <= 768;
+            if (presetDropdown.style.display === 'block') {
+                presetDropdown.style.display = 'none';
+            } else {
+                presetDropdown.style.display = 'block';
+                // On mobile, position dropdown better
+                if (isMobile) {
+                    // Add mobile-specific class for better positioning
+                    presetDropdown.classList.add('mobile-dropdown');
+                    // Position relative to viewport
+                    const rect = presetToggle.getBoundingClientRect();
+                    presetDropdown.style.top = `${rect.bottom + 8}px`;
+                    presetDropdown.style.left = '16px';
+                    presetDropdown.style.right = '16px';
+                    presetDropdown.style.width = 'auto';
+                } else {
+                    presetDropdown.classList.remove('mobile-dropdown');
+                }
+            }
         });
         presetDropdown.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -406,7 +486,12 @@ setupEventListeners() {
             presetDropdown.style.display = 'none';
             presetToggle.textContent = btn.textContent.trim() + ' ▾';
         });
-        document.addEventListener('click', () => { presetDropdown.style.display = 'none'; });
+        document.addEventListener('click', (e) => { 
+            // Don't close if clicking on dropdown or toggle
+            if (!presetDropdown.contains(e.target) && !presetToggle.contains(e.target)) {
+                presetDropdown.style.display = 'none';
+            }
+        });
     }
 }
 
@@ -435,10 +520,14 @@ async loadData() {
                 const rangeJson = await rangeRes.json();
                 const maxDateStr = rangeJson?.maxDate || rangeJson?.max_date || null;
                 if (maxDateStr) {
-                    if (!this.state.dateRange?.endStr || this.state.dateRange.endStr > maxDateStr) {
-                        this.state.dateRange.endStr = String(maxDateStr).slice(0, 10);
-                        const [y,m,d] = this.state.dateRange.endStr.split('-').map(Number);
-                        this.state.dateRange.end = new Date(y, m - 1, d, 23, 59, 59, 999);
+                    // Parse in local time to avoid UTC -> previous-day drift
+                    const maxD = new Date(maxDateStr);
+                    const localMaxStr = this.formatDate(maxD);
+                    if (!this.state.dateRange?.endStr || this.state.dateRange.endStr > localMaxStr) {
+                        this.state.dateRange.endStr = localMaxStr;
+                        this.state.dateRange.end = new Date(
+                            maxD.getFullYear(), maxD.getMonth(), maxD.getDate(), 23, 59, 59, 999
+                        );
                     }
                 }
             }
@@ -460,12 +549,13 @@ async loadData() {
                 const rangeRes2 = await fetch(`${apiBase}/api/business-date-range`);
                 if (rangeRes2.ok) {
                     const rj = await rangeRes2.json();
-                    const maxStr = (rj?.maxDate || rj?.max_date || '').slice(0,10);
-                    if (maxStr) {
+                    const maxSrc = rj?.maxDate || rj?.max_date || null;
+                    if (maxSrc) {
+                        const maxD2 = new Date(maxSrc);
+                        const maxStr = this.formatDate(maxD2);
                         if (!this.state.dateRange?.endStr || this.state.dateRange.endStr > maxStr) {
                             this.state.dateRange.endStr = maxStr;
-                            const [y,m,d] = maxStr.split('-').map(Number);
-                            this.state.dateRange.end = new Date(y, m - 1, d, 23,59,59,999);
+                            this.state.dateRange.end = new Date(maxD2.getFullYear(), maxD2.getMonth(), maxD2.getDate(), 23,59,59,999);
                         }
                         const retryUrl = `${apiBase}/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}&t=${Date.now()}`;
                         console.log('🔁 Retrying after 503 with clamped end date:', retryUrl);
@@ -618,6 +708,9 @@ async loadData() {
         await this.updateKPITrends(data.kpis || {});
         this.renderTable();
         this.updateResultsCount();
+        
+        // Update chart with new data
+        await this.updateChart();
         
         console.log('🔍 Data loading completed successfully');
         
@@ -1191,10 +1284,10 @@ updateResultsCount() {
     }
 }
 
-async exportData(format) {
+async exportData(format, includeAll = true) {
     try {
-        // Build export directly from what the user sees in the table to avoid mismatches
-        const exportData = [...this.state.filteredData];
+        // Always export ALL individual entries from database
+        const exportData = await this.fetchCompleteDataForExport();
         
         if (exportData.length === 0) {
             this.showNotification('No data available for export', 'warning');
@@ -1203,43 +1296,204 @@ async exportData(format) {
         
         const headers = ['Date', 'SKU', 'Parent ASIN', 'Product Title', 'Sessions', 'Page Views', 'Units Ordered', 'Sales (₹)', 'Conversion Rate (%)', 'Avg Order Value (₹)'];
         
-        let csv = headers.join(',') + '\n';
-        
-        exportData.forEach(row => {
-            const actualDate = row.date || this.state.dateRange.startStr;
-            csv += [
-                `"${actualDate}"`,
-                `"${row.sku}"`,
-                `"${row.parentAsin}"`,
-                `"${row.productTitle}"`,
-                row.sessions,
-                row.pageViews,
-                row.unitsOrdered,
-                Number(row.sales || 0).toFixed(2),
-                Number(row.conversionRate || 0).toFixed(2),
-                Number(row.avgOrderValue || 0).toFixed(2)
-            ].join(',') + '\n';
-        });
-        
         // Generate filename with date range
         const startDate = this.state.dateRange.startStr;
         const endDate = this.state.dateRange.endStr;
-        const filename = `business-report-${startDate}-to-${endDate}.csv`;
         
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url2 = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url2;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url2);
-        
-        this.showNotification(`Export successful! (${exportData.length} records)`, 'success');
+        if (format === 'excel') {
+            // Create Excel file using XML format (Excel 2003+ compatible)
+            let excelContent = this.createExcelContent(headers, exportData);
+            const filename = `business-report-${startDate}-to-${endDate}.xls`;
+            
+            const blob = new Blob([excelContent], { 
+                type: 'application/vnd.ms-excel' 
+            });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            this.showNotification(`Excel export successful! (${exportData.length} records)`, 'success');
+            
+        } else {
+            // CSV format
+            let csv = headers.join(',') + '\n';
+            
+            exportData.forEach(row => {
+                const actualDate = row.date || this.state.dateRange.startStr;
+                csv += [
+                    `"${actualDate}"`,
+                    `"${row.sku}"`,
+                    `"${row.parentAsin}"`,
+                    `"${row.productTitle}"`,
+                    row.sessions,
+                    row.pageViews,
+                    row.unitsOrdered,
+                    Number(row.sales || 0).toFixed(2),
+                    Number(row.conversionRate || 0).toFixed(2),
+                    Number(row.avgOrderValue || 0).toFixed(2)
+                ].join(',') + '\n';
+            });
+            
+            const filename = `business-report-${startDate}-to-${endDate}.csv`;
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            this.showNotification(`CSV export successful! (${exportData.length} records)`, 'success');
+        }
         
     } catch (error) {
         this.showNotification('Export failed. Please try again.', 'error');
+    }
+}
+
+async fetchCompleteDataForExport() {
+    try {
+        const apiBase = this.getApiBase();
+        const startDate = this.state.dateRange.startStr;
+        const endDate = this.state.dateRange.endStr;
+        
+        // Fetch ALL individual entries from database without aggregation
+        const url = `${apiBase}/api/business-data?start=${startDate}&end=${endDate}&includeAll=true`;
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch complete data: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Transform data but DON'T aggregate - keep individual entries
+        const individualEntries = this.transformData(data.data || []);
+        
+        // Return individual entries without aggregation
+        return individualEntries;
+        
+    } catch (error) {
+        console.error('Error fetching complete data:', error);
+        // Fallback to filtered data if complete fetch fails
+        return [...this.state.filteredData];
+    }
+}
+
+createExcelContent(headers, data) {
+    // Create Excel XML format (Excel 2003+ compatible)
+    let xml = '<?xml version="1.0"?>\n';
+    xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n';
+    xml += ' xmlns:o="urn:schemas-microsoft-com:office:office"\n';
+    xml += ' xmlns:x="urn:schemas-microsoft-com:office:excel"\n';
+    xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n';
+    xml += ' xmlns:html="http://www.w3.org/TR/REC-html40">\n';
+    
+    // Styles
+    xml += '<Styles>\n';
+    xml += '<Style ss:ID="Header">\n';
+    xml += '<Font ss:Bold="1"/>\n';
+    xml += '<Interior ss:Color="#CCCCCC" ss:Pattern="Solid"/>\n';
+    xml += '</Style>\n';
+    xml += '<Style ss:ID="Currency">\n';
+    xml += '<NumberFormat ss:Format="Currency"/>\n';
+    xml += '</Style>\n';
+    xml += '<Style ss:ID="Percent">\n';
+    xml += '<NumberFormat ss:Format="Percent"/>\n';
+    xml += '</Style>\n';
+    xml += '</Styles>\n';
+    
+    // Worksheet
+    xml += '<Worksheet ss:Name="Business Report">\n';
+    xml += '<Table>\n';
+    
+    // Headers
+    xml += '<Row>\n';
+    headers.forEach(header => {
+        xml += `<Cell ss:StyleID="Header"><Data ss:Type="String">${this.escapeXml(header)}</Data></Cell>\n`;
+    });
+    xml += '</Row>\n';
+    
+    // Data rows
+    data.forEach(row => {
+        xml += '<Row>\n';
+        const actualDate = row.date || this.state.dateRange.startStr;
+        
+        // Date
+        xml += `<Cell><Data ss:Type="String">${this.escapeXml(actualDate)}</Data></Cell>\n`;
+        // SKU
+        xml += `<Cell><Data ss:Type="String">${this.escapeXml(row.sku)}</Data></Cell>\n`;
+        // Parent ASIN
+        xml += `<Cell><Data ss:Type="String">${this.escapeXml(row.parentAsin)}</Data></Cell>\n`;
+        // Product Title
+        xml += `<Cell><Data ss:Type="String">${this.escapeXml(row.productTitle)}</Data></Cell>\n`;
+        // Sessions
+        xml += `<Cell><Data ss:Type="Number">${row.sessions}</Data></Cell>\n`;
+        // Page Views
+        xml += `<Cell><Data ss:Type="Number">${row.pageViews}</Data></Cell>\n`;
+        // Units Ordered
+        xml += `<Cell><Data ss:Type="Number">${row.unitsOrdered}</Data></Cell>\n`;
+        // Sales (with currency formatting)
+        xml += `<Cell ss:StyleID="Currency"><Data ss:Type="Number">${Number(row.sales || 0).toFixed(2)}</Data></Cell>\n`;
+        // Conversion Rate (with percentage formatting)
+        xml += `<Cell ss:StyleID="Percent"><Data ss:Type="Number">${(Number(row.conversionRate || 0) / 100).toFixed(4)}</Data></Cell>\n`;
+        // Avg Order Value (with currency formatting)
+        xml += `<Cell ss:StyleID="Currency"><Data ss:Type="Number">${Number(row.avgOrderValue || 0).toFixed(2)}</Data></Cell>\n`;
+        
+        xml += '</Row>\n';
+    });
+    
+    xml += '</Table>\n';
+    xml += '</Worksheet>\n';
+    xml += '</Workbook>';
+    
+    return xml;
+}
+
+escapeXml(text) {
+    if (typeof text !== 'string') return text;
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+async fetchCompleteDataForExport() {
+    try {
+        const apiBase = this.getApiBase();
+        const startDate = this.state.dateRange.startStr;
+        const endDate = this.state.dateRange.endStr;
+        
+        // Fetch ALL individual entries from database without aggregation
+        const url = `${apiBase}/api/business-data?start=${startDate}&end=${endDate}&includeAll=true`;
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch complete data: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Transform data but DON'T aggregate - keep individual entries
+        const individualEntries = this.transformData(data.data || []);
+        
+        // Return individual entries without aggregation
+        return individualEntries;
+        
+    } catch (error) {
+        console.error('Error fetching complete data:', error);
+        // Fallback to filtered data if complete fetch fails
+        return [...this.state.filteredData];
     }
 }
 
@@ -1293,8 +1547,13 @@ openCalendar() {
         this.calendarState.tempRangeEnd = new Date(defaultRange.end);
     }
     
-    this.calendarState.calendarMonth = new Date(this.calendarState.tempRangeEnd);
-    this.calendarState.calendarMonth.setDate(1);
+    // Open picker on a sane month (avoid 1970 if temp range is missing/invalid)
+    const base = (this.calendarState.tempRangeEnd && !isNaN(new Date(this.calendarState.tempRangeEnd)))
+        ? new Date(this.calendarState.tempRangeEnd)
+        : (this.calendarState.tempRangeStart && !isNaN(new Date(this.calendarState.tempRangeStart)))
+            ? new Date(this.calendarState.tempRangeStart)
+            : new Date();
+    this.calendarState.calendarMonth = new Date(base.getFullYear(), base.getMonth(), 1);
     
     this.renderCalendar();
 }
@@ -1310,6 +1569,32 @@ closeCalendar() {
     if (dateFilter) {
         dateFilter.classList.remove('open');
     }
+
+    // Auto-apply selected range when calendar closes (no extra Confirm needed)
+    try {
+        if (this.calendarState && this.calendarState.tempRangeStart) {
+            const startYear = this.calendarState.tempRangeStart.getFullYear();
+            const startMonth = this.calendarState.tempRangeStart.getMonth();
+            const startDay = this.calendarState.tempRangeStart.getDate();
+            const endRef = this.calendarState.tempRangeEnd || this.calendarState.tempRangeStart;
+            const endYear = endRef.getFullYear();
+            const endMonth = endRef.getMonth();
+            const endDay = endRef.getDate();
+
+            const start = new Date(startYear, startMonth, startDay, 0, 0, 0, 0);
+            const end = new Date(endYear, endMonth, endDay, 23, 59, 59, 999);
+
+            this.state.dateRange = {
+                start,
+                end,
+                startStr: this.formatDate(start),
+                endStr: this.formatDate(end)
+            };
+            this.updateDateDisplay();
+            // Re-load data for the applied range
+            this.loadData();
+        }
+    } catch (_) { /* silent */ }
 }
 
 renderCalendar() {
@@ -1846,6 +2131,423 @@ debugUpdateKPIs() {
         conversionRate: 6.75
     };
     this.updateKPIs(testKPIs);
+}
+
+// Chart methods
+syncMetricCheckboxes() {
+    document.querySelectorAll('#metricDropdown input[type="checkbox"]').forEach(checkbox => {
+        const metric = checkbox.id.replace('metric-', '');
+        checkbox.checked = this.selectedMetrics.includes(metric);
+    });
+}
+
+// Helper method to create dataset configuration for a metric
+createMetricDataset(metric, data) {
+    const configs = {
+        sessions: {
+            label: 'Sessions',
+            borderColor: '#007bff',
+            backgroundColor: 'rgba(0, 123, 255, 0.1)',
+            yAxisID: 'y'
+        },
+        pageViews: {
+            label: 'Page Views',
+            borderColor: '#28a745',
+            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+            yAxisID: 'y'
+        },
+        unitsOrdered: {
+            label: 'Units Ordered',
+            borderColor: '#ffc107',
+            backgroundColor: 'rgba(255, 193, 7, 0.1)',
+            yAxisID: 'y1'
+        },
+        sales: {
+            label: 'Sales (₹)',
+            borderColor: '#dc3545',
+            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+            yAxisID: 'y1'
+        }
+    };
+
+    const config = configs[metric];
+    if (!config) return null;
+
+    return {
+        label: config.label,
+        data: data,
+        borderColor: config.borderColor,
+        backgroundColor: config.backgroundColor,
+        tension: 0.4,
+        fill: false,
+        pointRadius: 3,
+        pointHoverRadius: 6,
+        borderWidth: 3,
+        showLine: true,
+        spanGaps: true,
+        pointStyle: 'circle',
+        capBezierPoints: true,
+        cubicInterpolationMode: 'monotone',
+        yAxisID: config.yAxisID,
+        elements: {
+            point: {
+                hoverRadius: 6
+            },
+            line: {
+                tension: 0.4,
+                borderJoinStyle: 'round',
+                borderCapStyle: 'round'
+            }
+        }
+    };
+}
+
+initializeChart() {
+    const ctx = document.getElementById('businessChart');
+    if (!ctx) return;
+    
+    // Initialize with empty chart
+    this.chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: []
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    onClick: (e, legendItem, legend) => {
+                        // Toggle dataset visibility using Chart.js built-in functionality
+                        const index = legendItem.datasetIndex;
+                        const chart = legend.chart;
+                        const meta = chart.getDatasetMeta(index);
+                        
+                        // Toggle visibility
+                        meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null;
+                        chart.update();
+                        
+                        // Also sync with dropdown checkboxes
+                        const dataset = chart.data.datasets[index];
+                        const metricName = dataset.label;
+                        
+                        // Map display names to internal metric keys
+                        const metricMap = {
+                            'Sessions': 'sessions',
+                            'Page Views': 'pageViews', 
+                            'Units Ordered': 'unitsOrdered',
+                            'Sales (₹)': 'sales'
+                        };
+                        
+                        const metricKey = metricMap[metricName];
+                        if (metricKey) {
+                            // Update selectedMetrics array based on visibility
+                            const isVisible = !meta.hidden;
+                            if (isVisible && !this.selectedMetrics.includes(metricKey)) {
+                                this.selectedMetrics.push(metricKey);
+                            } else if (!isVisible && this.selectedMetrics.includes(metricKey)) {
+                                this.selectedMetrics = this.selectedMetrics.filter(m => m !== metricKey);
+                            }
+                            
+                            // Sync the dropdown checkboxes
+                            this.syncMetricCheckboxes();
+                        }
+                    },
+                    labels: {
+                        usePointStyle: true,
+                        padding: 20,
+                        font: { size: 11 }
+                    }
+                },
+                tooltip: {
+                    enabled: true,
+                    usePointStyle: true,
+                    callbacks: {
+                        label: (ctx) => {
+                            const label = ctx.dataset.label || '';
+                            const raw = Number(ctx.parsed.y || 0);
+                            if (label.includes('Sales')) {
+                                return `${label}: ₹${raw.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+                            }
+                            return `${label}: ${raw.toLocaleString('en-IN')}`;
+                        },
+                        title: (items) => {
+                            return items && items.length ? items[0].label : '';
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    beginAtZero: true,
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        color: '#6c757d',
+                        font: { size: 11 },
+                        callback: function(value) {
+                            return value.toLocaleString();
+                        }
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    beginAtZero: true,
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        color: '#6c757d',
+                        font: { size: 11 },
+                        callback: function(value) {
+                            return value.toLocaleString();
+                        }
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        color: '#6c757d',
+                        font: { size: 11 },
+                        maxRotation: 45,
+                        minRotation: 0
+                    }
+                }
+            }
+        }
+    });
+}
+
+async updateChart(period = 'daily') {
+    if (!this.chart || !this.state.businessData || this.state.businessData.length === 0) {
+        return;
+    }
+    
+    // Ensure monthly uses ALL data (ignore date filter)
+    if (period === 'monthly') {
+        if (!this.chartAllData && !this.loadingAllChartData) {
+            try {
+                this.loadingAllChartData = true;
+                const apiBase = this.getApiBase();
+                // Hit analytics to get lifetime business series (already aggregated by date)
+                const res = await fetch(`${apiBase}/api/business-data`);
+                if (res.ok) {
+                    const j = await res.json();
+                    // Reuse transform to normalize
+                    this.chartAllData = (j?.data || []).map(r => ({
+                        date: this.formatDate(new Date(r.date)),
+                        sessions: Number(r.sessions || 0),
+                        pageViews: Number(r.page_views || 0),
+                        unitsOrdered: Number(r.units_ordered || 0),
+                        sales: Number(r.ordered_product_sales || 0)
+                    }));
+                }
+            } catch (_) { /* ignore */ }
+            finally { this.loadingAllChartData = false; }
+        }
+    }
+    const chartData = this.generateChartData(period);
+    
+    // Update chart data
+    this.chart.data.labels = chartData.labels;
+    this.chart.data.datasets = chartData.datasets;
+    this.chart.update();
+}
+
+generateChartData(period) {
+    if (!this.state.businessData || this.state.businessData.length === 0) {
+        return { labels: [], datasets: [] };
+    }
+    
+    // Source rows: for monthly use lifetime cache, otherwise current filtered data
+    const sourceRows = (period === 'monthly' && Array.isArray(this.chartAllData) && this.chartAllData.length)
+        ? this.chartAllData
+        : this.state.businessData;
+    
+    // Group data by date
+    const dataByDate = new Map();
+    
+    sourceRows.forEach(row => {
+        const date = row.date;
+        if (!dataByDate.has(date)) {
+            dataByDate.set(date, {
+                sessions: 0,
+                pageViews: 0,
+                unitsOrdered: 0,
+                sales: 0
+            });
+        }
+        
+        const dayData = dataByDate.get(date);
+        dayData.sessions += row.sessions || 0;
+        dayData.pageViews += row.pageViews || 0;
+        dayData.unitsOrdered += row.unitsOrdered || 0;
+        dayData.sales += row.sales || 0;
+    });
+    
+    // Sort dates
+    const sortedDates = Array.from(dataByDate.keys()).sort();
+    
+    // Generate labels and data based on period
+    let labels = [];
+    let sessionsData = [];
+    let pageViewsData = [];
+    let unitsOrderedData = [];
+    let salesData = [];
+    
+    if (period === 'daily') {
+        // Show daily data
+        sortedDates.forEach(date => {
+            const data = dataByDate.get(date);
+            labels.push(this.formatDateForChart(date));
+            sessionsData.push(data.sessions);
+            pageViewsData.push(data.pageViews);
+            unitsOrderedData.push(data.unitsOrdered);
+            salesData.push(data.sales);
+        });
+    } else if (period === 'weekly') {
+        // Group by weeks
+        const weeklyData = this.aggregateByWeek(sortedDates, dataByDate);
+        labels = weeklyData.labels;
+        sessionsData = weeklyData.sessions;
+        pageViewsData = weeklyData.pageViews;
+        unitsOrderedData = weeklyData.unitsOrdered;
+        salesData = weeklyData.sales;
+    } else if (period === 'monthly') {
+        // Group by months
+        const monthlyData = this.aggregateByMonth(sortedDates, dataByDate);
+        labels = monthlyData.labels;
+        sessionsData = monthlyData.sessions;
+        pageViewsData = monthlyData.pageViews;
+        unitsOrderedData = monthlyData.unitsOrdered;
+        salesData = monthlyData.sales;
+    }
+    
+    // Create datasets for all metrics (but respect visibility state)
+    const datasets = [];
+    const metricDataMap = {
+        sessions: sessionsData,
+        pageViews: pageViewsData,
+        unitsOrdered: unitsOrderedData,
+        sales: salesData
+    };
+
+    // Always include all metrics, but set hidden state based on selectedMetrics
+    const allMetrics = ['sessions', 'pageViews', 'unitsOrdered', 'sales'];
+    allMetrics.forEach(metric => {
+        const data = metricDataMap[metric];
+        if (data) {
+            const dataset = this.createMetricDataset(metric, data);
+            if (dataset) {
+                // Set hidden state based on whether metric is in selectedMetrics
+                dataset.hidden = !this.selectedMetrics.includes(metric);
+                datasets.push(dataset);
+            }
+        }
+    });
+
+    return {
+        labels: labels,
+        datasets: datasets
+    };
+}
+
+aggregateByWeek(sortedDates, dataByDate) {
+    const weeklyData = new Map();
+    
+    sortedDates.forEach(date => {
+        const dateObj = new Date(date);
+        const weekStart = this.getWeekStart(dateObj); // Monday start
+        const y = weekStart.getFullYear();
+        const m = String(weekStart.getMonth() + 1).padStart(2, '0');
+        const d = String(weekStart.getDate()).padStart(2, '0');
+        const key = `${y}-${m}-${d}`; // ISO key for correct sorting
+        
+        if (!weeklyData.has(key)) {
+            weeklyData.set(key, {
+                sessions: 0,
+                pageViews: 0,
+                unitsOrdered: 0,
+                sales: 0
+            });
+        }
+        
+        const data = dataByDate.get(date);
+        const weekData = weeklyData.get(key);
+        weekData.sessions += data.sessions;
+        weekData.pageViews += data.pageViews;
+        weekData.unitsOrdered += data.unitsOrdered;
+        weekData.sales += data.sales;
+    });
+    
+    const keys = Array.from(weeklyData.keys()).sort();
+    const labels = keys.map(k => this.formatDateForChart(k));
+    const sessions = keys.map(k => weeklyData.get(k).sessions);
+    const pageViews = keys.map(k => weeklyData.get(k).pageViews);
+    const unitsOrdered = keys.map(k => weeklyData.get(k).unitsOrdered);
+    const sales = keys.map(k => weeklyData.get(k).sales);
+    
+    return { labels, sessions, pageViews, unitsOrdered, sales };
+}
+
+aggregateByMonth(sortedDates, dataByDate) {
+    const monthlyData = new Map();
+    
+    sortedDates.forEach(date => {
+        const dateObj = new Date(date);
+        const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+        
+        if (!monthlyData.has(monthKey)) {
+            monthlyData.set(monthKey, {
+                sessions: 0,
+                pageViews: 0,
+                unitsOrdered: 0,
+                sales: 0
+            });
+        }
+        
+        const data = dataByDate.get(date);
+        const monthData = monthlyData.get(monthKey);
+        monthData.sessions += data.sessions;
+        monthData.pageViews += data.pageViews;
+        monthData.unitsOrdered += data.unitsOrdered;
+        monthData.sales += data.sales;
+    });
+    
+    const labels = Array.from(monthlyData.keys()).sort();
+    const sessions = labels.map(label => monthlyData.get(label).sessions);
+    const pageViews = labels.map(label => monthlyData.get(label).pageViews);
+    const unitsOrdered = labels.map(label => monthlyData.get(label).unitsOrdered);
+    const sales = labels.map(label => monthlyData.get(label).sales);
+    
+    return { labels, sessions, pageViews, unitsOrdered, sales };
+}
+
+getWeekStart(date) {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
+    return new Date(d.setDate(diff));
+}
+
+formatDateForChart(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric' 
+    });
 }
 
 }

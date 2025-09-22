@@ -231,6 +231,19 @@
                                 <small>Campaign performance over time</small>
                             </div>
                             <div class="chart-controls">
+                                <div class="metric-selector">
+                                    <button class="metric-toggle-btn" id="metricToggle" title="Select metrics to display">
+                                        <span class="material-icons">visibility</span>
+                                        <span>Metrics</span>
+                                    </button>
+                                    <div class="metric-dropdown" id="metricDropdown" style="display:none">
+                                        <label><input type="checkbox" id="metric-totalSales" checked> Total Sales</label>
+                                        <label><input type="checkbox" id="metric-adSales" checked> Ad Sales</label>
+                                        <label><input type="checkbox" id="metric-adSpend" checked> Ad Spend</label>
+                                        <label><input type="checkbox" id="metric-acos" checked> ACOS (%)</label>
+                                        <label><input type="checkbox" id="metric-tcos" checked> TCOS (%)</label>
+                                    </div>
+                                </div>
                                 <select class="period-selector" id="chartPeriod" title="Change chart data aggregation period (shows ALL database data)">
                                     <option value="daily">Daily</option>
                                     <option value="weekly">Weekly</option>
@@ -360,10 +373,7 @@
                                             <span>Impressions</span>
                                             <span class="material-icons">keyboard_arrow_down</span>
                                         </th>
-                                        <th class="sortable" data-sort="purchases">
-                                            <span>Purchases</span>
-                                            <span class="material-icons">keyboard_arrow_down</span>
-                                        </th>
+                                        
                                     </tr>
                                 </thead>
                                 <tbody id="tableBody">
