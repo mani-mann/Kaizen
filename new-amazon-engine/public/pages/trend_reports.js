@@ -22,6 +22,8 @@ class TrendReports {
             campaigns: [],
             'search-terms': []
         };
+        // Date order for table headers (asc/desc)
+        this.dateOrder = 'desc';
         this.sortDirection = 'desc';
         this.currentMonth = undefined;
         this.currentYear = undefined;
@@ -38,6 +40,27 @@ class TrendReports {
         this.setupMobileMenu();
         // Ensure correct metric visibility per category
         this.updateMetricOptionsVisibility();
+
+        // Inject date order toggle in table controls (left to pagination)
+        try {
+            const controls = document.querySelector('.table-controls');
+            if (controls && !document.getElementById('dateOrderToggle')) {
+                const btn = document.createElement('button');
+                btn.id = 'dateOrderToggle';
+                btn.className = 'action-btn';
+                btn.title = 'Toggle date order (ascending/descending)';
+                btn.innerHTML = '<span class="material-icons">swap_vert</span><span>Dates: New → Old</span>';
+                btn.style.marginRight = 'auto'; // push to left
+                btn.addEventListener('click', () => {
+                    this.dateOrder = this.dateOrder === 'desc' ? 'asc' : 'desc';
+                    const label = this.dateOrder === 'desc' ? 'Dates: New → Old' : 'Dates: Old → New';
+                    btn.innerHTML = '<span class="material-icons">swap_vert</span><span>' + label + '</span>';
+                    this.renderTable();
+                });
+                // place before results count
+                controls.insertBefore(btn, controls.firstChild);
+            }
+        } catch (_) {}
         
         // Ensure DOM is fully ready before loading data and setting up dropdowns
         setTimeout(() => {
@@ -932,6 +955,7 @@ class TrendReports {
                         category: result.category,
                         name: r.name,
                         displayName: r.name,
+                            campaignName: r.campaign_name || r.campaignName || '',
                             spend,
                             sales,
                             clicks,
@@ -968,7 +992,11 @@ class TrendReports {
                                 const key = this.normalizeDateKey(r.date);
                                 const add = byDate[key] || { totalSales: 0, sessions: r.sessions || 0 };
                                 const totalSales = add.totalSales;
-                                const sessions = add.sessions || r.sessions;
+                                // IMPORTANT: For search-terms, do NOT assign business sessions to
+                                // every individual row, otherwise later aggregations will multiply
+                                // the value by the number of terms. Keep sessions on individuals 0,
+                                // and inject a single DAILY TOTAL row carrying per-day sessions.
+                                const sessions = (result.category === 'search-terms') ? (r.sessions || 0) : (add.sessions || r.sessions);
                                 const tcos = totalSales > 0 ? (Number(r.spend || 0) / totalSales) * 100 : 0;
                                 return { ...r, totalSales, sessions, tcos };
                             });
@@ -1241,13 +1269,24 @@ class TrendReports {
         
         // Apply date range filter (same as table)
         data = this.filterDataByDateRange(data);
+
+        // Campaigns: avoid double-counting in the chart when DAILY TOTAL rows
+        // are present (backend provides both individuals and totals). If totals
+        // exist, drive the chart using ONLY the DAILY TOTAL rows so it matches
+        // the table's totals; otherwise, sum individuals as usual.
+        if (this.currentCategory === 'campaigns') {
+            const hasDailyTotal = data.some(r => String(r.name || '').includes('📊'));
+            if (hasDailyTotal) {
+                data = data.filter(r => String(r.name || '').includes('📊'));
+            }
+        }
         
         // Always try to show chart - let Chart.js handle empty data
         
         // Group data by time period for each selected metric
         // Constrain allowed metrics per category
         const allowedCampaignMetrics = ['spend','cpc','clicks','sales','sessions','totalSales','roas','acos','tcos'];
-        const allowedSearchMetrics = ['cpc','clicks','sales','sessions','totalSales','roas','acos','tcos'];
+        const allowedSearchMetrics = ['spend','cpc','clicks','sales','sessions','totalSales','roas','acos','tcos'];
         if (this.currentCategory === 'campaigns') {
             this.selectedMetrics = this.selectedMetrics.filter(m => allowedCampaignMetrics.includes(m));
         } else if (this.currentCategory === 'search-terms') {
@@ -1597,7 +1636,7 @@ class TrendReports {
             'roas': 'ROAS',
             'acos': 'ACOS',
             'tcos': 'TCOS',
-            'sales': (this.currentCategory === 'campaigns' ? 'Ad Sales' : 'Sales'),
+            'sales': (this.currentCategory === 'campaigns' || this.currentCategory === 'search-terms' ? 'Ad Sales' : 'Sales'),
             'orders': 'No of Orders',
             'sessions': 'Sessions',
             'totalSales': 'Total Sales',
@@ -1656,7 +1695,7 @@ class TrendReports {
                 this.updateSelectedMetrics();
             }
         } else if (this.currentCategory === 'search-terms') {
-            // Search terms: show similar metrics as Campaigns (no spend)
+            // Search terms: show similar metrics as Campaigns (including spend)
             const salesLbl = document.querySelector('label[for="metric-sales"]');
             if (salesLbl) salesLbl.textContent = 'Ad Sales';
             const clicksLbl = document.querySelector('label[for="metric-clicks"]');
@@ -1667,7 +1706,7 @@ class TrendReports {
             if (sessionsLbl) sessionsLbl.textContent = 'Sessions';
             show('metric-sales', true);
             show('metric-totalSales', true);
-            show('metric-spend', false);
+            show('metric-spend', true);
             show('metric-cpc', true);
             show('metric-clicks', true);
             show('metric-roas', true);
@@ -1680,7 +1719,7 @@ class TrendReports {
             show('metric-searchClicks', false);
             show('metric-conversionRate', false);
             // Ensure at least one metric is active (default to Ad Clicks)
-            const allowed = ['metric-cpc','metric-clicks','metric-sales','metric-sessions','metric-totalSales','metric-roas','metric-acos','metric-tcos'];
+            const allowed = ['metric-spend','metric-cpc','metric-clicks','metric-sales','metric-sessions','metric-totalSales','metric-roas','metric-acos','metric-tcos'];
             const checkedAllowed = allowed.filter(id => {
                 const el = document.getElementById(id);
                 return el && el.checked;
@@ -2010,6 +2049,11 @@ class TrendReports {
     renderTable() {
         const tbody = document.getElementById('tableBody');
         const theadRow = document.getElementById('tableHeaderRow');
+        const tableEl = document.querySelector('.data-table');
+        if (tableEl) {
+            tableEl.classList.remove('category-products', 'category-campaigns', 'category-search-terms');
+            tableEl.classList.add(`category-${this.currentCategory}`);
+        }
         
         // Get individual records
         let data = this.currentData.filter(item => item.category === this.currentCategory);
@@ -2063,6 +2107,67 @@ class TrendReports {
                 });
             });
         }
+
+        // If we're on search-terms, recompute DAILY TOTAL from items for spend/sales/clicks
+        // but pull Sessions/Pageviews from the pre-existing business totals rows so they are not zero.
+        if (this.currentCategory === 'search-terms') {
+            const totalsByDate = {};
+            const businessTotalsByDate = {};
+            // Capture business sessions/pageviews from existing DAILY TOTAL rows
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                const key = this.normalizeDateKey(item.date);
+                if (nm.includes('📊')) {
+                    businessTotalsByDate[key] = {
+                        sessions: Number(item.sessions || 0),
+                        pageviews: Number(item.pageviews || 0)
+                    };
+                }
+            });
+            // Build totals from only non-total rows (selected names already applied above)
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                if (nm.includes('📊')) return; // skip existing totals to avoid double-counting
+                const key = this.normalizeDateKey(item.date);
+                if (!totalsByDate[key]) {
+                    totalsByDate[key] = { spend: 0, sales: 0, clicks: 0, sessions: 0, pageviews: 0, orders: 0, totalSales: 0 };
+                }
+                totalsByDate[key].spend += Number(item.spend || 0);
+                totalsByDate[key].sales += Number(item.sales || 0);
+                totalsByDate[key].clicks += Number(item.clicks || 0);
+                totalsByDate[key].orders += Number(item.orders || 0);
+                // Use per-day Total Sales from business totals: take the maximum per date to avoid duplicates across terms
+                const dayTotalSales = Number(item.totalSales || 0);
+                const existingTotal = Number(totalsByDate[key].totalSales || 0);
+                totalsByDate[key].totalSales = Math.max(existingTotal, dayTotalSales);
+            });
+            // Remove any pre-existing DAILY TOTAL rows
+            data = data.filter(r => !String(r.name || '').includes('📊'));
+            Object.entries(totalsByDate).forEach(([key, t]) => {
+                const biz = businessTotalsByDate[key] || { sessions: 0, pageviews: 0 };
+                const sessions = biz.sessions;
+                const pageviews = biz.pageviews;
+                const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
+                const roas = t.spend > 0 ? t.sales / t.spend : 0;
+                const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
+                const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
+                const ctr = sessions > 0 ? (t.clicks / sessions) * 100 : 0;
+                data.push({
+                    date: key,
+                    category: 'search-terms',
+                    name: '📊 DAILY TOTAL',
+                    displayName: '📊 DAILY TOTAL',
+                    spend: t.spend,
+                    sales: t.sales,
+                    clicks: t.clicks,
+                    sessions,
+                    pageviews,
+                    orders: t.orders,
+                    totalSales: t.totalSales,
+                    cpc, roas, acos, tcos, ctr
+                });
+            });
+        }
         
         
         // Build date buckets based on currentTimePeriod
@@ -2082,7 +2187,7 @@ class TrendReports {
         });
 
         // Sort: products with data first (by sales desc, then spend), keep name sort when explicitly selected
-        const sortedData = withTotals.sort((a, b) => {
+        let sortedData = withTotals.sort((a, b) => {
             if (this.sortColumn === 'name') {
                 const an = a.name.toLowerCase();
                 const bn = b.name.toLowerCase();
@@ -2097,21 +2202,51 @@ class TrendReports {
             if (b.__totalPageviews !== a.__totalPageviews) return b.__totalPageviews - a.__totalPageviews;
             return a.name.localeCompare(b.name);
         });
+
+        // For search-terms, ensure DAILY TOTAL appears at the top (same as campaigns)
+        if (this.currentCategory === 'search-terms') {
+            const isTotalName = (nm) => {
+                const s = String(nm || '');
+                return s.includes('📊') || s.toLowerCase().includes('daily total');
+            };
+            const totalsFirst = [];
+            const others = [];
+            sortedData.forEach(g => {
+                if (isTotalName(g.name)) totalsFirst.push(g); else others.push(g);
+            });
+            sortedData = [...totalsFirst, ...others];
+        }
         
         const startIndex = (this.currentPage - 1) * this.itemsPerPage;
         const endIndex = startIndex + this.itemsPerPage;
         const pageData = sortedData.slice(startIndex, endIndex);
         
-        // Render dynamic header (name + metric + date columns)
+        // For search-terms, build mapping of term -> set of campaign names (excluding DAILY TOTAL)
+        let campaignsByTerm = new Map();
+        if (this.currentCategory === 'search-terms') {
+            data.forEach(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = String(item.name || '').includes('📊') || String(item.name || '').toLowerCase().includes('daily total');
+                if (isTotal) return;
+                const c = item.campaignName || item.campaign_name || '';
+                if (!c) return;
+                if (!campaignsByTerm.has(nm)) campaignsByTerm.set(nm, new Set());
+                campaignsByTerm.get(nm).add(String(c));
+            });
+        }
+
+        // Render dynamic header (name + optional campaign + metric + date columns)
         const nameHeader = this.currentCategory === 'campaigns' ? 'Campaign Name' : (this.currentCategory === 'search-terms' ? 'Search Term' : 'Product Name');
         theadRow.innerHTML = `
             <th class="sortable" data-sort="name">
                 <span>${nameHeader}</span>
                 <span class="material-icons">keyboard_arrow_down</span>
             </th>
+            ${this.currentCategory === 'search-terms' ? '<th class="campaign-col"><span>Campaign Name</span></th>' : ''}
             <th>
                 <span>Metric</span>
             </th>
+            <th class="total-col"><span>Total</span></th>
             ${buckets.labels.map(lbl => `<th><span>${lbl}</span></th>`).join('')}
         `;
         
@@ -2129,50 +2264,159 @@ class TrendReports {
         
         // Render rows with only selected metrics for each product
         tbody.innerHTML = pageData.map(product => {
-            const allMetrics = [
+            // Define metrics based on current category
+            let allMetrics;
+            if (this.currentCategory === 'search-terms') {
+                // Search Terms tab - include totalSales
+                allMetrics = [
                 { key: 'spend', label: 'Ad Spend', data: product.spendByKey, format: 'currency' },
                 { key: 'cpc', label: 'AVG. CPC', data: product.cpcByKey, format: 'currency' },
                 { key: 'clicks', label: 'Ad Clicks', data: product.clicksByKey, format: 'number' },
                 { key: 'roas', label: 'ROAS', data: product.roasByKey, format: 'number' },
                 { key: 'acos', label: 'ACOS', data: product.acosByKey, format: 'percentage' },
                 { key: 'tcos', label: 'TCOS', data: product.tcosByKey, format: 'percentage' },
-                { key: 'sales', label: 'Sales', data: product.salesByKey, format: 'currency' },
+                    { key: 'sales', label: 'Ad Sales', data: product.salesByKey, format: 'currency' },
+                    { key: 'totalSales', label: 'Total Sales', data: product.totalSalesByKey, format: 'currency' },
                 { key: 'orders', label: 'No of Orders', data: product.ordersByKey, format: 'number' },
                 { key: 'sessions', label: 'Sessions', data: product.sessionsByKey, format: 'number' },
                 { key: 'pageviews', label: 'Page Views', data: product.pageviewsByKey, format: 'number' },
                 { key: 'conversionRate', label: 'Conversion Rate', data: product.conversionRateByKey, format: 'percentage' }
             ];
+            } else {
+                // Products and Campaigns tabs - original metrics without totalSales
+                allMetrics = [
+                { key: 'spend', label: 'Ad Spend', data: product.spendByKey, format: 'currency' },
+                { key: 'cpc', label: 'AVG. CPC', data: product.cpcByKey, format: 'currency' },
+                { key: 'clicks', label: 'Ad Clicks', data: product.clicksByKey, format: 'number' },
+                { key: 'roas', label: 'ROAS', data: product.roasByKey, format: 'number' },
+                { key: 'acos', label: 'ACOS', data: product.acosByKey, format: 'percentage' },
+                { key: 'tcos', label: 'TCOS', data: product.tcosByKey, format: 'percentage' },
+                { key: 'sales', label: (this.currentCategory === 'campaigns' ? 'Ad Sales' : 'Sales'), data: product.salesByKey, format: 'currency' },
+                // Expose Total Sales metric in Campaigns table (will be 0 unless provided)
+                { key: 'totalSales', label: 'Total Sales', data: product.totalSalesByKey, format: 'currency' },
+                { key: 'orders', label: 'No of Orders', data: product.ordersByKey, format: 'number' },
+                { key: 'sessions', label: 'Sessions', data: product.sessionsByKey, format: 'number' },
+                { key: 'pageviews', label: 'Page Views', data: product.pageviewsByKey, format: 'number' },
+                { key: 'conversionRate', label: 'Conversion Rate', data: product.conversionRateByKey, format: 'percentage' }
+            ];
+            }
             
-            // Filter to only show selected metrics
-            const metricRows = allMetrics.filter(metric => this.selectedMetrics.includes(metric.key));
+            // Filter to only show selected metrics (read current checkbox state directly)
+            const checkboxes = document.querySelectorAll('#chartMetricOptions input[type="checkbox"]:checked');
+            const currentSelectedMetrics = Array.from(checkboxes).map(cb => cb.id.replace('metric-', ''));
+            const metricRows = allMetrics.filter(metric => currentSelectedMetrics.includes(metric.key));
+            
+            // Debug: Log table metrics
+            console.log('📊 Table metrics:', {
+                checkedBoxes: currentSelectedMetrics,
+                tableMetrics: metricRows.map(m => m.label),
+                totalMetrics: metricRows.length
+            });
             
             
             return metricRows.map((metric, index) => {
+                const nmRow = String(product.name || '');
+                const isTotalRowCheck = nmRow.includes('📊') || nmRow.toLowerCase().includes('daily total');
+                // Campaigns: suppress Total Sales rows for individual campaigns entirely
+                if (this.currentCategory === 'campaigns' && metric.key === 'totalSales' && !isTotalRowCheck) {
+                    return '';
+                }
+                // Search terms: suppress Total Sales rows for individual search terms as well
+                if (this.currentCategory === 'search-terms' && metric.key === 'totalSales' && !isTotalRowCheck) {
+                    return '';
+                }
+                // Suppress Sessions rows for individuals in campaigns and search-terms
+                if ((this.currentCategory === 'campaigns' || this.currentCategory === 'search-terms')
+                    && metric.key === 'sessions' && !isTotalRowCheck) {
+                    return '';
+                }
+                let runningTotal = 0;
+                let avgCount = 0; // for AVG/percent-like metrics
                 const cells = buckets.keys.map(key => {
-                    const val = metric.data[key] || 0;
-                    
+                    let val = metric.data[key] || 0;
+
+                    // For search-terms: individual rows should not display
+                    // account-level totals. Only DAILY TOTAL row shows per-day
+                    // Total Sales and Sessions from business data.
+                    if (this.currentCategory === 'search-terms') {
+                        if (!isTotalRowCheck && (metric.key === 'totalSales' || metric.key === 'sessions')) {
+                            val = 0;
+                        }
+                    }
+                    // For campaigns: Total Sales is an account-level value.
+                    // Hide it for individual campaign rows by showing a dash
+                    // instead of 0 to avoid confusion.
+                    if (this.currentCategory === 'campaigns' && metric.key === 'totalSales' && !isTotalRowCheck) {
+                        // already suppressed above; keep safe-return
+                        return '';
+                    }
+                    if (this.currentCategory === 'search-terms' && metric.key === 'totalSales' && !isTotalRowCheck) {
+                        return '';
+                    }
+                    if ((this.currentCategory === 'campaigns' || this.currentCategory === 'search-terms')
+                        && metric.key === 'sessions' && !isTotalRowCheck) {
+                        return '';
+                    }
                     
                     let formattedVal;
                     if (metric.format === 'currency') {
                         formattedVal = `₹${this.formatNumber(val)}`;
+                        runningTotal += Number(val || 0);
                     } else if (metric.format === 'percentage') {
                         formattedVal = `${this.formatPercentage(val, 1)}%`;
+                        if (val !== null && val !== undefined) { runningTotal += Number(val || 0); avgCount += 1; }
                     } else {
                         formattedVal = this.formatNumber(val);
+                        runningTotal += Number(val || 0);
+                        if (metric.key === 'cpc' || metric.key === 'roas' || metric.key === 'acos' || metric.key === 'tcos' || metric.key === 'ctr' || metric.key === 'conversionRate') {
+                            avgCount += 1;
+                        }
                     }
                     return `<td>${formattedVal}</td>`;
                 }).join('');
                 
-                const productNameCell = index === 0 ? `<td rowspan="${metricRows.length}" style="vertical-align: top; font-weight: 600;">${product.name}</td>` : '';
+                // Compute total value cell (sum for currency/number; average for percent/decimal metrics)
+                let totalCell = '';
+                // Special rule: AVG. CPC total = (sum Ad Spend) / (sum Ad Clicks)
+                if (metric.key === 'cpc') {
+                    const sumSpend = buckets.keys.reduce((s, k) => s + Number(product.spendByKey[k] || 0), 0);
+                    const sumClicks = buckets.keys.reduce((s, k) => s + Number(product.clicksByKey[k] || 0), 0);
+                    const totalCpc = sumClicks > 0 ? (sumSpend / sumClicks) : 0;
+                    totalCell = `<td class="total-col">₹${Number(totalCpc || 0).toFixed(2)}</td>`;
+                } else if (metric.format === 'currency') {
+                    totalCell = `<td class="total-col">₹${this.formatNumber(runningTotal)}</td>`;
+                } else if (metric.format === 'percentage' || metric.key === 'roas' || metric.key === 'conversionRate') {
+                    const avg = avgCount > 0 ? (runningTotal / avgCount) : 0;
+                    if (metric.format === 'percentage') {
+                        totalCell = `<td class="total-col">${this.formatPercentage(avg, 1)}%</td>`;
+                    } else {
+                        totalCell = `<td class="total-col">${this.formatNumber(Number(avg || 0))}</td>`;
+                    }
+                } else {
+                    totalCell = `<td class="total-col">${this.formatNumber(runningTotal)}</td>`;
+                }
+                
+                const productNameCell = `<td style="font-weight: 600;">${product.name}</td>`;
+                const campaignNamesCell = (this.currentCategory === 'search-terms') ? (() => {
+                    if (isTotalRowCheck) return '<td>—</td>';
+                    // Prefer grouped campaigns collected during aggregation
+                    const groupedSet = product.campaigns instanceof Set ? product.campaigns : null;
+                    const set = groupedSet && groupedSet.size > 0 ? groupedSet : campaignsByTerm.get(product.name);
+                    if (!set || set.size === 0) return '<td class="campaign-col">—</td>';
+                    const list = Array.from(set).sort().join(' | ');
+                    return `<td class="campaign-col">${list}</td>`;
+                })() : '';
                 
                 // Check if this is a total row (contains "DAILY TOTAL" or "📊")
-                const isTotalRow = product.name.includes('📊') || product.name.includes('DAILY TOTAL') || product.name.includes('Total');
+                const isTotalRow = isTotalRowCheck;
                 const rowClass = isTotalRow ? 'total-row' : '';
                 
                 return `
                     <tr class="${rowClass}">
                         ${productNameCell}
+                        ${campaignNamesCell}
                         <td style="font-weight: 500; background: #f8f9fa;">${metric.label}</td>
+                        ${totalCell}
                         ${cells}
                     </tr>
                 `;
@@ -2234,7 +2478,8 @@ class TrendReports {
                 }
             });
         }
-        const keys = Array.from(keySet).sort().reverse();
+        let keys = Array.from(keySet).sort();
+        if (this.dateOrder === 'desc') keys = keys.reverse();
         const labels = keys.map(k => keyToLabel[k] || k);
         return { keys, labels };
     }
@@ -2260,6 +2505,7 @@ class TrendReports {
                     name: name,
                     spendByKey: {},
                     salesByKey: {},
+                    totalSalesByKey: {},
                     clicksByKey: {},
                     sessionsByKey: {},
                     pageviewsByKey: {},
@@ -2269,19 +2515,52 @@ class TrendReports {
                     tcosByKey: {},
                     ctrByKey: {},
                     conversionRateByKey: {},
-                    roasByKey: {}
+                    roasByKey: {},
+                    // For search-terms, track all related campaign names
+                    campaigns: new Set()
                 };
             }
             
             // Aggregate all metrics by date key
             groups[name].spendByKey[key] = (groups[name].spendByKey[key] || 0) + (item.spend || 0);
             groups[name].salesByKey[key] = (groups[name].salesByKey[key] || 0) + (item.sales || 0);
+            // Prevent duplicating per-day Total Sales across rows. For search-terms and
+            // campaigns, only the DAILY TOTAL row should contribute totalSales for a date;
+            // individual rows must not accumulate account-level totals.
+            if (this.currentCategory === 'search-terms' || this.currentCategory === 'campaigns') {
+                const nm = String(item.name || '');
+                const isDailyTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
+                if (isDailyTotal) {
+                    const existing = groups[name].totalSalesByKey[key] || 0;
+                    const next = Number(item.totalSales || 0);
+                    groups[name].totalSalesByKey[key] = Math.max(existing, next);
+                }
+                // For non-total rows, do not add item.totalSales to avoid showing
+                // large account-level totals on individual terms.
+            } else {
+                groups[name].totalSalesByKey[key] = (groups[name].totalSalesByKey[key] || 0) + (item.totalSales || 0);
+            }
             groups[name].clicksByKey[key] = (groups[name].clicksByKey[key] || 0) + (item.clicks || 0);
             groups[name].sessionsByKey[key] = (groups[name].sessionsByKey[key] || 0) + (item.sessions || 0);
             groups[name].pageviewsByKey[key] = (groups[name].pageviewsByKey[key] || 0) + (item.pageviews || 0);
             groups[name].ordersByKey[key] = (groups[name].ordersByKey[key] || 0) + (item.orders || 0);
             
+            // AVG. CPC should be computed from aggregated spend/clicks for the date
+            if (this.currentCategory === 'campaigns' || this.currentCategory === 'search-terms') {
+                const spendTotal = groups[name].spendByKey[key] || 0;
+                const clicksTotal = groups[name].clicksByKey[key] || 0;
+                groups[name].cpcByKey[key] = clicksTotal > 0 ? spendTotal / clicksTotal : 0;
+            } else {
             groups[name].cpcByKey[key] = (groups[name].cpcByKey[key] || 0) + (item.cpc || 0);
+            }
+
+            // Collect campaign names for search-terms so UI/export can show them
+            if (this.currentCategory === 'search-terms') {
+                const cn = item.campaignName || item.campaign_name;
+                if (cn) {
+                    groups[name].campaigns.add(String(cn));
+                }
+            }
             groups[name].acosByKey[key] = (groups[name].acosByKey[key] || 0) + (item.acos || 0);
             groups[name].tcosByKey[key] = (groups[name].tcosByKey[key] || 0) + (item.tcos || 0);
             groups[name].ctrByKey[key] = (groups[name].ctrByKey[key] || 0) + (item.ctr || 0);
@@ -2433,30 +2712,129 @@ class TrendReports {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
         data = this.filterDataByDateRange(data);
-        if (this.currentCategory === 'campaigns' && this.selectedNames && this.selectedNames.size > 0) {
+        // Always ensure DAILY TOTAL rows exist for search-terms in exports
+        if (this.currentCategory === 'search-terms') {
+            const bizByDate = {};
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                if (nm.includes('📊')) {
+                    const k = this.normalizeDateKey(item.date);
+                    bizByDate[k] = {
+                        sessions: Number(item.sessions || 0),
+                        pageviews: Number(item.pageviews || 0)
+                    };
+                }
+            });
+            // Strip any existing DAILY TOTAL rows to avoid dupes
+            const withoutTotals = data.filter(r => !String(r.name || '').includes('📊'));
+            const totalsByDate = {};
+            withoutTotals.forEach(item => {
+                const key = this.normalizeDateKey(item.date);
+                if (!totalsByDate[key]) {
+                    totalsByDate[key] = { spend: 0, sales: 0, clicks: 0, orders: 0, totalSales: 0 };
+                }
+                totalsByDate[key].spend += Number(item.spend || 0);
+                totalsByDate[key].sales += Number(item.sales || 0);
+                totalsByDate[key].clicks += Number(item.clicks || 0);
+                totalsByDate[key].orders += Number(item.orders || 0);
+                // totalSales holds business total sales per day; keep max in case of dupes
+                totalsByDate[key].totalSales = Math.max(
+                    totalsByDate[key].totalSales || 0,
+                    Number(item.totalSales || 0)
+                );
+            });
+            // Rebuild data with recomputed DAILY TOTAL rows
+            data = withoutTotals;
+            Object.entries(totalsByDate).forEach(([key, t]) => {
+                const biz = bizByDate[key] || { sessions: 0, pageviews: 0 };
+                const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
+                const roas = t.spend > 0 ? t.sales / t.spend : 0;
+                const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
+                const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
+                const ctr = biz.sessions > 0 ? (t.clicks / biz.sessions) * 100 : 0;
+                data.push({
+                    date: key,
+                    category: this.currentCategory,
+                    name: '📊 DAILY TOTAL',
+                    displayName: '📊 DAILY TOTAL',
+                    spend: t.spend,
+                    sales: t.sales,
+                    clicks: t.clicks,
+                    sessions: biz.sessions,
+                    pageviews: biz.pageviews,
+                    orders: t.orders,
+                    totalSales: t.totalSales,
+                    cpc, roas, acos, tcos, ctr
+                });
+            });
+        } else if (this.currentCategory === 'campaigns' && this.selectedNames && this.selectedNames.size > 0) {
             const totalsByDate = {};
             data.forEach(item => {
                 const nm = String(item.name || '');
                 if (nm.includes('📊')) return;
                 const key = this.normalizeDateKey(item.date);
-                if (!totalsByDate[key]) totalsByDate[key] = { spend: 0, sales: 0, clicks: 0 };
+                if (!totalsByDate[key]) {
+                    if (this.currentCategory === 'search-terms') {
+                        totalsByDate[key] = { spend: 0, sales: 0, clicks: 0, sessions: 0, pageviews: 0, orders: 0, totalSales: 0 };
+                    } else {
+                        totalsByDate[key] = { spend: 0, sales: 0, clicks: 0 };
+                    }
+                }
                 totalsByDate[key].spend += Number(item.spend || 0);
                 totalsByDate[key].sales += Number(item.sales || 0);
                 totalsByDate[key].clicks += Number(item.clicks || 0);
+                if (this.currentCategory === 'search-terms') {
+                    totalsByDate[key].sessions += Number(item.sessions || 0);
+                    totalsByDate[key].pageviews += Number(item.pageviews || 0);
+                    totalsByDate[key].orders += Number(item.orders || 0);
+                    // Use per-day Total Sales from business totals: take the maximum per date to avoid duplicates across terms
+                    const dayTotalSales = Number(item.totalSales || 0);
+                    const existingTotal = Number(totalsByDate[key].totalSales || 0);
+                    totalsByDate[key].totalSales = Math.max(existingTotal, dayTotalSales);
+                }
             });
             data = data.filter(r => !String(r.name || '').includes('📊'));
             Object.entries(totalsByDate).forEach(([key, t]) => {
                 const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
                 const roas = t.spend > 0 ? t.sales / t.spend : 0;
                 const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
-                data.push({ date: key, category: 'campaigns', name: '📊 DAILY TOTAL', displayName: '📊 DAILY TOTAL', spend: t.spend, sales: t.sales, clicks: t.clicks, cpc, roas, acos, tcos: 0 });
+                if (this.currentCategory === 'search-terms') {
+                    const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
+                    const ctr = t.sessions > 0 ? (t.clicks / t.sessions) * 100 : 0;
+                    data.push({ 
+                        date: key, 
+                        category: this.currentCategory, 
+                        name: '📊 DAILY TOTAL', 
+                        displayName: '📊 DAILY TOTAL', 
+                        spend: t.spend, 
+                        sales: t.sales, 
+                        clicks: t.clicks, 
+                        sessions: t.sessions,
+                        pageviews: t.pageviews,
+                        orders: t.orders,
+                        totalSales: t.totalSales,
+                        cpc, roas, acos, tcos, ctr 
+                    });
+                } else {
+                    data.push({ 
+                        date: key, 
+                        category: this.currentCategory, 
+                        name: '📊 DAILY TOTAL', 
+                        displayName: '📊 DAILY TOTAL', 
+                        spend: t.spend, 
+                        sales: t.sales, 
+                        clicks: t.clicks, 
+                        cpc, roas, acos, tcos: 0 
+                    });
+                }
             });
         }
 
         const buckets = this.buildDateBuckets(data);
         let grouped = this.groupDataByProductForPivot(data, buckets);
 
-        // Ensure DAILY TOTAL group appears on top in exports
+        // Ensure DAILY TOTAL group appears on top in exports (for campaigns and search-terms)
+        if (this.currentCategory === 'campaigns' || this.currentCategory === 'search-terms') {
         const isTotalName = (nm) => {
             const s = String(nm || '');
             return s.includes('📊') || s.toLowerCase().includes('daily total');
@@ -2467,58 +2845,337 @@ class TrendReports {
             if (isTotalName(g.name)) totalsFirst.push(g); else others.push(g);
         });
         grouped = [...totalsFirst, ...others];
+        }
 
-        // Headers
+        // Create export structure based on current category
         const nameHeader = this.currentCategory === 'campaigns' ? 'Campaign Name' : (this.currentCategory === 'search-terms' ? 'Search Term' : 'Product Name');
-        const headers = [nameHeader, 'Metric', ...buckets.labels];
+        
+        console.log('🔍 Export Debug - Current Category:', this.currentCategory);
+        console.log('🔍 Export Debug - Grouped Data Count:', grouped.length);
+        console.log('🔍 Export Debug - Sample Grouped Data:', grouped.slice(0, 2).map(g => ({ name: g.name, hasSpendData: !!g.spendByKey })));
+        
+        let headers, rows;
+        
+        if (this.currentCategory === 'products') {
+            // Products tab - create date-based pivot structure (same as table display)
+            const allMetrics = [
+                { key: 'spend', label: 'Ad Spend', format: 'currency' },
+                { key: 'cpc', label: 'AVG. CPC', format: 'currency' },
+                { key: 'clicks', label: 'Ad Clicks', format: 'number' },
+                { key: 'roas', label: 'ROAS', format: 'decimal2' },
+                { key: 'acos', label: 'ACOS', format: 'percent' },
+                { key: 'tcos', label: 'TCOS', format: 'percent' },
+                { key: 'sales', label: 'Sales', format: 'currency' },
+                { key: 'orders', label: 'No of Orders', format: 'number' },
+                { key: 'sessions', label: 'Sessions', format: 'number' },
+                { key: 'pageviews', label: 'Page Views', format: 'number' },
+                { key: 'conversionRate', label: 'Conversion Rate', format: 'percent' }
+            ];
+            
+            // Filter to only show selected metrics
+            const checkboxes = document.querySelectorAll('#chartMetricOptions input[type="checkbox"]:checked');
+            const currentSelectedMetrics = Array.from(checkboxes).map(cb => cb.id.replace('metric-', ''));
+            const selectedMetrics = currentSelectedMetrics.length > 0 ? 
+                allMetrics.filter(m => currentSelectedMetrics.includes(m.key)) : allMetrics;
+            
+            // Headers: Product Name + Metric + Total + Date columns
+            headers = [nameHeader, 'Metric', 'Total', ...buckets.labels];
+            rows = [];
+            
+            // Create rows like table display: each product has multiple rows (one per metric)
+            grouped.forEach(product => {
+                selectedMetrics.forEach(metric => {
+                    const row = [product.name, metric.label]; // Product name + metric name
+                    
+                    // Compute Total for this metric to match table
+                    const sumByKeys = (getter) => buckets.keys.reduce((acc, k) => acc + Number(getter(k) || 0), 0);
+                    let totalValue = 0;
+                    if (metric.key === 'cpc') {
+                        const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                        const totalClicks = sumByKeys(k => product.clicksByKey[k]);
+                        totalValue = totalClicks > 0 ? totalSpend / totalClicks : 0;
+                        row.push({ v: totalValue, format: 'currency' });
+                    } else if (metric.format === 'currency') {
+                        totalValue = sumByKeys(k => (product[`${metric.key}ByKey`][k] || 0));
+                        row.push({ v: totalValue, format: 'currency' });
+                    } else if (metric.format === 'percent') {
+                        // average percent-like values across dates
+                        let acc = 0, count = 0;
+                        buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
+                        totalValue = count > 0 ? acc / count : 0;
+                        row.push({ v: totalValue, format: 'percent' });
+                    } else if (metric.format === 'decimal2') {
+                        totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
+                        row.push({ v: totalValue, format: 'decimal2' });
+                    } else { 
+                        totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
+                        row.push({ v: totalValue, format: 'number' });
+                    }
 
-        // Row builder like table
-        const rows = [];
-        const pushMetricRow = (name, metricLabel, keyed, format) => {
-            const row = [name, metricLabel];
-            buckets.keys.forEach(k => {
-                const v = keyed[k] || 0;
-                row.push({ v, format });
-            });
+                    // Add values for each date
+                    buckets.keys.forEach(key => {
+                        const val = product[`${metric.key}ByKey`][key] || 0;
+                        if (metric.format === 'currency') {
+                            row.push({ v: val, format: 'currency' });
+                        } else if (metric.format === 'percent') {
+                            row.push({ v: val, format: 'percent' });
+                        } else if (metric.format === 'decimal2') {
+                            row.push({ v: val, format: 'decimal2' });
+                        } else {
+                            row.push({ v: val, format: 'number' });
+                        }
+                    });
+                    
             rows.push(row);
-        };
+                });
+            });
+            
+        } else if (this.currentCategory === 'search-terms') {
+            // Search Terms tab - use EXACT same data processing as table display
+            console.log('🔍 Search Terms Export - Using same data as table display');
+            
+            // Use the same data processing as the table
+            const groupedData = this.groupDataByProductForPivot(data, buckets);
+            
+            // Compute totals per product to prioritize rows with data (same as table)
+            const withTotals = groupedData.map(g => {
+                const sum = (obj = {}) => Object.values(obj || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+                const totalSales = sum(g.salesByKey);
+                const totalSpend = sum(g.spendByKey);
+                const totalSessions = sum(g.sessionsByKey);
+                const totalPageviews = sum(g.pageviewsByKey);
+                return { ...g, __totalSales: totalSales, __totalSpend: totalSpend, __totalSessions: totalSessions, __totalPageviews: totalPageviews };
+            });
 
+            // Sort: products with data first (same as table)
+            const sortedData = withTotals.sort((a, b) => {
+                if (this.sortColumn === 'name') {
+                    const an = a.name.toLowerCase();
+                    const bn = b.name.toLowerCase();
+                    return this.sortDirection === 'asc' ? (an > bn ? 1 : -1) : (an < bn ? 1 : -1);
+                }
+                const aKey = a.__totalSales || a.__totalSpend || 0;
+                const bKey = b.__totalSales || b.__totalSpend || 0;
+                if (bKey !== aKey) return bKey - aKey;
+                if (b.__totalSessions !== a.__totalSessions) return b.__totalSessions - a.__totalSessions;
+                if (b.__totalPageviews !== a.__totalPageviews) return b.__totalPageviews - a.__totalPageviews;
+                return a.name.localeCompare(b.name);
+            });
+
+            // Ensure DAILY TOTAL appears first in exports (as requested)
+            const isTotalName = (nm) => {
+                const s = String(nm || '');
+                return s.includes('📊') || s.toLowerCase().includes('daily total');
+            };
+            const totalsFirst = [];
+            const others = [];
+            sortedData.forEach(g => { (isTotalName(g.name) ? totalsFirst : others).push(g); });
+            const orderedData = [...totalsFirst, ...others];
+            
+            const allMetrics = [
+                { key: 'spend', label: 'Ad Spend', format: 'currency' },
+                { key: 'cpc', label: 'AVG. CPC', format: 'currency' },
+                { key: 'clicks', label: 'Ad Clicks', format: 'number' },
+                { key: 'roas', label: 'ROAS', format: 'decimal2' },
+                { key: 'acos', label: 'ACOS', format: 'percent' },
+                { key: 'tcos', label: 'TCOS', format: 'percent' },
+                { key: 'sales', label: 'Ad Sales', format: 'currency' },
+                { key: 'totalSales', label: 'Total Sales', format: 'currency' },
+                { key: 'orders', label: 'No of Orders', format: 'number' },
+                { key: 'sessions', label: 'Sessions', format: 'number' },
+                { key: 'pageviews', label: 'Page Views', format: 'number' },
+                { key: 'conversionRate', label: 'Conversion Rate', format: 'percent' }
+            ];
+            
+            // Filter to only show selected metrics (same as table)
+            const checkboxes = document.querySelectorAll('#chartMetricOptions input[type="checkbox"]:checked');
+            const currentSelectedMetrics = Array.from(checkboxes).map(cb => cb.id.replace('metric-', ''));
+            const selectedMetrics = currentSelectedMetrics.length > 0 ? 
+                allMetrics.filter(m => currentSelectedMetrics.includes(m.key)) : allMetrics;
+            
+            console.log('📊 Search Terms Export Debug:', {
+                category: this.currentCategory,
+                checkedBoxes: currentSelectedMetrics,
+                selectedMetrics: selectedMetrics.map(m => m.label),
+                totalMetrics: selectedMetrics.length,
+                bucketsCount: buckets.labels.length,
+                sortedDataCount: sortedData.length,
+                firstItem: sortedData[0] ? sortedData[0].name : 'none'
+            });
+            
+            // Headers: Search Term + Campaign Name + Metric + Total + Date columns
+            headers = [nameHeader, 'Campaign Name', 'Metric', 'Total', ...buckets.labels];
+            rows = [];
+            
+            // Build term -> campaign set for export (exclude DAILY TOTAL)
+            const termToCampaigns = new Map();
+            data.forEach(item => {
+                if (String(item.name || '').includes('📊')) return;
+                const term = (item.displayName || item.name) || '';
+                const c = item.campaignName || item.campaign_name || '';
+                if (!c) return;
+                if (!termToCampaigns.has(term)) termToCampaigns.set(term, new Set());
+                termToCampaigns.get(term).add(String(c));
+            });
+
+            // Create rows like table display: each search term has multiple rows (one per metric)
+            orderedData.forEach(product => {
+                selectedMetrics.forEach(metric => {
+                    const nm = String(product.name || '');
+                    const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
+                    if (metric.key === 'totalSales' && !isTotal) {
+                        return; // suppress individual Total Sales rows in export
+                    }
+                    if (metric.key === 'sessions' && !isTotal) {
+                        return; // suppress individual Sessions rows in export
+                    }
+                    const campaignList = isTotal ? '—' : (termToCampaigns.get(product.name) ? Array.from(termToCampaigns.get(product.name)).sort().join(' | ') : '—');
+                    const row = [product.name, campaignList, metric.label]; // term + campaigns + metric
+                    // Add Total column
+                    const sumByKeys = (getter) => buckets.keys.reduce((acc, k) => acc + Number(getter(k) || 0), 0);
+                    let totalValue = 0;
+                    if (metric.key === 'cpc') {
+                        const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                        const totalClicks = sumByKeys(k => product.clicksByKey[k]);
+                        totalValue = totalClicks > 0 ? totalSpend / totalClicks : 0;
+                        row.push({ v: totalValue, format: 'currency' });
+                    } else if (metric.format === 'currency') {
+                        totalValue = sumByKeys(k => (product[`${metric.key}ByKey`][k] || 0));
+                        row.push({ v: totalValue, format: 'currency' });
+                    } else if (metric.format === 'percent') {
+                        let acc = 0, count = 0;
+                        buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
+                        totalValue = count > 0 ? acc / count : 0;
+                        row.push({ v: totalValue, format: 'percent' });
+                    } else if (metric.format === 'decimal2') {
+                        totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
+                        row.push({ v: totalValue, format: 'decimal2' });
+                    } else {
+                        totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
+                        row.push({ v: totalValue, format: 'number' });
+                    }
+                    
+                    // Add values for each date
+                    buckets.keys.forEach(key => {
+                        const val = product[`${metric.key}ByKey`][key] || 0;
+                        if (metric.format === 'currency') {
+                            row.push({ v: val, format: 'currency' });
+                        } else if (metric.format === 'percent') {
+                            row.push({ v: val, format: 'percent' });
+                        } else if (metric.format === 'decimal2') {
+                            row.push({ v: val, format: 'decimal2' });
+                        } else {
+                            row.push({ v: val, format: 'number' });
+                        }
+                    });
+                    
+                    rows.push(row);
+                });
+            });
+            
+            console.log('📊 Search Terms Export Result:', {
+                headers: headers.slice(0, 5), // Show first 5 headers
+                rowsCount: rows.length,
+                sampleRow: rows[0] ? rows[0].slice(0, 5) : null // Show first 5 columns of first row
+            });
+            
+        } else {
+            // Campaigns tab - create date-based pivot structure (same as table display)
+            const allMetrics = [
+                { key: 'spend', label: 'Ad Spend', format: 'currency' },
+                { key: 'cpc', label: 'AVG. CPC', format: 'currency' },
+                { key: 'clicks', label: 'Ad Clicks', format: 'number' },
+                { key: 'roas', label: 'ROAS', format: 'decimal2' },
+                { key: 'acos', label: 'ACOS', format: 'percent' },
+                { key: 'tcos', label: 'TCOS', format: 'percent' },
+                { key: 'sales', label: 'Ad Sales', format: 'currency' },
+                { key: 'totalSales', label: 'Total Sales', format: 'currency' },
+                { key: 'orders', label: 'No of Orders', format: 'number' },
+                { key: 'sessions', label: 'Sessions', format: 'number' },
+                { key: 'pageviews', label: 'Page Views', format: 'number' },
+                { key: 'conversionRate', label: 'Conversion Rate', format: 'percent' }
+            ];
+
+            // Filter to only show selected metrics (same as table)
+            const checkboxes = document.querySelectorAll('#chartMetricOptions input[type="checkbox"]:checked');
+            const currentSelectedMetrics = Array.from(checkboxes).map(cb => cb.id.replace('metric-', ''));
+            const selectedMetrics = currentSelectedMetrics.length > 0 ? 
+                allMetrics.filter(m => currentSelectedMetrics.includes(m.key)) : allMetrics;
+
+            // Headers: Campaign Name + Metric + Total + Date columns
+            headers = [nameHeader, 'Metric', 'Total', ...buckets.labels];
+            rows = [];
+
+            // Create rows like table display: each campaign has multiple rows (one per metric)
         grouped.forEach(product => {
-            // Determine metrics per category
-            const allMetrics = [];
-            if (this.currentCategory === 'products') {
-                allMetrics.push({ key: 'sales', label: 'Sales', data: product.salesByKey, format: 'currency' });
-                allMetrics.push({ key: 'orders', label: 'No of Orders', data: product.ordersByKey, format: 'number' });
-                allMetrics.push({ key: 'sessions', label: 'Sessions', data: product.sessionsByKey, format: 'number' });
-                allMetrics.push({ key: 'pageviews', label: 'Page Views', data: product.pageviewsByKey, format: 'number' });
-                allMetrics.push({ key: 'conversionRate', label: 'Conversion Rate', data: product.conversionRateByKey, format: 'percent' });
-            } else if (this.currentCategory === 'campaigns') {
-                allMetrics.push({ key: 'spend', label: 'Ad Spend', data: product.spendByKey, format: 'currency' });
-                allMetrics.push({ key: 'cpc', label: 'AVG. CPC', data: product.cpcByKey, format: 'currency' });
-                allMetrics.push({ key: 'clicks', label: 'Ad Clicks', data: product.clicksByKey, format: 'number' });
-                // ROAS should be approximate (e.g., 2 decimals)
-                allMetrics.push({ key: 'roas', label: 'ROAS', data: product.roasByKey, format: 'decimal2' });
-                allMetrics.push({ key: 'acos', label: 'ACOS', data: product.acosByKey, format: 'percent' });
-                allMetrics.push({ key: 'tcos', label: 'TCOS', data: product.tcosByKey, format: 'percent' });
-            } else { // search-terms
-                allMetrics.push({ key: 'clicks', label: 'Ad Clicks', data: product.clicksByKey, format: 'number' });
-                allMetrics.push({ key: 'sessions', label: 'Sessions', data: product.sessionsByKey, format: 'number' });
-                allMetrics.push({ key: 'pageviews', label: 'Page Views', data: product.pageviewsByKey, format: 'number' });
-                allMetrics.push({ key: 'sales', label: 'Sales', data: product.salesByKey, format: 'currency' });
-            }
-            const active = this.selectedMetrics && this.selectedMetrics.length ? allMetrics.filter(m => this.selectedMetrics.includes(m.key)) : allMetrics;
-            active.forEach(m => pushMetricRow(product.name, m.label, m.data, m.format));
-        });
+                selectedMetrics.forEach(metric => {
+                    const nm = String(product.name || '');
+                    const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
+                    // Suppress Total Sales rows for individual campaigns in export
+                    if (metric.key === 'totalSales' && !isTotal) {
+                        return; // skip adding this metric row for this campaign
+                    }
+                    // Suppress Sessions rows for individual campaigns in export
+                    if (metric.key === 'sessions' && !isTotal) {
+                        return;
+                    }
+                    const row = [product.name, metric.label];
+                    // Compute Total column to match table
+                    const sumByKeys = (getter) => buckets.keys.reduce((acc, k) => acc + Number(getter(k) || 0), 0);
+                    let totalValue = 0;
+                    if (metric.key === 'cpc') {
+                        const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                        const totalClicks = sumByKeys(k => product.clicksByKey[k]);
+                        totalValue = totalClicks > 0 ? totalSpend / totalClicks : 0;
+                        row.push({ v: totalValue, format: 'currency' });
+                    } else if (metric.format === 'currency') {
+                        totalValue = sumByKeys(k => (product[`${metric.key}ByKey`][k] || 0));
+                        row.push({ v: totalValue, format: 'currency' });
+                    } else if (metric.format === 'percent') {
+                        let acc = 0, count = 0;
+                        buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
+                        totalValue = count > 0 ? acc / count : 0;
+                        row.push({ v: totalValue, format: 'percent' });
+                    } else if (metric.format === 'decimal2') {
+                        totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
+                        row.push({ v: totalValue, format: 'decimal2' });
+                    } else {
+                        totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
+                        row.push({ v: totalValue, format: 'number' });
+                    }
+                    buckets.keys.forEach(key => {
+                        let keyed = product[`${metric.key}ByKey`] || {};
+                        let val = keyed[key] || 0;
+                        // For Campaigns export: Total Sales only on DAILY TOTAL; blank for individuals
+                        if (metric.key === 'totalSales') {
+                            const nm = String(product.name || '');
+                            const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
+                            if (!isTotal) val = null;
+                        }
+                        if (val === null || val === undefined) {
+                            row.push('—');
+                        } else if (metric.format === 'currency') {
+                            row.push({ v: val, format: 'currency' });
+                        } else if (metric.format === 'percent') {
+                            row.push({ v: val, format: 'percent' });
+                        } else if (metric.format === 'decimal2') {
+                            row.push({ v: val, format: 'decimal2' });
+                        } else {
+                            row.push({ v: val, format: 'number' });
+                        }
+                    });
+                    rows.push(row);
+                });
+            });
+        }
 
         return { headers, rows };
     }
 
 	downloadCSVPivot(headers, rows) {
 		const flat = [headers.join(',')];
-		let previousName = null;
 		rows.forEach(r => {
-			const first = r[0] === previousName ? '' : r[0];
-			previousName = r[0];
+			const first = r[0]; // Always show the name, don't check for previous
 			const line = [first, ...r.slice(1)].map(c => {
 				if (typeof c === 'object') {
 					if (c.format === 'currency') return `\"₹${(Number(c.v||0)).toFixed(2)}\"`;
@@ -2534,7 +3191,7 @@ class TrendReports {
 		const url = window.URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
-		a.download = `trend-pivot-${new Date().toISOString().split('T')[0]}.csv`;
+		a.download = `trend-pivot-${this.currentCategory}-${new Date().toISOString().split('T')[0]}.csv`;
 		a.click();
 		window.URL.revokeObjectURL(url);
 	}
@@ -2553,12 +3210,10 @@ class TrendReports {
         xml += '<Worksheet ss:Name="Trend Pivot">\n<Table>\n<Row>\n';
         headers.forEach(h => { xml += `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>\n`; });
         xml += '</Row>\n';
-		let previousName = null;
 		rows.forEach(r => {
             xml += '<Row>\n';
-			// blank repeat for first column
-			const first = r[0] === previousName ? '' : r[0];
-			previousName = r[0];
+			// Always show the name in first column (keep emoji for UI consistency)
+			let first = r[0];
 			const cells = [first, ...r.slice(1)];
 			cells.forEach(c => {
                 if (typeof c === 'object') {
@@ -2577,7 +3232,7 @@ class TrendReports {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `trend-pivot-${new Date().toISOString().split('T')[0]}.xls`;
+		a.download = `trend-pivot-${this.currentCategory}-${new Date().toISOString().split('T')[0]}.xls`;
         a.click();
         window.URL.revokeObjectURL(url);
     }

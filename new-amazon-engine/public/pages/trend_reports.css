@@ -1,3 +1,30 @@
+.data-table.category-products th.total-col,
+.data-table.category-campaigns th.total-col {
+    position: sticky; /* header sticks on vertical scroll */
+    top: 0;
+    left: 340px; /* 200 (Campaign Name) + 140 (Metric) */
+    z-index: 12;
+    background: var(--bg-secondary);
+    min-width: 160px;
+    font-weight: 600;
+}
+.data-table.category-products td.total-col,
+.data-table.category-campaigns td.total-col {
+    position: sticky; /* body cells stick with rows */
+    left: 340px;
+    z-index: 9;
+    background: var(--bg-primary);
+    min-width: 160px;
+    font-weight: 600;
+}
+
+/* PRODUCTS TAB: stick Total cells with rows as third column after Metric */
+.data-table.category-products th.total-col,
+.data-table.category-products td.total-col {
+    position: sticky;
+    left: 340px; /* 200 (Product Name) + 140 (Metric) */
+    z-index: 6;
+}
 :root {
     /* Colors */
     /* Brand (match Keywords UI) */
@@ -856,6 +883,13 @@ body {
     gap: var(--spacing-sm);
 }
 
+/* Date order toggle button style */
+#dateOrderToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .action-btn {
     display: flex;
     align-items: center;
@@ -892,6 +926,9 @@ body {
     align-items: center;
     background: var(--bg-secondary);
     gap: var(--spacing-lg);
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
 }
 
 .search-container {
@@ -949,6 +986,9 @@ body {
     transition: all var(--transition-normal);
     position: relative;
 }
+
+/* Push the Search names filter to the far right within the table controls (all tabs) */
+.table-controls .name-filter { margin-left: auto; }
 
 .name-filter:hover {
     border-color: var(--border-focus);
@@ -1067,6 +1107,8 @@ body {
 /* Data Table */
 .table-wrapper {
     overflow-x: auto;
+    overflow-y: auto; /* allow vertical scrolling */
+    max-height: 75vh; /* larger viewport height to see more rows */
 }
 
 .data-table {
@@ -1085,6 +1127,122 @@ body {
     letter-spacing: 0.5px;
     border-bottom: 1px solid var(--border-primary);
     white-space: nowrap;
+}
+
+/* Wider column for campaign names on Search Terms */
+.data-table th.campaign-col,
+.data-table td.campaign-col {
+    width: 360px;       /* fixed width so sticky offsets align exactly */
+    min-width: 360px;
+    max-width: 360px;
+    white-space: normal;
+    word-break: break-word;
+    position: sticky;
+    left: 200px; /* after first sticky column */
+    z-index: 2;
+    background: var(--bg-primary);
+    box-shadow: 1px 0 0 0 var(--border-primary);
+}
+
+/* Make the Metric column sticky as the third fixed column */
+.data-table th.campaign-col + th,
+.data-table td.campaign-col + td {
+    position: sticky;
+    left: 560px; /* 200 (first col) + 360 (campaign col width) */
+    z-index: 2;
+    background: var(--bg-primary);
+    box-shadow: 1px 0 0 0 var(--border-primary);
+    min-width: 140px;
+}
+
+/* Generic fallback: ensure first three columns stay fixed during vertical scroll,
+   regardless of classes (covers DAILY TOTAL rows and any layout variations) */
+.data-table th:nth-child(1),
+.data-table td:nth-child(1) {
+    position: sticky;
+    left: 0;
+    z-index: 6;
+    background: var(--bg-primary);
+}
+.data-table th:nth-child(2),
+.data-table td:nth-child(2) {
+    position: sticky;
+    left: 200px; /* match first column width */
+    z-index: 6;
+    background: var(--bg-primary);
+}
+.data-table th:nth-child(3),
+.data-table td:nth-child(3) {
+    position: sticky;
+    left: 560px; /* first (200) + second (~360) */
+    z-index: 6;
+    background: var(--bg-primary);
+}
+
+/* PRODUCTS: make the 3rd column (Total) stick right after Metric (no campaign col) */
+/* Products: don't stick the first date column (it should scroll with dates) */
+.data-table.category-products th:nth-child(3),
+.data-table.category-products td:nth-child(3) {
+    position: static;
+    left: auto;
+    z-index: auto;
+}
+
+/* Ensure header cells of the sticky columns layer above body during horizontal scroll */
+.data-table thead th:nth-child(1),
+.data-table thead th:nth-child(2),
+.data-table thead th:nth-child(3) {
+    z-index: 8;
+}
+
+/* --- PRODUCTS: Force Total column to stick with first two --- */
+.data-table.category-products th.total-col {
+    position: sticky !important;
+    left: 340px !important; /* 200 (Product Name) + 140 (Metric) */
+    z-index: 12; /* keep header label above sticky body cells while scrolling */
+    background: var(--bg-primary);
+    box-shadow: 1px 0 0 0 var(--border-primary);
+}
+.data-table.category-products td.total-col {
+    position: sticky !important;
+    left: 340px !important;
+    z-index: 9;
+    background: var(--bg-primary);
+    box-shadow: 1px 0 0 0 var(--border-primary);
+}
+
+/* Normalize metric column width in Products so Total aligns exactly */
+.data-table.category-products th:nth-child(2),
+.data-table.category-products td:nth-child(2) {
+    min-width: 140px;
+    max-width: 140px;
+}
+
+/* Keep the header visible when scrolling the table */
+.data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--bg-secondary);
+    box-shadow: 0 1px 0 0 var(--border-primary);
+}
+
+/* Keep the first column (name) visible while horizontally scrolling */
+.data-table th:first-child,
+.data-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bg-primary);
+    box-shadow: 1px 0 0 0 var(--border-primary);
+    white-space: nowrap;
+    min-width: 200px;
+}
+
+/* Ensure header cell at [row 1, col 1] sits above other sticky cells */
+.data-table thead th:first-child {
+    z-index: 4;
+    background: var(--bg-secondary);
 }
 
 .data-table th.sortable {

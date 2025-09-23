@@ -1508,6 +1508,7 @@ app.get('/api/trend-reports', async (req, res) => {
         SELECT 
           DATE(report_date) as date,
           COALESCE(NULLIF(search_term, ''), 'Unknown Search Term') as name,
+          campaign_name,
           CAST(cost AS DECIMAL) as spend,
           CAST(clicks AS INTEGER) as clicks,
           CAST(impressions AS INTEGER) as impressions,
@@ -1534,6 +1535,7 @@ app.get('/api/trend-reports', async (req, res) => {
           date: row.date,
           category: 'search-terms',
           name: row.name || 'Unknown Search Term',
+          campaign_name: row.campaign_name || null,
           spend: spend,
           cpc: clicks > 0 ? spend / clicks : 0,
           sales: sales,
