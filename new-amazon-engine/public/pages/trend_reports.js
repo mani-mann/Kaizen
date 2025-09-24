@@ -806,6 +806,14 @@ class TrendReports {
                 category: this.currentCategory,
                 timePeriod: this.currentTimePeriod
             });
+            
+            // Debug: Log the data fetching parameters
+            console.log('🔍 Fetching trend data with params:', {
+                category: this.currentCategory,
+                timePeriod: this.currentTimePeriod,
+                dateRange: this.currentDateRange,
+                selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null
+            });
 
             // Add date range if selected
             if (this.currentDateRange.start && this.currentDateRange.end) {
@@ -855,7 +863,9 @@ class TrendReports {
                         const cpc = clicks > 0 ? spend / clicks : 0;
                         const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
                         const acos = sales > 0 ? (spend / sales) * 100 : 0;
-                        const tcos = acos; // If separate definition needed, adjust here
+                        // For products, totalSales is the same as sales (no organic sales data)
+                        const totalSales = sales;
+                        const tcos = totalSales > 0 ? (spend / totalSales) * 100 : 0;
                         const conversionRate = sessions > 0 ? (orders / sessions) * 100 : 0;
 
                         const preferredSku = (r.sku && String(r.sku).trim()) ? r.sku : (skuMap[r.name] || null);
@@ -947,8 +957,21 @@ class TrendReports {
                         const sales = Number(r.sales || 0);
                         const clicks = Number(r.clicks || r.total_clicks || 0);
                         const cpc = Number(r.cpc || (clicks > 0 ? spend / clicks : 0));
-                        const acos = Number(r.acos || (sales > 0 ? (spend / sales) * 100 : 0));
-                        const tcos = Number(r.tcos || 0);
+                        // Always recalculate ACOS from actual spend and sales values
+                        const acos = sales > 0 ? (spend / sales) * 100 : 0;
+                        
+                        // Debug: Log individual row ACOS calculation
+                        if (spend > 0 && sales > 0) {
+                            console.log(`🔍 Individual Row ACOS Debug - ${r.name}:`, {
+                                spend: spend,
+                                sales: sales,
+                                calculatedAcos: acos,
+                                formula: `(${spend} / ${sales}) * 100`,
+                                date: r.date
+                            });
+                        }
+                        // For campaigns and search-terms, don't show TCOS in individual rows
+                        const tcos = 0;
                         const roas = spend > 0 ? sales / spend : 0;
                         return {
                         date: r.date,
@@ -997,7 +1020,8 @@ class TrendReports {
                                 // the value by the number of terms. Keep sessions on individuals 0,
                                 // and inject a single DAILY TOTAL row carrying per-day sessions.
                                 const sessions = (result.category === 'search-terms') ? (r.sessions || 0) : (add.sessions || r.sessions);
-                                const tcos = totalSales > 0 ? (Number(r.spend || 0) / totalSales) * 100 : 0;
+                                // For search-terms, don't show TCOS in individual rows
+                                const tcos = 0;
                                 return { ...r, totalSales, sessions, tcos };
                             });
                         }
@@ -1047,8 +1071,26 @@ class TrendReports {
                 }
                 this.currentData = normalized;
                 this.filteredData = [...normalized];
+                
+                // Debug: Log data after processing
+                console.log(`🔍 Data Processing Debug - ${result.category}:`, {
+                    originalData: result.data.length,
+                    processedData: normalized.length,
+                    sampleProcessed: normalized.slice(0, 3).map(item => ({ 
+                        name: item.name, 
+                        category: item.category, 
+                        spend: item.spend, 
+                        sales: item.sales 
+                    }))
+                });
+                
                 return; // Success
             } else {
+                console.log(`🔍 No Data Debug - ${result.category}:`, {
+                    hasData: !!result.data,
+                    dataLength: result.data ? result.data.length : 0,
+                    result: result
+                });
                 this.currentData = [];
                 this.filteredData = [];
                 return; // Return empty data instead of throwing error
@@ -1190,6 +1232,19 @@ class TrendReports {
             const endDate = new Date(this.currentDateRange.end.getFullYear(), this.currentDateRange.end.getMonth(), this.currentDateRange.end.getDate() - 1);
             endKey = this.formatLocalDate(endDate);
         }
+        
+        // Debug: Log date filtering
+        console.log(`🔍 Date Filter Debug:`, {
+            startKey: startKey,
+            endKey: endKey,
+            todayKey: todayKey,
+            dataLength: data.length,
+            sampleDates: data.slice(0, 3).map(item => ({ 
+                name: item.name, 
+                date: item.date, 
+                formattedDate: this.formatLocalDate(new Date(item.date))
+            }))
+        });
         
         return data.filter(item => {
             const itemKey = this.normalizeDateKey(item.date);
@@ -1985,13 +2040,14 @@ class TrendReports {
                     category: item.category,
                     name: item.name,
                     spend: 0,
-                    cpc: 0,
                     sales: 0,
-                    acos: 0,
-                    tcos: 0,
-                    ctr: 0,
                     sessions: 0,
                     pageviews: 0,
+                    clicks: 0,
+                    impressions: 0,
+                    orders: 0,
+                    cpc: 0,
+                    ctr: 0,
                     conversionRate: 0,
                     count: 0
                 };
@@ -2003,10 +2059,13 @@ class TrendReports {
             groups[key].sessions += item.sessions;
             groups[key].pageviews += item.pageviews;
             
-            // Average values for rates
+            // Sum clicks for CPC calculation
+            groups[key].clicks += item.clicks || 0;
+            groups[key].impressions += item.impressions || 0;
+            groups[key].orders += item.orders || 0;
+            
+            // Average values for rates (except ACOS/TCOS which should be calculated from totals)
             groups[key].cpc += item.cpc;
-            groups[key].acos += item.acos;
-            groups[key].tcos += item.tcos;
             groups[key].ctr += item.ctr;
             groups[key].conversionRate += item.conversionRate;
             groups[key].count++;
@@ -2029,19 +2088,26 @@ class TrendReports {
                 dateLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             }
             
+            // Calculate ACOS and TCOS from totals (not averages)
+            const acos = group.sales > 0 ? (group.spend / group.sales) * 100 : 0;
+            const tcos = group.sales > 0 ? (group.spend / group.sales) * 100 : 0;
+            const cpc = group.clicks > 0 ? group.spend / group.clicks : 0;
+            const ctr = group.impressions > 0 ? (group.clicks / group.impressions) * 100 : 0;
+            const conversionRate = group.sessions > 0 ? (group.orders / group.sessions) * 100 : 0;
+            
             return {
                 dateLabel: dateLabel,
                 category: group.category,
                 name: group.name,
                 spend: Math.round(group.spend),
-                cpc: Math.round((group.cpc / group.count) * 100) / 100,
+                cpc: Math.round(cpc * 100) / 100,
                 sales: Math.round(group.sales),
-                acos: Math.round((group.acos / group.count) * 100) / 100,
-                tcos: Math.round((group.tcos / group.count) * 100) / 100,
-                ctr: Math.round((group.ctr / group.count) * 100) / 100,
+                acos: Math.round(acos * 100) / 100,
+                tcos: Math.round(tcos * 100) / 100,
+                ctr: Math.round(ctr * 100) / 100,
                 sessions: Math.round(group.sessions),
                 pageviews: Math.round(group.pageviews),
-                conversionRate: Math.round((group.conversionRate / group.count) * 100) / 100
+                conversionRate: Math.round(conversionRate * 100) / 100
             };
         });
     }
@@ -2058,6 +2124,15 @@ class TrendReports {
         // Get individual records
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
+        // Debug: Log data before processing
+        console.log(`🔍 Table Data Debug - ${this.currentCategory}:`, {
+            totalData: this.currentData.length,
+            filteredData: data.length,
+            sampleData: data.slice(0, 3).map(item => ({ name: item.name, spend: item.spend, sales: item.sales })),
+            allCategories: [...new Set(this.currentData.map(item => item.category))],
+            currentCategory: this.currentCategory
+        });
+        
         // Apply name filter if multi-select has items; keep DAILY TOTAL rows
         if (this.selectedNames && this.selectedNames.size > 0) {
             data = data.filter(item => {
@@ -2071,6 +2146,12 @@ class TrendReports {
         
         // Apply date range filter
         data = this.filterDataByDateRange(data);
+        
+        // Debug: Log data after date filtering
+        console.log(`🔍 After Date Filter - ${this.currentCategory}:`, {
+            filteredData: data.length,
+            sampleData: data.slice(0, 3).map(item => ({ name: item.name, date: item.date, spend: item.spend, sales: item.sales }))
+        });
 
         // If we're on campaigns and user selected specific names,
         // recompute DAILY TOTAL for the filtered subset so totals reflect selection.
@@ -2094,7 +2175,27 @@ class TrendReports {
                 const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
                 const roas = t.spend > 0 ? t.sales / t.spend : 0;
                 const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
-                const tcos = 0; // not defined; keep 0 unless available
+                const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
+                
+                // Debug: Log campaigns daily total ACOS/TCOS calculation
+                if (t.spend > 0 && t.sales > 0) {
+                    console.log(`🔍 Campaigns Daily Total ACOS Debug (${key}):`, {
+                        spend: t.spend,
+                        sales: t.sales,
+                        calculatedAcos: acos,
+                        formula: `(${t.spend} / ${t.sales}) * 100`,
+                        rawData: data.filter(item => this.normalizeDateKey(item.date) === key && !String(item.name || '').includes('📊'))
+                    });
+                }
+                if (t.spend > 0 && t.totalSales > 0) {
+                    console.log(`🔍 Campaigns Daily Total TCOS Debug (${key}):`, {
+                        spend: t.spend,
+                        totalSales: t.totalSales,
+                        calculatedTcos: tcos,
+                        formula: `(${t.spend} / ${t.totalSales}) * 100`,
+                        rawData: data.filter(item => this.normalizeDateKey(item.date) === key && !String(item.name || '').includes('📊'))
+                    });
+                }
                 data.push({
                     date: key,
                     category: 'campaigns',
@@ -2152,6 +2253,16 @@ class TrendReports {
                 const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
                 const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
                 const ctr = sessions > 0 ? (t.clicks / sessions) * 100 : 0;
+                
+                // Debug: Log search terms daily total ACOS calculation
+                if (t.spend > 0 && t.sales > 0) {
+                    console.log(`🔍 Search Terms Daily Total ACOS Debug (${key}):`, {
+                        spend: t.spend,
+                        sales: t.sales,
+                        calculatedAcos: acos,
+                        formula: `(${t.spend} / ${t.sales}) * 100`
+                    });
+                }
                 data.push({
                     date: key,
                     category: 'search-terms',
@@ -2330,6 +2441,11 @@ class TrendReports {
                     && metric.key === 'sessions' && !isTotalRowCheck) {
                     return '';
                 }
+                // Suppress TCOS rows for individuals in campaigns and search-terms (only show in daily totals)
+                if ((this.currentCategory === 'campaigns' || this.currentCategory === 'search-terms')
+                    && metric.key === 'tcos' && !isTotalRowCheck) {
+                    return '';
+                }
                 let runningTotal = 0;
                 let avgCount = 0; // for AVG/percent-like metrics
                 const cells = buckets.keys.map(key => {
@@ -2386,11 +2502,53 @@ class TrendReports {
                 } else if (metric.format === 'currency') {
                     totalCell = `<td class="total-col">₹${this.formatNumber(runningTotal)}</td>`;
                 } else if (metric.format === 'percentage' || metric.key === 'roas' || metric.key === 'conversionRate') {
-                    const avg = avgCount > 0 ? (runningTotal / avgCount) : 0;
-                    if (metric.format === 'percentage') {
-                        totalCell = `<td class="total-col">${this.formatPercentage(avg, 1)}%</td>`;
+                    // For ACOS/TCOS, calculate from total spend and sales (not average percentages)
+                    if (metric.key === 'acos' || metric.key === 'tcos') {
+                        const totalSpend = buckets.keys.reduce((s, k) => s + Number(product.spendByKey[k] || 0), 0);
+                        
+                        if (metric.key === 'acos') {
+                            const totalSales = buckets.keys.reduce((s, k) => s + Number(product.salesByKey[k] || 0), 0);
+                            const calculatedAcos = totalSales > 0 ? (totalSpend / totalSales) * 100 : 0;
+                            
+                            // Debug: Log total column ACOS calculation
+                            if (totalSpend > 0 && totalSales > 0) {
+                                console.log(`🔍 Total Column ACOS Debug - ${product.name}:`, {
+                                    totalSpend: totalSpend,
+                                    totalSales: totalSales,
+                                    calculatedAcos: calculatedAcos,
+                                    formula: `(${totalSpend} / ${totalSales}) * 100`,
+                                    spendByKey: product.spendByKey,
+                                    salesByKey: product.salesByKey
+                                });
+                            }
+                            
+                            totalCell = `<td class="total-col">${this.formatPercentage(calculatedAcos, 1)}%</td>`;
+                        } else if (metric.key === 'tcos') {
+                            const totalSalesForTcos = buckets.keys.reduce((s, k) => s + Number(product.totalSalesByKey[k] || 0), 0);
+                            const calculatedTcos = totalSalesForTcos > 0 ? (totalSpend / totalSalesForTcos) * 100 : 0;
+                            
+                            // Debug: Log total column TCOS calculation
+                            if (totalSpend > 0 && totalSalesForTcos > 0) {
+                                console.log(`🔍 Total Column TCOS Debug - ${product.name}:`, {
+                                    totalSpend: totalSpend,
+                                    totalSalesForTcos: totalSalesForTcos,
+                                    calculatedTcos: calculatedTcos,
+                                    formula: `(${totalSpend} / ${totalSalesForTcos}) * 100`,
+                                    spendByKey: product.spendByKey,
+                                    totalSalesByKey: product.totalSalesByKey
+                                });
+                            }
+                            
+                            totalCell = `<td class="total-col">${this.formatPercentage(calculatedTcos, 1)}%</td>`;
+                        }
                     } else {
-                        totalCell = `<td class="total-col">${this.formatNumber(Number(avg || 0))}</td>`;
+                        // For other percentages, use average
+                        const avg = avgCount > 0 ? (runningTotal / avgCount) : 0;
+                        if (metric.format === 'percentage') {
+                            totalCell = `<td class="total-col">${this.formatPercentage(avg, 1)}%</td>`;
+                        } else {
+                            totalCell = `<td class="total-col">${this.formatNumber(Number(avg || 0))}</td>`;
+                        }
                     }
                 } else {
                     totalCell = `<td class="total-col">${this.formatNumber(runningTotal)}</td>`;
@@ -2522,8 +2680,26 @@ class TrendReports {
             }
             
             // Aggregate all metrics by date key
-            groups[name].spendByKey[key] = (groups[name].spendByKey[key] || 0) + (item.spend || 0);
-            groups[name].salesByKey[key] = (groups[name].salesByKey[key] || 0) + (item.sales || 0);
+            const currentSpend = groups[name].spendByKey[key] || 0;
+            const currentSales = groups[name].salesByKey[key] || 0;
+            const itemSpend = item.spend || 0;
+            const itemSales = item.sales || 0;
+            
+            groups[name].spendByKey[key] = currentSpend + itemSpend;
+            groups[name].salesByKey[key] = currentSales + itemSales;
+            
+            // Debug: Log data aggregation for ACOS calculation
+            if (itemSpend > 0 || itemSales > 0) {
+                console.log(`🔍 Data Aggregation Debug - ${name} (${key}):`, {
+                    itemSpend: itemSpend,
+                    itemSales: itemSales,
+                    currentSpend: currentSpend,
+                    currentSales: currentSales,
+                    newSpend: groups[name].spendByKey[key],
+                    newSales: groups[name].salesByKey[key],
+                    calculatedAcos: groups[name].salesByKey[key] > 0 ? (groups[name].spendByKey[key] / groups[name].salesByKey[key]) * 100 : 0
+                });
+            }
             // Prevent duplicating per-day Total Sales across rows. For search-terms and
             // campaigns, only the DAILY TOTAL row should contribute totalSales for a date;
             // individual rows must not accumulate account-level totals.
@@ -2561,13 +2737,31 @@ class TrendReports {
                     groups[name].campaigns.add(String(cn));
                 }
             }
-            groups[name].acosByKey[key] = (groups[name].acosByKey[key] || 0) + (item.acos || 0);
-            groups[name].tcosByKey[key] = (groups[name].tcosByKey[key] || 0) + (item.tcos || 0);
+            // Calculate ACOS and TCOS from aggregated spend and sales (not by adding individual values)
+            const aggSpend = groups[name].spendByKey[key] || 0;
+            const aggSales = groups[name].salesByKey[key] || 0;
+            const calculatedAcos = aggSales > 0 ? (aggSpend / aggSales) * 100 : 0;
+            groups[name].acosByKey[key] = calculatedAcos;
+            // For TCOS, use totalSales instead of sales
+            const aggTotalSales = groups[name].totalSalesByKey[key] || 0;
+            const calculatedTcos = aggTotalSales > 0 ? (aggSpend / aggTotalSales) * 100 : 0;
+            groups[name].tcosByKey[key] = calculatedTcos;
+            
+            // Debug: Log ACOS calculation for troubleshooting
+            if (aggSpend > 0 && aggSales > 0) {
+                console.log(`🔍 ACOS Debug - ${name} (${key}):`, {
+                    spend: aggSpend,
+                    sales: aggSales,
+                    calculatedAcos: calculatedAcos,
+                    formula: `(${aggSpend} / ${aggSales}) * 100`,
+                    category: this.currentCategory,
+                    spendByKey: groups[name].spendByKey,
+                    salesByKey: groups[name].salesByKey
+                });
+            }
             groups[name].ctrByKey[key] = (groups[name].ctrByKey[key] || 0) + (item.ctr || 0);
             groups[name].conversionRateByKey[key] = (groups[name].conversionRateByKey[key] || 0) + (item.conversionRate || 0);
             // Maintain ROAS per key from aggregated spend/sales
-            const aggSpend = groups[name].spendByKey[key] || 0;
-            const aggSales = groups[name].salesByKey[key] || 0;
             groups[name].roasByKey[key] = aggSpend > 0 ? aggSales / aggSpend : 0;
         });
         
@@ -2619,12 +2813,33 @@ class TrendReports {
     }
 
     exportData(format) {
-        // Build a pivoted dataset exactly like the table (current tab + filters)
-        const pivot = this.buildPivotDataset();
-        if (format === 'csv') {
-            this.downloadCSVPivot(pivot.headers, pivot.rows);
-        } else if (format === 'excel') {
-            this.downloadExcelPivot(pivot.headers, pivot.rows);
+        try {
+            // Build a pivoted dataset exactly like the table (current tab + filters)
+            const pivot = this.buildPivotDataset();
+            
+            // Debug: Log export data
+            console.log(`🔍 Export Debug - ${format.toUpperCase()}:`, {
+                category: this.currentCategory,
+                headersCount: pivot.headers.length,
+                rowsCount: pivot.rows.length,
+                sampleHeaders: pivot.headers.slice(0, 5),
+                sampleRows: pivot.rows.slice(0, 2)
+            });
+            
+            if (!pivot || !pivot.headers || !pivot.rows) {
+                console.error('❌ Export Error: Invalid pivot data');
+                alert('No data available for export. Please ensure you have data loaded.');
+                return;
+            }
+            
+            if (format === 'csv') {
+                this.downloadCSVPivot(pivot.headers, pivot.rows);
+            } else if (format === 'excel') {
+                this.downloadExcelPivot(pivot.headers, pivot.rows);
+            }
+        } catch (error) {
+            console.error('❌ Export Error:', error);
+            alert('Export failed. Please check the console for details.');
         }
     }
 
@@ -2899,10 +3114,68 @@ class TrendReports {
                         totalValue = sumByKeys(k => (product[`${metric.key}ByKey`][k] || 0));
                         row.push({ v: totalValue, format: 'currency' });
                     } else if (metric.format === 'percent') {
-                        // average percent-like values across dates
-                        let acc = 0, count = 0;
-                        buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
-                        totalValue = count > 0 ? acc / count : 0;
+                        // For ACOS/TCOS, calculate from total spend and sales (not average percentages)
+                        if (metric.key === 'acos' || metric.key === 'tcos') {
+                            // Get the total spend and sales from the same data source as displayed values
+                            const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                            
+                            if (metric.key === 'acos') {
+                                const totalSales = sumByKeys(k => product.salesByKey[k]);
+                                totalValue = totalSales > 0 ? (totalSpend / totalSales) * 100 : 0;
+                            } else if (metric.key === 'tcos') {
+                                const totalSalesForTcos = sumByKeys(k => product.totalSalesByKey[k]);
+                                totalValue = totalSalesForTcos > 0 ? (totalSpend / totalSalesForTcos) * 100 : 0;
+                            }
+                            
+                            // Force recalculation to ensure we're using the right values
+                            if (metric.key === 'acos') {
+                                console.log(`🔍 Pivot ACOS Calculation - ${product.name}:`, {
+                                    totalSpend: totalSpend,
+                                    totalSales: totalSales,
+                                    calculatedAcos: totalValue,
+                                    formula: `(${totalSpend} / ${totalSales}) * 100`,
+                                    spendByKey: product.spendByKey,
+                                    salesByKey: product.salesByKey
+                                });
+                            } else if (metric.key === 'tcos') {
+                                console.log(`🔍 Pivot TCOS Calculation - ${product.name}:`, {
+                                    totalSpend: totalSpend,
+                                    totalSalesForTcos: totalSalesForTcos,
+                                    calculatedTcos: totalValue,
+                                    formula: `(${totalSpend} / ${totalSalesForTcos}) * 100`,
+                                    spendByKey: product.spendByKey,
+                                    totalSalesByKey: product.totalSalesByKey
+                                });
+                            }
+                            
+                            // If the calculation is wrong, force it to use the correct formula
+                            if (metric.key === 'acos' && totalSpend > 0 && totalSales > 0) {
+                                const correctAcos = (totalSpend / totalSales) * 100;
+                                if (Math.abs(totalValue - correctAcos) > 0.01) {
+                                    console.log(`🔍 ACOS Mismatch Detected! Using correct calculation:`, {
+                                        originalValue: totalValue,
+                                        correctValue: correctAcos,
+                                        difference: Math.abs(totalValue - correctAcos)
+                                    });
+                                    totalValue = correctAcos;
+                                }
+                            } else if (metric.key === 'tcos' && totalSpend > 0 && totalSalesForTcos > 0) {
+                                const correctTcos = (totalSpend / totalSalesForTcos) * 100;
+                                if (Math.abs(totalValue - correctTcos) > 0.01) {
+                                    console.log(`🔍 TCOS Mismatch Detected! Using correct calculation:`, {
+                                        originalValue: totalValue,
+                                        correctValue: correctTcos,
+                                        difference: Math.abs(totalValue - correctTcos)
+                                    });
+                                    totalValue = correctTcos;
+                                }
+                            }
+                        } else {
+                            // For other percentages, average the values
+                            let acc = 0, count = 0;
+                            buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
+                            totalValue = count > 0 ? acc / count : 0;
+                        }
                         row.push({ v: totalValue, format: 'percent' });
                     } else if (metric.format === 'decimal2') {
                         totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
@@ -3029,6 +3302,9 @@ class TrendReports {
                     if (metric.key === 'sessions' && !isTotal) {
                         return; // suppress individual Sessions rows in export
                     }
+                    if (metric.key === 'tcos' && !isTotal) {
+                        return; // suppress individual TCOS rows in export
+                    }
                     const campaignList = isTotal ? '—' : (termToCampaigns.get(product.name) ? Array.from(termToCampaigns.get(product.name)).sort().join(' | ') : '—');
                     const row = [product.name, campaignList, metric.label]; // term + campaigns + metric
                     // Add Total column
@@ -3043,9 +3319,20 @@ class TrendReports {
                         totalValue = sumByKeys(k => (product[`${metric.key}ByKey`][k] || 0));
                         row.push({ v: totalValue, format: 'currency' });
                     } else if (metric.format === 'percent') {
-                        let acc = 0, count = 0;
-                        buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
-                        totalValue = count > 0 ? acc / count : 0;
+                        // For ACOS/TCOS totals in export, mirror table logic
+                        if (metric.key === 'acos') {
+                            const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                            const totalSales = sumByKeys(k => product.salesByKey[k]);
+                            totalValue = totalSales > 0 ? (totalSpend / totalSales) * 100 : 0;
+                        } else if (metric.key === 'tcos') {
+                            const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                            const totalSalesForTcos = sumByKeys(k => product.totalSalesByKey[k]);
+                            totalValue = totalSalesForTcos > 0 ? (totalSpend / totalSalesForTcos) * 100 : 0;
+                        } else {
+                            let acc = 0, count = 0;
+                            buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
+                            totalValue = count > 0 ? acc / count : 0;
+                        }
                         row.push({ v: totalValue, format: 'percent' });
                     } else if (metric.format === 'decimal2') {
                         totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
@@ -3054,11 +3341,18 @@ class TrendReports {
                         totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
                         row.push({ v: totalValue, format: 'number' });
                     }
-                    
-                    // Add values for each date
+                    // Date columns
                     buckets.keys.forEach(key => {
-                        const val = product[`${metric.key}ByKey`][key] || 0;
-                        if (metric.format === 'currency') {
+                        let keyed = product[`${metric.key}ByKey`] || {};
+                        let val = keyed[key] || 0;
+                        if (metric.key === 'totalSales') {
+                            const nm2 = String(product.name || '');
+                            const isTotal2 = nm2.includes('📊') || nm2.toLowerCase().includes('daily total');
+                            if (!isTotal2) val = null;
+                        }
+                        if (val === null || val === undefined) {
+                            row.push('—');
+                        } else if (metric.format === 'currency') {
                             row.push({ v: val, format: 'currency' });
                         } else if (metric.format === 'percent') {
                             row.push({ v: val, format: 'percent' });
@@ -3068,7 +3362,6 @@ class TrendReports {
                             row.push({ v: val, format: 'number' });
                         }
                     });
-                    
                     rows.push(row);
                 });
             });
@@ -3119,6 +3412,10 @@ class TrendReports {
                     if (metric.key === 'sessions' && !isTotal) {
                         return;
                     }
+                    // Suppress TCOS rows for individual campaigns in export
+                    if (metric.key === 'tcos' && !isTotal) {
+                        return;
+                    }
                     const row = [product.name, metric.label];
                     // Compute Total column to match table
                     const sumByKeys = (getter) => buckets.keys.reduce((acc, k) => acc + Number(getter(k) || 0), 0);
@@ -3132,9 +3429,20 @@ class TrendReports {
                         totalValue = sumByKeys(k => (product[`${metric.key}ByKey`][k] || 0));
                         row.push({ v: totalValue, format: 'currency' });
                     } else if (metric.format === 'percent') {
-                        let acc = 0, count = 0;
-                        buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
-                        totalValue = count > 0 ? acc / count : 0;
+                        // For ACOS/TCOS, calculate from total spend and sales to mirror table totals
+                        if (metric.key === 'acos') {
+                            const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                            const totalSales = sumByKeys(k => product.salesByKey[k]);
+                            totalValue = totalSales > 0 ? (totalSpend / totalSales) * 100 : 0;
+                        } else if (metric.key === 'tcos') {
+                            const totalSpend = sumByKeys(k => product.spendByKey[k]);
+                            const totalSalesForTcos = sumByKeys(k => product.totalSalesByKey[k]);
+                            totalValue = totalSalesForTcos > 0 ? (totalSpend / totalSalesForTcos) * 100 : 0;
+                        } else {
+                            let acc = 0, count = 0;
+                            buckets.keys.forEach(k => { acc += Number((product[`${metric.key}ByKey`][k]) || 0); count += 1; });
+                            totalValue = count > 0 ? acc / count : 0;
+                        }
                         row.push({ v: totalValue, format: 'percent' });
                     } else if (metric.format === 'decimal2') {
                         totalValue = sumByKeys(k => product[`${metric.key}ByKey`][k] || 0);
@@ -3148,9 +3456,9 @@ class TrendReports {
                         let val = keyed[key] || 0;
                         // For Campaigns export: Total Sales only on DAILY TOTAL; blank for individuals
                         if (metric.key === 'totalSales') {
-                            const nm = String(product.name || '');
-                            const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
-                            if (!isTotal) val = null;
+                            const nm2 = String(product.name || '');
+                            const isTotal2 = nm2.includes('📊') || nm2.toLowerCase().includes('daily total');
+                            if (!isTotal2) val = null;
                         }
                         if (val === null || val === undefined) {
                             row.push('—');
