@@ -1319,21 +1319,204 @@ class TrendReports {
             this.trendChart = null;
         }
         
-        // For the chart, ignore name selection. Chart should be driven only by date range.
+        // Apply name filter to chart data (same as table) - FILTER HAS PRIORITY
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
-        // Apply date range filter (same as table)
-        data = this.filterDataByDateRange(data);
+        // Apply name filter if multi-select has items; keep DAILY TOTAL rows
+        if (this.selectedNames && this.selectedNames.size > 0) {
+            console.log('🔍 Chart: Applying name filter for campaigns:', {
+                selectedNames: Array.from(this.selectedNames),
+                dataBeforeFilter: data.length,
+                sampleData: data.slice(0, 3).map(item => ({ name: item.name, spend: item.spend, sales: item.sales }))
+            });
+            
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                return isTotal || this.selectedNames.has(nm);
+            });
+            
+            console.log('🔍 Chart: After name filter:', {
+                dataAfterFilter: data.length,
+                sampleData: data.slice(0, 3).map(item => ({ name: item.name, spend: item.spend, sales: item.sales }))
+            });
+        } else if (this.selectedName) {
+            data = data.filter(item => (item.displayName || item.name) === this.selectedName);
+        }
+        
+        // If filter is applied, use ALL data for that filter (ignore date range)
+        // Only apply date range if NO filter is selected
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
+        
+        // Debug: Log filter status for chart
+        console.log('🔍 Chart Filter Priority Debug:', {
+            selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
+            selectedName: this.selectedName,
+            hasFilterApplied: hasFilterApplied,
+            dateRange: this.currentDateRange,
+            dataLengthBefore: data.length
+        });
+        
+        if (!hasFilterApplied) {
+            // Apply date range filter only when no filter is applied
+            data = this.filterDataByDateRange(data);
+            console.log('📅 Chart: Date range applied, data length after:', data.length);
+        } else {
+            console.log('🎯 Chart: Filter applied, ignoring date range, data length:', data.length);
+        }
 
         // Campaigns: avoid double-counting in the chart when DAILY TOTAL rows
         // are present (backend provides both individuals and totals). If totals
         // exist, drive the chart using ONLY the DAILY TOTAL rows so it matches
         // the table's totals; otherwise, sum individuals as usual.
+        // BUT: If specific campaigns are selected, use individual campaign data instead of totals
         if (this.currentCategory === 'campaigns') {
             const hasDailyTotal = data.some(r => String(r.name || '').includes('📊'));
-            if (hasDailyTotal) {
+            const hasSelectedCampaigns = this.selectedNames && this.selectedNames.size > 0;
+            
+            console.log('🔍 Campaigns Chart Logic:', {
+                hasDailyTotal,
+                hasSelectedCampaigns,
+                selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
+                dataLength: data.length
+            });
+            
+            // Only use DAILY TOTAL rows if no specific campaigns are selected
+            if (hasDailyTotal && !hasSelectedCampaigns) {
                 data = data.filter(r => String(r.name || '').includes('📊'));
+                console.log('📊 Using DAILY TOTAL rows for chart');
+            } else if (hasSelectedCampaigns) {
+                // Remove DAILY TOTAL rows when specific campaigns are selected
+                data = data.filter(r => !String(r.name || '').includes('📊'));
+                console.log('🎯 Using individual campaign data for selected campaigns');
             }
+        }
+        
+        // If we're on campaigns and user selected specific names,
+        // recompute DAILY TOTAL for the filtered subset so chart reflects selection.
+        if (this.currentCategory === 'campaigns' && this.selectedNames && this.selectedNames.size > 0) {
+            const totalsByDate = {};
+            // Build totals from only non-total rows (selected names already applied above)
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                if (nm.includes('📊')) return; // skip existing totals to avoid double-counting
+                const key = this.normalizeDateKey(item.date);
+                if (!totalsByDate[key]) {
+                    totalsByDate[key] = { spend: 0, sales: 0, clicks: 0, sessions: 0, pageviews: 0, orders: 0, totalSales: 0 };
+                }
+                totalsByDate[key].spend += Number(item.spend || 0);
+                totalsByDate[key].sales += Number(item.sales || 0);
+                totalsByDate[key].clicks += Number(item.clicks || 0);
+                totalsByDate[key].sessions += Number(item.sessions || 0);
+                totalsByDate[key].pageviews += Number(item.pageviews || 0);
+                totalsByDate[key].orders += Number(item.orders || 0);
+                totalsByDate[key].totalSales += Number(item.totalSales || 0);
+            });
+            
+            // Replace data with recomputed totals
+            data = [];
+            Object.entries(totalsByDate).forEach(([key, t]) => {
+                const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
+                const roas = t.spend > 0 ? t.sales / t.spend : 0;
+                const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
+                const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
+                const ctr = t.clicks > 0 && t.sessions > 0 ? (t.clicks / t.sessions) * 100 : 0;
+                data.push({
+                    date: key,
+                    category: this.currentCategory,
+                    name: '📊 DAILY TOTAL',
+                    displayName: '📊 DAILY TOTAL',
+                    spend: t.spend,
+                    sales: t.sales,
+                    clicks: t.clicks,
+                    sessions: t.sessions,
+                    pageviews: t.pageviews,
+                    orders: t.orders,
+                    totalSales: t.totalSales,
+                    cpc, roas, acos, tcos, ctr
+                });
+            });
+            
+            console.log('🎯 Campaigns Chart: Recomputed totals for selected campaigns:', {
+                selectedNames: Array.from(this.selectedNames),
+                totalDates: Object.keys(totalsByDate).length,
+                sampleData: data.slice(0, 3)
+            });
+        }
+        
+        // Search-terms: handle DAILY TOTAL vs individual data logic (same as campaigns)
+        if (this.currentCategory === 'search-terms') {
+            const hasDailyTotal = data.some(r => String(r.name || '').includes('📊'));
+            const hasSelectedSearchTerms = this.selectedNames && this.selectedNames.size > 0;
+            
+            console.log('🔍 Search-terms Chart Logic:', {
+                hasDailyTotal,
+                hasSelectedSearchTerms,
+                selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
+                dataLength: data.length
+            });
+            
+            // Only use DAILY TOTAL rows if no specific search terms are selected
+            if (hasDailyTotal && !hasSelectedSearchTerms) {
+                data = data.filter(r => String(r.name || '').includes('📊'));
+                console.log('📊 Using DAILY TOTAL rows for search-terms chart');
+            } else if (hasSelectedSearchTerms) {
+                // Remove DAILY TOTAL rows when specific search terms are selected
+                data = data.filter(r => !String(r.name || '').includes('📊'));
+                console.log('🎯 Using individual search term data for selected terms');
+            }
+        }
+        
+        // If we're on search-terms and user selected specific names,
+        // recompute DAILY TOTAL for the filtered subset so chart reflects selection.
+        if (this.currentCategory === 'search-terms' && this.selectedNames && this.selectedNames.size > 0) {
+            const totalsByDate = {};
+            // Build totals from only non-total rows (selected names already applied above)
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                if (nm.includes('📊')) return; // skip existing totals to avoid double-counting
+                const key = this.normalizeDateKey(item.date);
+                if (!totalsByDate[key]) {
+                    totalsByDate[key] = { spend: 0, sales: 0, clicks: 0, sessions: 0, pageviews: 0, orders: 0, totalSales: 0 };
+                }
+                totalsByDate[key].spend += Number(item.spend || 0);
+                totalsByDate[key].sales += Number(item.sales || 0);
+                totalsByDate[key].clicks += Number(item.clicks || 0);
+                totalsByDate[key].sessions += Number(item.sessions || 0);
+                totalsByDate[key].pageviews += Number(item.pageviews || 0);
+                totalsByDate[key].orders += Number(item.orders || 0);
+                totalsByDate[key].totalSales += Number(item.totalSales || 0);
+            });
+            
+            // Replace data with recomputed totals
+            data = [];
+            Object.entries(totalsByDate).forEach(([key, t]) => {
+                const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
+                const roas = t.spend > 0 ? t.sales / t.spend : 0;
+                const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
+                const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
+                const ctr = t.clicks > 0 && t.sessions > 0 ? (t.clicks / t.sessions) * 100 : 0;
+                data.push({
+                    date: key,
+                    category: this.currentCategory,
+                    name: '📊 DAILY TOTAL',
+                    displayName: '📊 DAILY TOTAL',
+                    spend: t.spend,
+                    sales: t.sales,
+                    clicks: t.clicks,
+                    sessions: t.sessions,
+                    pageviews: t.pageviews,
+                    orders: t.orders,
+                    totalSales: t.totalSales,
+                    cpc, roas, acos, tcos, ctr
+                });
+            });
+            
+            console.log('🎯 Search-terms Chart: Recomputed totals for selected search terms:', {
+                selectedNames: Array.from(this.selectedNames),
+                totalDates: Object.keys(totalsByDate).length,
+                sampleData: data.slice(0, 3)
+            });
         }
         
         // Always try to show chart - let Chart.js handle empty data
@@ -1812,6 +1995,14 @@ class TrendReports {
         // Input focus/blur events
         nameFilterInput.addEventListener('focus', () => {
             nameFilterDropdown.style.display = 'block';
+            nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
+            
+            // Hide pagination when dropdown opens
+            const paginationControls = document.querySelector('.pagination-controls');
+            if (paginationControls) {
+                paginationControls.style.display = 'none';
+            }
+            
             this.filterNameOptions('');
         });
         
@@ -1821,22 +2012,38 @@ class TrendReports {
                 if (!nameFilterDropdown.contains(document.activeElement) && 
                     !nameFilterDropdown.matches(':hover')) {
                     nameFilterDropdown.style.display = 'none';
+                    nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+                    
+                    // Show pagination when dropdown closes
+                    const paginationControls = document.querySelector('.pagination-controls');
+                    if (paginationControls) {
+                        paginationControls.style.display = '';
+                    }
                 }
             }, 200);
         });
         
         // Input search
         nameFilterInput.addEventListener('input', (e) => {
-            this.filterNameOptions(e.target.value);
             nameFilterDropdown.style.display = 'block';
+            this.filterNameOptions(e.target.value);
+            nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
         });
         
         // Click outside to close
         document.addEventListener('click', (e) => {
             if (!nameFilterInput.contains(e.target) && !nameFilterDropdown.contains(e.target)) {
                 nameFilterDropdown.style.display = 'none';
+                nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+                
+                // Show pagination when dropdown closes
+                const paginationControls = document.querySelector('.pagination-controls');
+                if (paginationControls) {
+                    paginationControls.style.display = '';
+                }
             }
         });
+        
     }
 
     updateNameFilter() {
@@ -1984,6 +2191,65 @@ class TrendReports {
             noResults.style.cursor = 'default';
             nameFilterDropdown.appendChild(noResults);
         }
+        
+        // Final cleanup: remove any non-filter elements that might have been added
+        setTimeout(() => {
+            const allElements = nameFilterDropdown.querySelectorAll('*');
+            allElements.forEach(el => {
+                if (!el.classList.contains('filter-option') && !el.closest('.filter-option')) {
+                    el.remove();
+                }
+            });
+            
+            // Specifically remove any pagination-related elements
+            const paginationElements = nameFilterDropdown.querySelectorAll(
+                '.pagination-controls, .page-info, .pagination-btn, .results-count, [class*="pagination"], [class*="page"]'
+            );
+            paginationElements.forEach(el => el.remove());
+            
+            // Remove any elements containing pagination text
+            const allTextElements = nameFilterDropdown.querySelectorAll('*');
+            allTextElements.forEach(el => {
+                if (el.textContent && (
+                    el.textContent.includes('Page') || 
+                    el.textContent.includes('of') || 
+                    el.textContent.includes('results') ||
+                    el.textContent.includes('Showing')
+                )) {
+                    if (!el.classList.contains('filter-option')) {
+                        el.remove();
+                    }
+                }
+            });
+        }, 0);
+        
+        // Continuous cleanup to prevent pagination from appearing
+        const cleanupInterval = setInterval(() => {
+            if (nameFilterDropdown.style.display === 'none') {
+                clearInterval(cleanupInterval);
+                return;
+            }
+            
+            const paginationElements = nameFilterDropdown.querySelectorAll(
+                '.pagination-controls, .page-info, .pagination-btn, .results-count, [class*="pagination"], [class*="page"]'
+            );
+            paginationElements.forEach(el => el.remove());
+            
+            // Remove any elements containing pagination text
+            const allElements = nameFilterDropdown.querySelectorAll('*');
+            allElements.forEach(el => {
+                if (el.textContent && (
+                    el.textContent.includes('Page') || 
+                    el.textContent.includes('of') || 
+                    el.textContent.includes('results') ||
+                    el.textContent.includes('Showing')
+                )) {
+                    if (!el.classList.contains('filter-option')) {
+                        el.remove();
+                    }
+                }
+            });
+        }, 100); // Check every 100ms
     }
 
     // filterData method removed - using name filter only
@@ -2144,11 +2410,29 @@ class TrendReports {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
         
-        // Apply date range filter
-        data = this.filterDataByDateRange(data);
+        // If filter is applied, use ALL data for that filter (ignore date range)
+        // Only apply date range if NO filter is selected
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
         
-        // Debug: Log data after date filtering
-        console.log(`🔍 After Date Filter - ${this.currentCategory}:`, {
+        // Debug: Log filter status for table
+        console.log('🔍 Table Filter Priority Debug:', {
+            selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
+            selectedName: this.selectedName,
+            hasFilterApplied: hasFilterApplied,
+            dateRange: this.currentDateRange,
+            dataLengthBefore: data.length
+        });
+        
+        if (!hasFilterApplied) {
+            // Apply date range filter only when no filter is applied
+            data = this.filterDataByDateRange(data);
+            console.log('📅 Table: Date range applied, data length after:', data.length);
+        } else {
+            console.log('🎯 Table: Filter applied, ignoring date range, data length:', data.length);
+        }
+        
+        // Debug: Log data after filtering
+        console.log(`🔍 After Filter - ${this.currentCategory}:`, {
             filteredData: data.length,
             sampleData: data.slice(0, 3).map(item => ({ name: item.name, date: item.date, spend: item.spend, sales: item.sales }))
         });
@@ -2799,10 +3083,25 @@ class TrendReports {
     nextPage() {
         // Recompute grouped length to paginate correctly
         let data = this.currentData.filter(item => item.category === this.currentCategory);
-        if (this.selectedName) {
+        
+        // Apply name filter if multi-select has items; keep DAILY TOTAL rows
+        if (this.selectedNames && this.selectedNames.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                return isTotal || this.selectedNames.has(nm);
+            });
+        } else if (this.selectedName) {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
-        data = this.filterDataByDateRange(data);
+        
+        // If filter is applied, use ALL data for that filter (ignore date range)
+        // Only apply date range if NO filter is selected
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
+        if (!hasFilterApplied) {
+            // Apply date range filter only when no filter is applied
+            data = this.filterDataByDateRange(data);
+        }
         const buckets = this.buildDateBuckets(data);
         const groupedData = this.groupDataByProductForPivot(data, buckets);
         const totalPages = Math.ceil(groupedData.length / this.itemsPerPage) || 1;
@@ -2916,6 +3215,15 @@ class TrendReports {
     buildPivotDataset() {
         // Prepare the same data used by the table
         let data = this.currentData.filter(item => item.category === this.currentCategory);
+        
+        // Debug: Log export filter status
+        console.log('🔍 Export Filter Debug:', {
+            category: this.currentCategory,
+            selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
+            selectedName: this.selectedName,
+            dataBeforeFilter: data.length
+        });
+        
         // Name filter like table (keeps DAILY TOTAL rows regardless)
         if (this.selectedNames && this.selectedNames.size > 0) {
             data = data.filter(item => {
@@ -2926,7 +3234,17 @@ class TrendReports {
         } else if (this.selectedName) {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
-        data = this.filterDataByDateRange(data);
+        
+        // If filter is applied, use ALL data for that filter (ignore date range)
+        // Only apply date range if NO filter is selected
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
+        if (!hasFilterApplied) {
+            // Apply date range filter only when no filter is applied
+            data = this.filterDataByDateRange(data);
+            console.log('📅 Export: Date range applied, data length after:', data.length);
+        } else {
+            console.log('🎯 Export: Filter applied, ignoring date range, data length:', data.length);
+        }
         // Always ensure DAILY TOTAL rows exist for search-terms in exports
         if (this.currentCategory === 'search-terms') {
             const bizByDate = {};
