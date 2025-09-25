@@ -3160,53 +3160,15 @@ class TrendReports {
 
     downloadExcel(data) {
         if (!data || data.length === 0) return;
-        const headers = Object.keys(data[0]);
-        const escapeXml = (text) => String(text)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&apos;');
-
-        let xml = '<?xml version="1.0"?>\n';
-        xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n';
-        xml += ' xmlns:o="urn:schemas-microsoft-com:office:office"\n';
-        xml += ' xmlns:x="urn:schemas-microsoft-com:office:excel"\n';
-        xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n';
-        xml += ' xmlns:html="http://www.w3.org/TR/REC-html40">\n';
-        xml += '<Styles>\n';
-        xml += '<Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#EEEEEE" ss:Pattern="Solid"/></Style>\n';
-        xml += '<Style ss:ID="Currency"><NumberFormat ss:Format="Currency"/></Style>\n';
-        xml += '<Style ss:ID="Percent"><NumberFormat ss:Format="Percent"/></Style>\n';
-        xml += '</Styles>\n';
-        xml += '<Worksheet ss:Name="Trend Reports">\n<Table>\n<Row>\n';
-        headers.forEach(h => { xml += `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>\n`; });
-        xml += '</Row>\n';
-        data.forEach(row => {
-            xml += '<Row>\n';
-            headers.forEach(h => {
-                const v = row[h];
-                if (typeof v === 'number') {
-                    xml += `<Cell><Data ss:Type="Number">${v}</Data></Cell>\n`;
-                } else if (typeof v === 'string' && v.trim().startsWith('₹')) {
-                    const n = Number(v.replace(/[^0-9.-]/g, '')) || 0;
-                    xml += `<Cell ss:StyleID=\"Currency\"><Data ss:Type=\"Number\">${n.toFixed(2)}</Data></Cell>\n`;
-                } else if (typeof v === 'string' && v.trim().endsWith('%')) {
-                    const n = (Number(v.replace('%','')) || 0) / 100;
-                    xml += `<Cell ss:StyleID=\"Percent\"><Data ss:Type=\"Number\">${n}</Data></Cell>\n`;
-                } else {
-                    xml += `<Cell><Data ss:Type="String">${escapeXml(v ?? '')}</Data></Cell>\n`;
-                }
-            });
-            xml += '</Row>\n';
-        });
-        xml += '</Table>\n</Worksheet>\n</Workbook>';
-
-        const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Trend Reports');
+        const ab = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([ab], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `trend-reports-${new Date().toISOString().split('T')[0]}.xls`;
+        a.download = `trend-reports-${new Date().toISOString().split('T')[0]}.xlsx`;
         a.click();
         window.URL.revokeObjectURL(url);
     }
@@ -3823,42 +3785,17 @@ class TrendReports {
 	}
 
 	downloadExcelPivot(headers, rows) {
-        const escapeXml = (text) => String(text)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&apos;');
-        let xml = '<?xml version="1.0"?>\n';
-        xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:html="http://www.w3.org/TR/REC-html40">\n';
-        xml += '<Styles>\n';
-        xml += '<Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#EEEEEE" ss:Pattern="Solid"/></Style>\n';
-        xml += '<Style ss:ID="Currency"><NumberFormat ss:Format="\u20B9#,##0.00"/></Style>\n';
-        xml += '<Style ss:ID="Percent"><NumberFormat ss:Format="0.00%"/></Style>\n';
-        xml += '<Style ss:ID="Decimal2"><NumberFormat ss:Format="0.00"/></Style>\n';
-        xml += '</Styles>\n';
-        xml += '<Worksheet ss:Name="Trend Pivot">\n<Table>\n<Row>\n';
-        headers.forEach(h => { xml += `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>\n`; });
-        xml += '</Row>\n';
-		rows.forEach(r => {
-            xml += '<Row>\n';
-			// Always show the name in first column (keep emoji for UI consistency)
-			let first = r[0];
-			const cells = [first, ...r.slice(1)];
-			cells.forEach(c => {
-                if (typeof c === 'object') {
-                    if (c.format === 'currency') xml += `<Cell ss:StyleID="Currency"><Data ss:Type="Number">${Number(c.v || 0).toFixed(2)}</Data></Cell>\n`;
-                    else if (c.format === 'percent') xml += `<Cell ss:StyleID="Percent"><Data ss:Type="Number">${Number(c.v || 0)/100}</Data></Cell>\n`;
-                    else if (c.format === 'decimal2') xml += `<Cell ss:StyleID=\"Decimal2\"><Data ss:Type=\"Number\">${Number(c.v || 0).toFixed(2)}</Data></Cell>\n`;
-                    else xml += `<Cell><Data ss:Type="Number">${Number(c.v || 0)}</Data></Cell>\n`;
-                } else {
-                    xml += `<Cell><Data ss:Type="String">${escapeXml(c)}</Data></Cell>\n`;
-                }
-			});
-            xml += '</Row>\n';
-		});
-        xml += '</Table>\n</Worksheet>\n</Workbook>';
-        const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+        // Convert pivot headers/rows to array of objects
+        const data = rows.map(r => Object.fromEntries(headers.map((h, i) => [h, typeof r[i] === 'object' ? r[i].v : r[i]])));
+        const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Trend Pivot');
+        const ab = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([ab], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-		a.download = `trend-pivot-${this.currentCategory}-${new Date().toISOString().split('T')[0]}.xls`;
+		a.download = `trend-pivot-${this.currentCategory}-${new Date().toISOString().split('T')[0]}.xlsx`;
         a.click();
         window.URL.revokeObjectURL(url);
     }

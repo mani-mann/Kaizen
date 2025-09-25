@@ -3235,76 +3235,55 @@ class AmazonDashboard {
     
     async exportToExcel() {
         try {
-            // Show loading notification
             this.showNotification('Preparing Excel export...', 'info');
-            
-            // Fetch fresh data for the selected date range
             const payload = await this.fetchAnalytics(this.dateRange.start, this.dateRange.end);
             if (!payload || !payload.rows) {
                 this.showNotification('No data available for export', 'warning');
                 return;
             }
-            
-            // Transform the data for export
+
             const exportData = payload.rows.map(row => {
                 const spend = parseFloat(row.spend || row.cost || 0);
                 const sales = parseFloat(row.sales || row.sales_1d || 0);
                 const clicks = parseInt(row.clicks || 0);
                 const impressions = parseInt(row.impressions || 0);
-                
+
                 const acos = sales > 0 ? (spend / sales) * 100 : 0;
                 const roas = spend > 0 ? sales / spend : 0;
                 const cpc = clicks > 0 ? spend / clicks : 0;
                 const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-                
+
                 return {
-                    date: row.date || row.report_date || '',
-                    searchTerm: row.searchTerm || row.search_term || 'Unknown',
-                    keywords: row.keywords || row.keyword_info || row.match_type || '',
-                    campaignName: row.campaignName || row.campaign_name || 'Unknown Campaign',
-                    spend: spend,
-                    sales: sales,
-                    acos: acos,
-                    roas: roas,
-                    cpc: cpc,
-                    ctr: ctr,
-                    clicks: clicks,
-                    impressions: impressions,
-                    purchases: parseInt(row.purchases || row.purchases_1d || 0)
+                    'Date': row.date || row.report_date || '',
+                    'Search Term': row.searchTerm || row.search_term || 'Unknown',
+                    'Keywords': row.keywords || row.keyword_info || row.match_type || '',
+                    'Campaign Name': row.campaignName || row.campaign_name || 'Unknown Campaign',
+                    'Spend': spend,
+                    'Sales': sales,
+                    'ACOS': Number(acos.toFixed(2)),
+                    'ROAS': Number(roas.toFixed(2)),
+                    'CPC': Number(cpc.toFixed(2)),
+                    'CTR': Number(ctr.toFixed(2)),
+                    'Clicks': clicks,
+                    'Impressions': impressions,
+                    'Purchases': parseInt(row.purchases || row.purchases_1d || 0)
                 };
             });
-            
-            // Create tab-separated file that Excel can open
-            const headers = ['Date', 'Search Term', 'Keywords', 'Campaign Name', 'Spend', 'Sales', 'ACOS', 'ROAS', 'CPC', 'CTR', 'Clicks', 'Impressions', 'Purchases'];
-            const tsvContent = [
-                headers.join('\t'),
-                ...exportData.map(row => [
-                    row.date,
-                    row.searchTerm,
-                    row.keywords,
-                    row.campaignName,
-                    row.spend,
-                    row.sales,
-                    row.acos.toFixed(2),
-                    row.roas.toFixed(2),
-                    row.cpc.toFixed(2),
-                    row.ctr.toFixed(2),
-                    row.clicks,
-                    row.impressions,
-                    row.purchases
-                ].join('\t'))
-            ].join('\n');
-            
-            // Generate filename with date range
+
+            const headers = ['Date','Search Term','Keywords','Campaign Name','Spend','Sales','ACOS','ROAS','CPC','CTR','Clicks','Impressions','Purchases'];
+            const ws = XLSX.utils.json_to_sheet(exportData, { header: headers });
+            ws['!cols'] = headers.map(h => ({ wch: Math.max(12, h.length + 2) }));
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Keywords');
+
             const startDate = this.dateRange.startStr || this.toInputDate(this.dateRange.start);
             const endDate = this.dateRange.endStr || this.toInputDate(this.dateRange.end);
             const filename = `amazon-keyword-data-${startDate}-to-${endDate}.xlsx`;
-            
-            this.downloadFile(tsvContent, filename, 'application/vnd.ms-excel');
+            const ab = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+            this.downloadFile(ab, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             this.showNotification(`Excel file exported successfully! (${exportData.length} records)`, 'success');
-            
         } catch (error) {
-            // Excel export failed
             this.showNotification('Excel export failed. Please try again.', 'error');
         }
     }

@@ -1301,13 +1301,27 @@ async exportData(format, includeAll = true) {
         const endDate = this.state.dateRange.endStr;
         
         if (format === 'excel') {
-            // Create Excel file using XML format (Excel 2003+ compatible)
-            let excelContent = this.createExcelContent(headers, exportData);
-            const filename = `business-report-${startDate}-to-${endDate}.xls`;
-            
-            const blob = new Blob([excelContent], { 
-                type: 'application/vnd.ms-excel' 
-            });
+            const rows = exportData.map(row => ({
+                'Date': row.date || this.state.dateRange.startStr,
+                'SKU': row.sku,
+                'Parent ASIN': row.parentAsin,
+                'Product Title': row.productTitle,
+                'Sessions': row.sessions,
+                'Page Views': row.pageViews,
+                'Units Ordered': row.unitsOrdered,
+                'Sales (₹)': Number(row.sales || 0),
+                'Conversion Rate (%)': Number(row.conversionRate || 0),
+                'Avg Order Value (₹)': Number(row.avgOrderValue || 0)
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Business');
+
+            const filename = `business-report-${startDate}-to-${endDate}.xlsx`;
+            const ab = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+            const blob = new Blob([ab], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
