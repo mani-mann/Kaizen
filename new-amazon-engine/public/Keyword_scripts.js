@@ -951,33 +951,58 @@ class AmazonDashboard {
         const campaignSel = document.getElementById('campaignFilter');
         const keywordSel = document.getElementById('keywordFilter');
         if (!campaignSel && !keywordSel) return;
-        
-        // Build unique sets
+
+        // Capture current UI open/query state so dropdown stays open during multi-select
+        const prevState = {};
+        ['campaignFilter','keywordFilter'].forEach(id => {
+            const cont = document.getElementById(`${id}-ms`);
+            if (cont) {
+                const dd = cont.querySelector('.ms-dropdown');
+                const input = cont.querySelector('.ms-input');
+                prevState[id] = {
+                    open: dd ? dd.style.display !== 'none' : false,
+                    query: input ? (input.value || '') : ''
+                };
+            }
+        });
+
+        // Build unique campaign list from all rows
         const campaigns = new Set();
-        const keywords = new Set();
-        const baseRows = this.currentData; // keep full lists independent of selections
         for (const row of this.currentData) {
             if (row.campaignName) {
                 row.campaignName.split(',').forEach(c => campaigns.add(c.trim()));
             }
         }
-        for (const row of baseRows) {
+
+        // Determine which rows should drive the keyword list: if campaigns are selected,
+        // restrict keywords to those belonging to selected campaigns (dependency like trend page)
+        const selectedCampaigns = new Set((this.activeFilters.campaigns || []).map(s => String(s).toLowerCase()));
+        const sourceRows = selectedCampaigns.size
+            ? this.currentData.filter(r => {
+                const cn = String(r.campaignName || '').toLowerCase();
+                return Array.from(selectedCampaigns).some(sc => cn.includes(sc));
+            })
+            : this.currentData;
+
+        // Build keyword set from filtered rows (also include search terms)
+        const keywords = new Set();
+        for (const row of sourceRows) {
             if (row.keywords) {
                 row.keywords.split(',').forEach(k => keywords.add(k.trim()));
             }
             if (row.searchTerm) keywords.add(String(row.searchTerm).trim());
         }
-        
-        // Render custom multi-selects with tags + live filter input
+
+        // Render custom multi-selects with tags + live filter input and tick checkboxes
         this.renderMultiSelect('campaignFilter', Array.from(campaigns), this.activeFilters.campaigns || [], 'Filter Campaigns...', (vals)=>{
             this.handleFilter('campaigns', vals);
-        });
+        }, prevState['campaignFilter'] || { open: false, query: '' });
         this.renderMultiSelect('keywordFilter', Array.from(keywords), this.activeFilters.keywords || [], 'Filter Keywords...', (vals)=>{
             this.handleFilter('keywords', vals);
-        });
+        }, prevState['keywordFilter'] || { open: false, query: '' });
     }
 
-    renderMultiSelect(targetId, items, selectedValues, placeholder, onChange) {
+    renderMultiSelect(targetId, items, selectedValues, placeholder, onChange, initialState = { open: false, query: '' }) {
         const anchor = document.getElementById(targetId);
         if (!anchor) return;
         // Hide native control
@@ -1006,7 +1031,7 @@ class AmazonDashboard {
 
         const state = {
             selected: new Set((selectedValues || []).filter(Boolean)),
-            query: ''
+            query: initialState.query || ''
         };
 
         const syncTags = () => {
@@ -1032,18 +1057,26 @@ class AmazonDashboard {
             dropdown.innerHTML = sorted
                 .filter(v => !q || v.toLowerCase().includes(q))
                 .map(v => {
-                    const active = state.selected.has(v) ? ' ms-option-selected' : '';
-                    return `<div class="ms-option${active}" data-value="${this.escapeHtml(v)}">${this.escapeHtml(v)}</div>`;
+                    const checked = state.selected.has(v) ? 'checked' : '';
+                    // Option row with a checkbox tick similar to trend filter
+                    return `<label class="ms-option" data-value="${this.escapeHtml(v)}" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 8px;">
+                                <input type="checkbox" ${checked} />
+                                <span>${this.escapeHtml(v)}</span>
+                            </label>`;
                 }).join('');
             dropdown.querySelectorAll('.ms-option').forEach(opt => {
-                opt.addEventListener('click', (e) => {
-                    const val = opt.getAttribute('data-value');
+                const val = opt.getAttribute('data-value');
+                const cb = opt.querySelector('input[type="checkbox"]');
+                const toggle = () => {
                     if (state.selected.has(val)) state.selected.delete(val); else state.selected.add(val);
                     syncTags();
-                    syncOptions();
+                    // Update only the checkbox state without rebuilding whole list to avoid flicker
+                    cb.checked = state.selected.has(val);
                     onChange(Array.from(state.selected));
                     input.focus();
-                });
+                };
+                opt.addEventListener('mousedown', (e) => { e.preventDefault(); toggle(); });
+                cb.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
             });
         };
 
@@ -1055,7 +1088,13 @@ class AmazonDashboard {
         });
 
         syncTags();
+        // Apply initial query and open state to preserve UX during multi-select
+        input.value = state.query || '';
         syncOptions();
+        if (initialState.open) {
+            dropdown.style.display = 'block';
+            input.focus();
+        }
     }
     
     async loadData() {
