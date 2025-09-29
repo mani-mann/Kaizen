@@ -17,6 +17,7 @@ constructor() {
         sortColumn: '',
         sortDirection: 'desc',
         searchTerm: '',
+        selectedProducts: new Set(), // multi-select products
         dateRange: this.getDefaultDateRange()
     };
     
@@ -370,10 +371,8 @@ async fetchAvailableDateRange() {
 }
 
 setupEventListeners() {
-    const searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-        searchInput.addEventListener('input', this.debounce(this.handleSearch.bind(this), 300));
-    }
+    // Setup multi-select product filter
+    this.setupProductFilter();
     
     const exportExcelComplete = document.getElementById('exportExcelComplete');
     const exportCSVComplete = document.getElementById('exportCSVComplete');
@@ -711,6 +710,9 @@ async loadData() {
         
         // Update chart with new data
         await this.updateChart();
+        
+        // Initialize product filter after data is loaded
+        this.initializeProductFilter();
         
         console.log('🔍 Data loading completed successfully');
         
@@ -1140,24 +1142,205 @@ aggregateBySku(rows) {
     }
 }
 
-handleSearch(e) {
-    this.state.searchTerm = e.target.value.toLowerCase();
-    this.state.currentPage = 1;
-    this.filterData();
+setupProductFilter() {
+    const nameFilterInput = document.getElementById('nameFilterInput');
+    const nameFilterDropdown = document.getElementById('nameFilterDropdown');
+    
+    if (!nameFilterInput || !nameFilterDropdown) return;
+    
+    // Input focus/blur events - don't show dropdown on focus, only on search
+    nameFilterInput.addEventListener('focus', () => {
+        // Clear the "X selected" text when user starts typing
+        if (nameFilterInput.value.includes('selected')) {
+            nameFilterInput.value = '';
+        }
+    });
+    
+    nameFilterInput.addEventListener('blur', (e) => {
+        // Show selection count when user is done typing
+        const count = this.state.selectedProducts.size;
+        if (count > 0 && !nameFilterInput.value.includes('selected')) {
+            nameFilterInput.value = `${count} selected`;
+        }
+        
+        // Delay hiding to allow click on dropdown
+        setTimeout(() => {
+            if (!nameFilterDropdown.contains(document.activeElement) && 
+                !nameFilterDropdown.matches(':hover')) {
+                nameFilterDropdown.style.display = 'none';
+                nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+            }
+        }, 200);
+    });
+    
+    // Input search - only show dropdown when user types something
+    nameFilterInput.addEventListener('input', (e) => {
+        const searchValue = e.target.value.trim();
+        if (searchValue.length > 0) {
+            nameFilterDropdown.style.display = 'block';
+            this.filterProductOptions(searchValue);
+            nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
+        } else {
+            // Hide dropdown when input is empty
+            nameFilterDropdown.style.display = 'none';
+            nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+        }
+    });
+    
+    // Click outside to close
+    document.addEventListener('click', (e) => {
+        if (!nameFilterInput.contains(e.target) && !nameFilterDropdown.contains(e.target)) {
+            nameFilterDropdown.style.display = 'none';
+            nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+        }
+    });
+}
+
+addProductOption(product, isSelected, isSelectedNotMatching) {
+    const nameFilterDropdown = document.getElementById('nameFilterDropdown');
+    const nameFilterInput = document.getElementById('nameFilterInput');
+    
+    const option = document.createElement('div');
+    option.className = 'filter-option';
+    option.dataset.value = product;
+    
+    // Render with a checkbox for multi-select
+    const id = `product-opt-${Math.random().toString(36).slice(2)}`;
+    option.innerHTML = `
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="${id}" ${isSelected ? 'checked' : ''}>
+            <span style="${isSelectedNotMatching ? 'opacity: 0.7; font-style: italic; color: #666;' : ''}">${product}</span>
+            ${isSelectedNotMatching ? '<span style="font-size: 12px; color: #999; margin-left: auto;">(selected)</span>' : ''}
+        </label>
+    `;
+    
+    // Add click event for checkbox
+    const cb = option.querySelector('input[type="checkbox"]');
+    cb.addEventListener('change', (e) => {
+        if (cb.checked) this.state.selectedProducts.add(product); 
+        else this.state.selectedProducts.delete(product);
+        
+        // Update input text only if not currently typing
+        if (nameFilterInput !== document.activeElement) {
+            const count = this.state.selectedProducts.size;
+            nameFilterInput.value = count === 0 ? '' : `${count} selected`;
+        }
+        this.state.currentPage = 1;
+        this.filterData();
+    });
+    
+    nameFilterDropdown.appendChild(option);
+}
+
+filterProductOptions(searchTerm) {
+    const nameFilterDropdown = document.getElementById('nameFilterDropdown');
+    const nameFilterInput = document.getElementById('nameFilterInput');
+    
+    // Clear existing options and add "All Products" (clears selection)
+    nameFilterDropdown.innerHTML = '<div class="filter-option" data-value="">All Products</div>';
+    
+    // Add click event for "All Products" option
+    const allProductsOption = nameFilterDropdown.querySelector('.filter-option');
+    allProductsOption.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        this.state.selectedProducts.clear();
+        // Only clear input if not currently typing
+        if (nameFilterInput !== document.activeElement) {
+            nameFilterInput.value = '';
+        }
+        nameFilterDropdown.style.display = 'none';
+        this.state.currentPage = 1;
+        this.filterData();
+    });
+    
+    // Get all unique products
+    const allProducts = this.getUniqueProducts();
+    
+    // If no search term, show all products with selected ones at top
+    if (!searchTerm || searchTerm.trim() === '') {
+        const selectedProducts = Array.from(this.state.selectedProducts);
+        const otherProducts = allProducts.filter(product => !this.state.selectedProducts.has(product));
+        const orderedProducts = [...selectedProducts, ...otherProducts];
+        
+        orderedProducts.forEach(product => {
+            this.addProductOption(product, this.state.selectedProducts.has(product), false);
+        });
+        return;
+    }
+    
+    // Filter products based on search term
+    const filteredProducts = allProducts.filter(product => 
+        product.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    // Always show selected products at the top, even if they don't match search
+    const selectedProducts = Array.from(this.state.selectedProducts);
+    const selectedInSearch = selectedProducts.filter(product => 
+        product.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    const selectedNotInSearch = selectedProducts.filter(product => 
+        !product.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    // Combine: selected products (matching search) + other matching products + selected products (not matching search)
+    const orderedProducts = [
+        ...selectedInSearch,
+        ...filteredProducts.filter(product => !this.state.selectedProducts.has(product)),
+        ...selectedNotInSearch
+    ];
+    
+    // Add separator if we have both matching and non-matching selected products
+    const hasMatchingSelected = selectedInSearch.length > 0;
+    const hasNonMatchingSelected = selectedNotInSearch.length > 0;
+    const hasOtherMatching = filteredProducts.filter(product => !this.state.selectedProducts.has(product)).length > 0;
+    
+    orderedProducts.forEach(product => {
+        const isSelected = this.state.selectedProducts.has(product);
+        const isSelectedNotMatching = isSelected && !product.toLowerCase().includes(searchTerm.toLowerCase());
+        this.addProductOption(product, isSelected, isSelectedNotMatching);
+    });
+    
+    // Show "No results" if no matches
+    if (filteredProducts.length === 0 && searchTerm) {
+        const noResults = document.createElement('div');
+        noResults.className = 'filter-option';
+        noResults.textContent = 'No matching products found';
+        noResults.style.color = 'var(--text-muted)';
+        noResults.style.cursor = 'default';
+        nameFilterDropdown.appendChild(noResults);
+    }
+}
+
+getUniqueProducts() {
+    const products = new Set();
+    this.state.businessData.forEach(row => {
+        if (row.productTitle) products.add(row.productTitle);
+        if (row.sku) products.add(row.sku);
+        if (row.parentAsin) products.add(row.parentAsin);
+    });
+    return Array.from(products);
+}
+
+initializeProductFilter() {
+    // Initialize the product filter dropdown with all available products
+    this.filterProductOptions('');
 }
 
 filterData() {
-    if (!this.state.searchTerm) {
+    if (this.state.selectedProducts.size === 0) {
         this.state.filteredData = [...this.state.businessData];
     } else {
         this.state.filteredData = this.state.businessData.filter(row => 
-            row.sku.toLowerCase().includes(this.state.searchTerm) ||
-            row.parentAsin.toLowerCase().includes(this.state.searchTerm) ||
-            row.productTitle.toLowerCase().includes(this.state.searchTerm)
+            this.state.selectedProducts.has(row.productTitle) ||
+            this.state.selectedProducts.has(row.sku) ||
+            this.state.selectedProducts.has(row.parentAsin)
         );
     }
     this.renderTable();
     this.updateResultsCount();
+    
+    // Update chart with filtered data
+    this.updateChart();
 }
 
 handleSort(column) {
@@ -2349,6 +2532,22 @@ async updateChart(period = 'daily') {
         return;
     }
     
+    // If no business data at all, show empty chart
+    if (this.state.businessData.length === 0) {
+        this.chart.data.labels = [];
+        this.chart.data.datasets = [];
+        this.chart.update();
+        return;
+    }
+    
+    // If products are selected but no filtered data, show empty chart
+    if (this.state.selectedProducts.size > 0 && this.state.filteredData.length === 0) {
+        this.chart.data.labels = [];
+        this.chart.data.datasets = [];
+        this.chart.update();
+        return;
+    }
+    
     // Ensure monthly uses ALL data (ignore date filter)
     if (period === 'monthly') {
         if (!this.chartAllData && !this.loadingAllChartData) {
@@ -2385,9 +2584,14 @@ generateChartData(period) {
         return { labels: [], datasets: [] };
     }
     
-    // Source rows: for monthly use lifetime cache, otherwise current filtered data
-    const sourceRows = (period === 'monthly' && Array.isArray(this.chartAllData) && this.chartAllData.length)
-        ? this.chartAllData
+    // If products are selected but no filtered data, return empty chart
+    if (this.state.selectedProducts.size > 0 && this.state.filteredData.length === 0) {
+        return { labels: [], datasets: [] };
+    }
+    
+    // Use filtered data only if products are selected, otherwise use all business data
+    const sourceRows = this.state.selectedProducts.size > 0 
+        ? this.state.filteredData 
         : this.state.businessData;
     
     // Group data by date

@@ -94,27 +94,41 @@
                             <h2>Business Performance Overview</h2>
                             <p>Key business metrics and performance indicators at a glance</p>
                         </div>
-                        <div class="dashboard-date-picker">
-                            <div class="date-filter" id="dateFilter">
-                                <span class="material-icons">calendar_today</span>
-                                <span id="dateRangeDisplay">—</span>
-                                <button class="preset-toggle" id="presetToggle" title="Quick ranges">Filter ▾</button>
-                                <div class="preset-dropdown" id="presetDropdown" style="display:none">
-                                    <button data-preset="yesterday">Yesterday</button>
-                                    <button data-preset="last7">Last 7 days</button>
-                                    <button data-preset="thisWeek">This week (Mon–Sun)</button>
-                                    <button data-preset="lastWeek">Last week (Mon–Sun)</button>
-                                    <button data-preset="last30">Last 30 days</button>
-                                    <button data-preset="thisMonth">This month</button>
-                                    <button data-preset="lastMonth">Last month</button>
-                                    <button data-preset="ytd">Year to date</button>
-                                    <button data-preset="lifetime">Lifetime</button>
-                                </div>
-                                <div class="date-picker-dropdown" id="datePickerDropdown">
-                                    <!-- Calendar content will be populated by JavaScript -->
+                        <div class="dashboard-controls">
+                            <!-- Product Filter (Multi-select) - moved to left side -->
+                            <div class="product-filter">
+                                <div class="name-filter">
+                                    <span class="material-icons">filter_list</span>
+                                    <div class="searchable-dropdown">
+                                        <input type="text" id="nameFilterInput" class="filter-input" placeholder="Search products..." autocomplete="off">
+                                        <div class="filter-dropdown" id="nameFilterDropdown" style="display: none;">
+                                            <div class="filter-option" data-value="">All Products</div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             
+                            <div class="dashboard-date-picker">
+                                <div class="date-filter" id="dateFilter">
+                                    <span class="material-icons">calendar_today</span>
+                                    <span id="dateRangeDisplay">—</span>
+                                    <button class="preset-toggle" id="presetToggle" title="Quick ranges">Filter ▾</button>
+                                    <div class="preset-dropdown" id="presetDropdown" style="display:none">
+                                        <button data-preset="yesterday">Yesterday</button>
+                                        <button data-preset="last7">Last 7 days</button>
+                                        <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                        <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                        <button data-preset="last30">Last 30 days</button>
+                                        <button data-preset="thisMonth">This month</button>
+                                        <button data-preset="lastMonth">Last month</button>
+                                        <button data-preset="ytd">Year to date</button>
+                                        <button data-preset="lifetime">Lifetime</button>
+                                    </div>
+                                    <div class="date-picker-dropdown" id="datePickerDropdown">
+                                        <!-- Calendar content will be populated by JavaScript -->
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -257,14 +271,6 @@
                             </div>
                         </div>
 
-                        <!-- Search and Filters -->
-                        <div class="table-controls">
-                            <div class="search-container">
-                                <span class="material-icons">search</span>
-                                <input type="text" id="searchInput" placeholder="Search products...">
-                            </div>
-                            <!-- Removed unused SKU/ASIN filters -->
-                        </div>
 
                         <!-- Results Count and Pagination -->
                         <div class="table-controls">
