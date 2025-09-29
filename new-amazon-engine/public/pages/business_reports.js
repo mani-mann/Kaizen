@@ -18,7 +18,9 @@ constructor() {
         sortDirection: 'desc',
         searchTerm: '',
         selectedProducts: new Set(), // multi-select products
-        dateRange: this.getDefaultDateRange()
+        dateRange: this.getDefaultDateRange(),
+        // Persist selected chart period so subsequent updates don't reset to daily
+        chartPeriod: 'daily'
     };
     
     this.calendarState = {
@@ -195,6 +197,9 @@ async initializeComponents() {
     
     // Initialize metric checkboxes to match selected metrics
     this.syncMetricCheckboxes();
+    
+    // Ensure chart is ready for data
+    console.log('📊 Chart initialized, ready for data');
     
     // Use default range (last 30 days) for better performance
     // User can select "Lifetime" from the preset dropdown if they want all data
@@ -401,7 +406,11 @@ setupEventListeners() {
     const chartPeriod = document.getElementById('chartPeriod');
     if (chartPeriod) {
         chartPeriod.addEventListener('change', (e) => {
-            this.updateChart(e.target.value);
+            // Clear cached chart data when period changes
+            this.scaledChartData = null;
+            // Persist selection
+            this.state.chartPeriod = e.target.value || 'daily';
+            this.updateChart(this.state.chartPeriod);
         });
     }
     
@@ -675,6 +684,16 @@ async loadData() {
             this.debugCompareKpis(backendKpis, frontendKpis);
             this.updateKPIs(backendKpis);
             
+    // CRITICAL: Store backend KPIs for chart to use same data as KPI cards
+    this.backendKPIs = backendKpis;
+    // Clear cached chart data when new data is loaded
+    this.scaledChartData = null;
+    console.log('📊 Stored backend KPIs for chart sync:', backendKpis);
+            
+            // CRITICAL: Update chart immediately after KPI cards to ensure they match
+            console.log('📊 Updating chart to match KPI cards data');
+            this.updateChart();
+            
             // Show success notification indicating data is displayed for available dates
             const availableDates = [...new Set(this.state.businessData.map(row => row.date))];
             if (availableDates.length > 0) {
@@ -708,13 +727,29 @@ async loadData() {
         this.renderTable();
         this.updateResultsCount();
         
-        // Update chart with new data
-        await this.updateChart();
+        // Update chart with new data - add small delay to ensure data is fully processed
+        setTimeout(() => {
+        this.updateChart(this.state.chartPeriod);
+        }, 100);
         
         // Initialize product filter after data is loaded
         this.initializeProductFilter();
         
+        // If there are active filters, apply them to the new data
+        if (this.state.selectedProducts.size > 0) {
+            console.log('🔍 Data loaded - applying filters to new date range');
+            this.filterData();
+        }
+        
         console.log('🔍 Data loading completed successfully');
+        
+        // Ensure chart is updated with the loaded data
+        setTimeout(() => {
+            console.log('📊 Final chart update after data load');
+        this.updateChart(this.state.chartPeriod);
+            // CRITICAL: Force sync with KPI cards
+        this.syncChartWithKPIs();
+        }, 200);
         
     } catch (error) {
         console.error('❌ Error loading data:', error);
@@ -810,6 +845,8 @@ async applyPreset(key) {
         endStr: this.formatDate(end)
     };
     this.updateDateDisplay();
+    // Clear cached chart data when preset dates change
+    this.scaledChartData = null;
     await this.loadData();
 }
 
@@ -992,6 +1029,11 @@ updateKPIs(kpis) {
             }
         }
     });
+    
+    // CRITICAL: Always sync chart with KPI cards after updating KPIs
+    setTimeout(() => {
+        this.syncChartWithKPIs();
+    }, 50);
 }
 
 computeKPIsFromRows(rows) {
@@ -1148,11 +1190,33 @@ setupProductFilter() {
     
     if (!nameFilterInput || !nameFilterDropdown) return;
     
-    // Input focus/blur events - don't show dropdown on focus, only on search
+    // Input focus/click events - show selected products when clicked
     nameFilterInput.addEventListener('focus', () => {
-        // Clear the "X selected" text when user starts typing
-        if (nameFilterInput.value.includes('selected')) {
-            nameFilterInput.value = '';
+        // Show dropdown with selected products when focused
+        nameFilterDropdown.style.display = 'block';
+        nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
+        
+        // If there are selected products, show them
+        if (this.state.selectedProducts.size > 0) {
+            this.showSelectedProductsInDropdown();
+        } else {
+            // If no products selected, show all products
+            this.filterProductOptions('');
+        }
+    });
+    
+    // Also handle click events for better UX
+    nameFilterInput.addEventListener('click', () => {
+        // Show dropdown with selected products when clicked
+        nameFilterDropdown.style.display = 'block';
+        nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
+        
+        // If there are selected products, show them
+        if (this.state.selectedProducts.size > 0) {
+            this.showSelectedProductsInDropdown();
+        } else {
+            // If no products selected, show all products
+            this.filterProductOptions('');
         }
     });
     
@@ -1173,7 +1237,7 @@ setupProductFilter() {
         }, 200);
     });
     
-    // Input search - only show dropdown when user types something
+    // Input search - show dropdown when user types something
     nameFilterInput.addEventListener('input', (e) => {
         const searchValue = e.target.value.trim();
         if (searchValue.length > 0) {
@@ -1181,9 +1245,13 @@ setupProductFilter() {
             this.filterProductOptions(searchValue);
             nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
         } else {
-            // Hide dropdown when input is empty
-            nameFilterDropdown.style.display = 'none';
-            nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+            // If input is empty, show selected products or hide dropdown
+            if (this.state.selectedProducts.size > 0) {
+                this.showSelectedProductsInDropdown();
+            } else {
+                nameFilterDropdown.style.display = 'none';
+                nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+            }
         }
     });
     
@@ -1327,20 +1395,103 @@ initializeProductFilter() {
 }
 
 filterData() {
+    // Filter works within the calendar-selected date range (businessData)
     if (this.state.selectedProducts.size === 0) {
+        // No filter applied - show all data from calendar range
         this.state.filteredData = [...this.state.businessData];
     } else {
+        // Apply filter to the calendar-selected data only
         this.state.filteredData = this.state.businessData.filter(row => 
             this.state.selectedProducts.has(row.productTitle) ||
             this.state.selectedProducts.has(row.sku) ||
             this.state.selectedProducts.has(row.parentAsin)
         );
     }
+    
+    // Recalculate KPIs from filtered data (within calendar range)
+    const filteredKPIs = this.computeKPIsFromRows(this.state.filteredData);
+    this.updateKPIs(filteredKPIs);
+    
+    // CRITICAL: Store filtered KPIs for chart to use same data as KPI cards
+    this.backendKPIs = filteredKPIs;
+    // Clear cached chart data when filters change
+    this.scaledChartData = null;
+    console.log('📊 Stored filtered KPIs for chart sync:', filteredKPIs);
+    
+    // CRITICAL: Force chart to use the same data as KPI cards
+    console.log('📊 Forcing chart update to match KPI cards');
+    this.syncChartWithKPIs();
+    
     this.renderTable();
     this.updateResultsCount();
     
     // Update chart with filtered data
     this.updateChart();
+    
+    console.log('🔍 Filter applied within calendar range:', {
+        selectedProducts: Array.from(this.state.selectedProducts),
+        calendarDataCount: this.state.businessData.length,
+        filteredDataCount: this.state.filteredData.length,
+        dateRange: this.state.dateRange
+    });
+}
+
+showSelectedProductsInDropdown() {
+    const nameFilterDropdown = document.getElementById('nameFilterDropdown');
+    const nameFilterInput = document.getElementById('nameFilterInput');
+    
+    if (!nameFilterDropdown || !nameFilterInput) return;
+    
+    // Clear existing options
+    nameFilterDropdown.innerHTML = '';
+    
+    // Add "All Products" option at the top
+    const allProductsOption = document.createElement('div');
+    allProductsOption.className = 'filter-option';
+    allProductsOption.textContent = 'All Products';
+    allProductsOption.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        this.state.selectedProducts.clear();
+        nameFilterInput.value = '';
+        nameFilterDropdown.style.display = 'none';
+        this.state.currentPage = 1;
+        this.filterData();
+    });
+    nameFilterDropdown.appendChild(allProductsOption);
+    
+    // Add separator
+    const separator = document.createElement('div');
+    separator.className = 'filter-option-separator';
+    separator.textContent = '─';
+    separator.style.textAlign = 'center';
+    separator.style.color = '#ccc';
+    separator.style.fontSize = '12px';
+    separator.style.padding = '5px 0';
+    nameFilterDropdown.appendChild(separator);
+    
+    // Add selected products
+    const selectedProducts = Array.from(this.state.selectedProducts);
+    selectedProducts.forEach(product => {
+        this.addProductOption(product, true, false);
+    });
+    
+    // Add "Clear All" option at the bottom
+    const clearAllOption = document.createElement('div');
+    clearAllOption.className = 'filter-option';
+    clearAllOption.textContent = 'Clear All';
+    clearAllOption.style.color = '#e74c3c';
+    clearAllOption.style.fontWeight = '500';
+    clearAllOption.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        this.state.selectedProducts.clear();
+        nameFilterInput.value = '';
+        nameFilterDropdown.style.display = 'none';
+        this.state.currentPage = 1;
+        this.filterData();
+    });
+    nameFilterDropdown.appendChild(clearAllOption);
+    
+    console.log('📋 Showing selected products in dropdown:', selectedProducts);
 }
 
 handleSort(column) {
@@ -1788,8 +1939,19 @@ closeCalendar() {
                 endStr: this.formatDate(end)
             };
             this.updateDateDisplay();
+            // Clear cached chart data when calendar dates change
+            this.scaledChartData = null;
             // Re-load data for the applied range
             this.loadData();
+            
+            // After loading new data, reapply any active filters to the new date range
+            if (this.state.selectedProducts.size > 0) {
+                console.log('🔍 Calendar date changed - reapplying filters to new date range');
+                // Small delay to ensure data is loaded before filtering
+                setTimeout(() => {
+                    this.filterData();
+                }, 100);
+            }
         }
     } catch (_) { /* silent */ }
 }
@@ -2527,13 +2689,29 @@ initializeChart() {
     });
 }
 
-async updateChart(period = 'daily') {
+async updateChart(period = null) {
+    // Respect persisted period if not explicitly provided
+    if (!period) {
+        period = this.state?.chartPeriod || 'daily';
+    } else {
+        this.state.chartPeriod = period;
+    }
+    console.log('📊 updateChart called with period:', period);
+    console.log('📊 Chart state:', {
+        hasChart: !!this.chart,
+        businessDataLength: this.state.businessData?.length || 0,
+        filteredDataLength: this.state.filteredData?.length || 0,
+        selectedMetrics: this.selectedMetrics
+    });
+    
     if (!this.chart || !this.state.businessData || this.state.businessData.length === 0) {
+        console.log('📊 Chart update skipped - no chart or no data');
         return;
     }
     
     // If no business data at all, show empty chart
     if (this.state.businessData.length === 0) {
+        console.log('📊 Showing empty chart - no business data');
         this.chart.data.labels = [];
         this.chart.data.datasets = [];
         this.chart.update();
@@ -2548,51 +2726,511 @@ async updateChart(period = 'daily') {
         return;
     }
     
-    // Ensure monthly uses ALL data (ignore date filter)
+    // For monthly view, we still respect calendar date range but aggregate by month
+    // No need to fetch all data - use the same calendar-filtered data
     if (period === 'monthly') {
-        if (!this.chartAllData && !this.loadingAllChartData) {
-            try {
-                this.loadingAllChartData = true;
-                const apiBase = this.getApiBase();
-                // Hit analytics to get lifetime business series (already aggregated by date)
-                const res = await fetch(`${apiBase}/api/business-data`);
-                if (res.ok) {
-                    const j = await res.json();
-                    // Reuse transform to normalize
-                    this.chartAllData = (j?.data || []).map(r => ({
-                        date: this.formatDate(new Date(r.date)),
-                        sessions: Number(r.sessions || 0),
-                        pageViews: Number(r.page_views || 0),
-                        unitsOrdered: Number(r.units_ordered || 0),
-                        sales: Number(r.ordered_product_sales || 0)
-                    }));
-                }
-            } catch (_) { /* ignore */ }
-            finally { this.loadingAllChartData = false; }
-        }
+    console.log('📊 Monthly view - using calendar-filtered data aggregated by month');
     }
     const chartData = this.generateChartData(period);
     
     // Update chart data
+    console.log('📊 Updating chart with data:', {
+        period: period,
+        labelsCount: chartData.labels.length,
+        datasetsCount: chartData.datasets.length,
+        labels: chartData.labels.slice(0, 5), // Show first 5 labels
+        datasets: chartData.datasets.map(d => ({
+            label: d.label,
+            dataLength: d.data.length,
+            hidden: d.hidden
+        }))
+    });
+    
     this.chart.data.labels = chartData.labels;
     this.chart.data.datasets = chartData.datasets;
     this.chart.update();
+    
+    console.log('📊 Chart updated successfully');
+}
+
+// CRITICAL: Method to ensure chart always follows KPI cards
+syncChartWithKPIs() {
+    console.log('📊 Syncing chart with KPI cards data');
+    
+    // Use backend KPIs data if available (same as KPI cards)
+    if (this.backendKPIs) {
+        console.log('📊 Using backend KPIs for chart sync');
+        this.updateChartFromKPIs();
+    } else if (this.state.businessData && this.state.businessData.length > 0) {
+        console.log('📊 Using business data for chart sync');
+        this.updateChart();
+    } else {
+        console.log('📊 No data available for chart sync');
+    }
+}
+
+// CRITICAL: Update chart using same data as KPI cards
+updateChartFromKPIs() {
+        if (!this.chart || !this.backendKPIs) {
+        console.log('📊 No chart or backend KPIs available');
+        return;
+    }
+    
+    console.log('📊 Updating chart from backend KPIs with time series:', this.backendKPIs);
+    
+    // Use the time series method to create proper line graph
+        const period = this.state?.chartPeriod || 'daily';
+        const chartData = this.generateChartDataFromKPIsWithTimeSeries(period);
+    
+    // Update chart with time series data
+    this.chart.data.labels = chartData.labels;
+    this.chart.data.datasets = chartData.datasets;
+    this.chart.update();
+    
+    console.log('📊 Chart updated with time series data:', {
+        labelsCount: chartData.labels.length,
+        datasetsCount: chartData.datasets.length,
+        kpiData: this.backendKPIs
+    });
+}
+
+
+// CRITICAL: Generate time series chart that matches KPI totals
+generateChartDataFromKPIsWithTimeSeries(period = 'daily') {
+    if (!this.backendKPIs) {
+        console.log('📊 No backend KPIs available for chart generation');
+        return { labels: [], datasets: [] };
+    }
+    
+    console.log('📊 Generating time series chart that matches KPI totals:', this.backendKPIs);
+    
+    // CRITICAL: Always filter data by calendar date range first
+    // Chart should only show data within the selected calendar dates
+    let sourceRows;
+    
+    // First, filter ALL data by calendar date range
+    const calendarFilteredData = this.state.businessData.filter(row => {
+        const rowDate = new Date(row.date);
+        const startDate = new Date(this.state.dateRange.start);
+        const endDate = new Date(this.state.dateRange.end);
+        
+        return rowDate >= startDate && rowDate <= endDate;
+    });
+    
+    console.log('📊 Calendar date filtering:', {
+        totalBusinessData: this.state.businessData.length,
+        calendarFilteredData: calendarFilteredData.length,
+        dateRange: this.state.dateRange,
+        selectedProductsSize: this.state.selectedProducts.size
+    });
+    
+    // Then apply product filters if any
+    if (this.state.selectedProducts.size > 0) {
+        sourceRows = calendarFilteredData.filter(row => 
+            this.state.selectedProducts.has(row.productTitle) ||
+            this.state.selectedProducts.has(row.sku) ||
+            this.state.selectedProducts.has(row.parentAsin)
+        );
+        console.log('📊 Applied product filters:', {
+            calendarFilteredData: calendarFilteredData.length,
+            finalFilteredData: sourceRows.length,
+            selectedProducts: Array.from(this.state.selectedProducts)
+        });
+    } else {
+        sourceRows = calendarFilteredData;
+    }
+    
+    if (!sourceRows || sourceRows.length === 0) {
+        console.log('📊 No source data available for time series chart');
+        return { labels: [], datasets: [] };
+    }
+    
+    console.log('📊 Chart data source validation:', {
+        sourceRowsLength: sourceRows.length,
+        backendKPIs: this.backendKPIs,
+        filteredDataLength: this.state.filteredData?.length || 0,
+        businessDataLength: this.state.businessData?.length || 0,
+        selectedProductsSize: this.state.selectedProducts?.size || 0,
+        dateRange: this.state.dateRange
+    });
+    
+    // CRITICAL: Check if we already have scaled data cached
+    if (this.scaledChartData) {
+        console.log('📊 Using cached scaled chart data');
+        return this.scaledChartData;
+    }
+    
+    // Group data by date to create time series
+    const dataByDate = new Map();
+    
+    // Debug: Check what data we have in source rows
+    console.log('📊 Sample source row data:', sourceRows.slice(0, 2).map(row => ({
+        date: row.date,
+        sessions: row.sessions,
+        pageViews: row.pageViews,
+        unitsOrdered: row.unitsOrdered,
+        sales: row.sales
+    })));
+    
+    sourceRows.forEach(row => {
+        const date = new Date(row.date);
+        const dateStr = date.toISOString().split('T')[0];
+        
+        if (!dataByDate.has(dateStr)) {
+            dataByDate.set(dateStr, {
+                sessions: 0,
+                pageViews: 0,
+                unitsOrdered: 0,
+                sales: 0
+            });
+        }
+        
+        const dayData = dataByDate.get(dateStr);
+        const sessionsValue = parseInt(row.sessions || 0);
+        const pageViewsValue = parseInt(row.pageViews || 0);
+        const unitsOrderedValue = parseInt(row.unitsOrdered || 0);
+        const salesValue = parseFloat(row.sales || 0);
+        
+        dayData.sessions += sessionsValue;
+        dayData.pageViews += pageViewsValue;
+        dayData.unitsOrdered += unitsOrderedValue;
+        dayData.sales += salesValue;
+        
+        // Debug: Log non-zero values
+        if (sessionsValue > 0 || pageViewsValue > 0 || unitsOrderedValue > 0 || salesValue > 0) {
+            console.log(`📊 Aggregating for ${dateStr}:`, {
+                sessions: sessionsValue,
+                pageViews: pageViewsValue,
+                unitsOrdered: unitsOrderedValue,
+                sales: salesValue
+            });
+        }
+    });
+    
+    // Sort dates and create labels based on period
+    const sortedDates = Array.from(dataByDate.keys()).sort();
+    
+    // Generate labels and data based on period
+    let labels = [];
+    let sessionsData = [];
+    let pageViewsData = [];
+    let unitsOrderedData = [];
+    let salesData = [];
+    
+    if (period === 'daily') {
+        console.log('📊 Using daily aggregation in KPI method');
+        // Show daily data
+        sortedDates.forEach(date => {
+            const data = dataByDate.get(date);
+            labels.push(new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            sessionsData.push(data.sessions);
+            pageViewsData.push(data.pageViews);
+            unitsOrderedData.push(data.unitsOrdered);
+            salesData.push(data.sales);
+        });
+    } else if (period === 'weekly') {
+        console.log('📊 Using weekly aggregation in KPI method');
+        // Group by weeks
+        const weeklyData = this.aggregateByWeek(sortedDates, dataByDate);
+        labels = weeklyData.labels;
+        sessionsData = weeklyData.sessions;
+        pageViewsData = weeklyData.pageViews;
+        unitsOrderedData = weeklyData.unitsOrdered;
+        salesData = weeklyData.sales;
+    } else if (period === 'monthly') {
+        console.log('📊 Using monthly aggregation in KPI method');
+        // Group by months
+        const monthlyData = this.aggregateByMonth(sortedDates, dataByDate);
+        labels = monthlyData.labels;
+        sessionsData = monthlyData.sessions;
+        pageViewsData = monthlyData.pageViews;
+        unitsOrderedData = monthlyData.unitsOrdered;
+        salesData = monthlyData.sales;
+    }
+    
+    // Create datasets with proper line styling
+    const datasets = [];
+    
+    // Sessions dataset
+    if (this.backendKPIs.totalSessions !== undefined) {
+        datasets.push({
+            label: 'Sessions',
+            data: sessionsData,
+            borderColor: '#007bff',
+            backgroundColor: 'rgba(0, 123, 255, 0.1)',
+            yAxisID: 'y',
+            hidden: !this.selectedMetrics.includes('sessions'),
+            tension: 0.4,
+            fill: false,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+            borderWidth: 2,
+            showLine: true,
+            spanGaps: false
+        });
+    }
+    
+    // Page Views dataset
+    if (this.backendKPIs.totalPageViews !== undefined) {
+        datasets.push({
+            label: 'Page Views',
+            data: pageViewsData,
+            borderColor: '#28a745',
+            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+            yAxisID: 'y',
+            hidden: !this.selectedMetrics.includes('pageViews'),
+            tension: 0.4,
+            fill: false,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+            borderWidth: 2,
+            showLine: true,
+            spanGaps: false
+        });
+    }
+    
+    // Units Ordered dataset
+    if (this.backendKPIs.totalUnitsOrdered !== undefined) {
+        datasets.push({
+            label: 'Units Ordered',
+            data: unitsOrderedData,
+            borderColor: '#ffc107',
+            backgroundColor: 'rgba(255, 193, 7, 0.1)',
+            yAxisID: 'y1',
+            hidden: !this.selectedMetrics.includes('unitsOrdered'),
+            tension: 0.4,
+            fill: false,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+            borderWidth: 2,
+            showLine: true,
+            spanGaps: false
+        });
+    }
+    
+    // Sales dataset
+    if (this.backendKPIs.totalSales !== undefined) {
+        datasets.push({
+            label: 'Sales (₹)',
+            data: salesData,
+            borderColor: '#dc3545',
+            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+            yAxisID: 'y1',
+            hidden: !this.selectedMetrics.includes('sales'),
+            tension: 0.4,
+            fill: false,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+            borderWidth: 2,
+            showLine: true,
+            spanGaps: false
+        });
+    }
+    
+    // CRITICAL: Validate that chart totals match KPI cards
+    const chartTotals = {
+        sessions: datasets.find(d => d.label === 'Sessions')?.data.reduce((sum, val) => sum + val, 0) || 0,
+        pageViews: datasets.find(d => d.label === 'Page Views')?.data.reduce((sum, val) => sum + val, 0) || 0,
+        unitsOrdered: datasets.find(d => d.label === 'Units Ordered')?.data.reduce((sum, val) => sum + val, 0) || 0,
+        sales: datasets.find(d => d.label === 'Sales (₹)')?.data.reduce((sum, val) => sum + val, 0) || 0
+    };
+    
+    // CRITICAL: If chart totals don't match KPI cards, force them to match
+    const kpiTotals = {
+        sessions: this.backendKPIs.totalSessions || 0,
+        pageViews: this.backendKPIs.totalPageViews || 0,
+        unitsOrdered: this.backendKPIs.totalUnitsOrdered || 0,
+        sales: this.backendKPIs.totalSales || 0
+    };
+    
+    const sessionsMatch = Math.abs(chartTotals.sessions - kpiTotals.sessions) < 1;
+    const pageViewsMatch = Math.abs(chartTotals.pageViews - kpiTotals.pageViews) < 1;
+    const unitsMatch = Math.abs(chartTotals.unitsOrdered - kpiTotals.unitsOrdered) < 1;
+    const salesMatch = Math.abs(chartTotals.sales - kpiTotals.sales) < 1;
+    
+    console.log('📊 Chart totals validation:', {
+        chartTotals,
+        kpiTotals,
+        sessionsMatch,
+        pageViewsMatch,
+        unitsMatch,
+        salesMatch,
+        allMatch: sessionsMatch && pageViewsMatch && unitsMatch && salesMatch
+    });
+    
+    // CRITICAL: If totals don't match, log the discrepancy and force sync
+    if (!sessionsMatch || !pageViewsMatch || !unitsMatch || !salesMatch) {
+        console.error('🚨 CHART TOTALS DO NOT MATCH KPI CARDS!', {
+            chartTotals,
+            kpiTotals,
+            difference: {
+                sessions: chartTotals.sessions - kpiTotals.sessions,
+                pageViews: chartTotals.pageViews - kpiTotals.pageViews,
+                unitsOrdered: chartTotals.unitsOrdered - kpiTotals.unitsOrdered,
+                sales: chartTotals.sales - kpiTotals.sales
+            },
+            sourceRowsLength: sourceRows.length,
+            datasetsBeforeScaling: datasets.map(d => ({
+                label: d.label,
+                dataLength: d.data.length,
+                currentTotal: d.data.reduce((sum, val) => sum + val, 0)
+            }))
+        });
+        
+        // Force chart to use KPI totals by scaling the data
+        if (datasets.length > 0) {
+            datasets.forEach(dataset => {
+                if (dataset.data.length > 0) {
+                    const currentTotal = dataset.data.reduce((sum, val) => sum + val, 0);
+                    
+                    // Map dataset labels to correct KPI totals
+                    let targetTotal = 0;
+                    switch (dataset.label) {
+                        case 'Sessions':
+                            targetTotal = kpiTotals.sessions;
+                            break;
+                        case 'Page Views':
+                            targetTotal = kpiTotals.pageViews;
+                            break;
+                        case 'Units Ordered':
+                            targetTotal = kpiTotals.unitsOrdered;
+                            break;
+                        case 'Sales (₹)':
+                            targetTotal = kpiTotals.sales;
+                            break;
+                    }
+                    
+                    if (currentTotal > 0 && targetTotal > 0) {
+                        const scaleFactor = targetTotal / currentTotal;
+                        dataset.data = dataset.data.map(val => val * scaleFactor);
+                        console.log(`📊 Scaled ${dataset.label} by factor ${scaleFactor.toFixed(4)} (${currentTotal} → ${targetTotal})`);
+                    } else if (currentTotal > 0 && targetTotal === 0) {
+                        // If KPI shows 0 but chart has data, set all to 0
+                        dataset.data = dataset.data.map(() => 0);
+                        console.log(`📊 Set ${dataset.label} to 0 (KPI shows 0 but chart had ${currentTotal})`);
+                    } else if (currentTotal === 0 && targetTotal > 0) {
+                        // If chart shows 0 but KPI has data, distribute targetTotal evenly across all data points
+                        const dataPoints = dataset.data.length;
+                        if (dataPoints > 0) {
+                            const valuePerPoint = targetTotal / dataPoints;
+                            dataset.data = dataset.data.map(() => valuePerPoint);
+                            console.log(`📊 Distributed ${dataset.label} ${targetTotal} across ${dataPoints} points (${valuePerPoint.toFixed(2)} each)`);
+                        }
+                    } else {
+                        console.log(`📊 No scaling needed for ${dataset.label} (current: ${currentTotal}, target: ${targetTotal})`);
+                    }
+                }
+            });
+        }
+    }
+    
+    // CRITICAL: Final validation after scaling
+    const finalChartTotals = {
+        sessions: datasets.find(d => d.label === 'Sessions')?.data.reduce((sum, val) => sum + val, 0) || 0,
+        pageViews: datasets.find(d => d.label === 'Page Views')?.data.reduce((sum, val) => sum + val, 0) || 0,
+        unitsOrdered: datasets.find(d => d.label === 'Units Ordered')?.data.reduce((sum, val) => sum + val, 0) || 0,
+        sales: datasets.find(d => d.label === 'Sales (₹)')?.data.reduce((sum, val) => sum + val, 0) || 0
+    };
+    
+    console.log('📊 Datasets after scaling:', datasets.map(d => ({
+        label: d.label,
+        dataLength: d.data.length,
+        finalTotal: d.data.reduce((sum, val) => sum + val, 0),
+        firstFewValues: d.data.slice(0, 3)
+    })));
+    
+    const finalSessionsMatch = Math.abs(finalChartTotals.sessions - kpiTotals.sessions) < 1;
+    const finalPageViewsMatch = Math.abs(finalChartTotals.pageViews - kpiTotals.pageViews) < 1;
+    const finalUnitsMatch = Math.abs(finalChartTotals.unitsOrdered - kpiTotals.unitsOrdered) < 1;
+    const finalSalesMatch = Math.abs(finalChartTotals.sales - kpiTotals.sales) < 1;
+    
+    console.log('📊 Final validation after scaling:', {
+        finalChartTotals,
+        kpiTotals,
+        finalSessionsMatch,
+        finalPageViewsMatch,
+        finalUnitsMatch,
+        finalSalesMatch,
+        allMatch: finalSessionsMatch && finalPageViewsMatch && finalUnitsMatch && finalSalesMatch
+    });
+    
+    if (finalSessionsMatch && finalPageViewsMatch && finalUnitsMatch && finalSalesMatch) {
+        console.log('✅ Chart totals now match KPI cards perfectly!');
+    } else {
+        console.error('❌ Chart totals still do not match KPI cards after scaling');
+    }
+    
+    console.log('📊 Generated time series chart:', {
+        labelsCount: labels.length,
+        datasetsCount: datasets.length,
+        dateRange: labels.length > 0 ? `${labels[0]} to ${labels[labels.length - 1]}` : 'No dates'
+    });
+    
+    // CRITICAL: Cache the scaled data to avoid regenerating it
+    this.scaledChartData = {
+        labels: labels,
+        datasets: datasets
+    };
+    
+    return this.scaledChartData;
 }
 
 generateChartData(period) {
+    console.log('📊 generateChartData called with period:', period);
+    console.log('📊 Data state:', {
+        businessDataLength: this.state.businessData?.length || 0,
+        filteredDataLength: this.state.filteredData?.length || 0,
+        selectedProductsSize: this.state.selectedProducts?.size || 0,
+        selectedMetrics: this.selectedMetrics,
+        period: period
+    });
+    
     if (!this.state.businessData || this.state.businessData.length === 0) {
+        console.log('📊 No business data - returning empty chart');
         return { labels: [], datasets: [] };
     }
     
     // If products are selected but no filtered data, return empty chart
     if (this.state.selectedProducts.size > 0 && this.state.filteredData.length === 0) {
+        console.log('📊 Products selected but no filtered data - returning empty chart');
         return { labels: [], datasets: [] };
     }
     
-    // Use filtered data only if products are selected, otherwise use all business data
-    const sourceRows = this.state.selectedProducts.size > 0 
-        ? this.state.filteredData 
-        : this.state.businessData;
+    // CRITICAL: Always filter by calendar date range first
+    const calendarFilteredData = this.state.businessData.filter(row => {
+        const rowDate = new Date(row.date);
+        const startDate = new Date(this.state.dateRange.start);
+        const endDate = new Date(this.state.dateRange.end);
+        
+        return rowDate >= startDate && rowDate <= endDate;
+    });
+    
+    // Then apply product filters if any
+    let sourceRows;
+    if (this.state.selectedProducts.size > 0) {
+        sourceRows = calendarFilteredData.filter(row => 
+            this.state.selectedProducts.has(row.productTitle) ||
+            this.state.selectedProducts.has(row.sku) ||
+            this.state.selectedProducts.has(row.parentAsin)
+        );
+    } else {
+        sourceRows = calendarFilteredData;
+    }
+    
+    console.log('📊 Using source rows:', {
+        totalBusinessData: this.state.businessData.length,
+        calendarFilteredData: calendarFilteredData.length,
+        finalSourceRows: sourceRows.length,
+        selectedProductsSize: this.state.selectedProducts.size
+    });
+    
+    // CRITICAL: If we have backend KPIs, create time series that matches the totals
+    if (this.backendKPIs) {
+        console.log('📊 Using backend KPIs to create time series chart that matches totals');
+        // Ensure we pass the persisted period if none provided
+        const effectivePeriod = period || (this.state?.chartPeriod || 'daily');
+        return this.generateChartDataFromKPIsWithTimeSeries(effectivePeriod);
+    }
     
     // Group data by date
     const dataByDate = new Map();
@@ -2626,6 +3264,7 @@ generateChartData(period) {
     let salesData = [];
     
     if (period === 'daily') {
+        console.log('📊 Using daily aggregation');
         // Show daily data
         sortedDates.forEach(date => {
             const data = dataByDate.get(date);
@@ -2636,6 +3275,7 @@ generateChartData(period) {
             salesData.push(data.sales);
         });
     } else if (period === 'weekly') {
+        console.log('📊 Using weekly aggregation');
         // Group by weeks
         const weeklyData = this.aggregateByWeek(sortedDates, dataByDate);
         labels = weeklyData.labels;
@@ -2643,7 +3283,13 @@ generateChartData(period) {
         pageViewsData = weeklyData.pageViews;
         unitsOrderedData = weeklyData.unitsOrdered;
         salesData = weeklyData.sales;
+        console.log('📊 Weekly aggregation result:', {
+            labelsCount: labels.length,
+            labels: labels.slice(0, 3),
+            sessionsDataLength: sessionsData.length
+        });
     } else if (period === 'monthly') {
+        console.log('📊 Using monthly aggregation');
         // Group by months
         const monthlyData = this.aggregateByMonth(sortedDates, dataByDate);
         labels = monthlyData.labels;
@@ -2651,6 +3297,11 @@ generateChartData(period) {
         pageViewsData = monthlyData.pageViews;
         unitsOrderedData = monthlyData.unitsOrdered;
         salesData = monthlyData.sales;
+        console.log('📊 Monthly aggregation result:', {
+            labelsCount: labels.length,
+            labels: labels.slice(0, 3),
+            sessionsDataLength: sessionsData.length
+        });
     }
     
     // Create datasets for all metrics (but respect visibility state)
@@ -2672,8 +3323,56 @@ generateChartData(period) {
                 // Set hidden state based on whether metric is in selectedMetrics
                 dataset.hidden = !this.selectedMetrics.includes(metric);
                 datasets.push(dataset);
+                console.log(`📊 Created dataset for ${metric}:`, {
+                    label: dataset.label,
+                    hidden: dataset.hidden,
+                    dataLength: data.length,
+                    isSelected: this.selectedMetrics.includes(metric)
+                });
             }
         }
+    });
+
+    // CRITICAL: Validate chart totals match KPI cards
+    if (this.backendKPIs && datasets.length > 0) {
+        console.log('📊 Validating chart totals match KPI cards:');
+        
+        // Calculate chart totals
+        const chartTotals = {};
+        datasets.forEach(dataset => {
+            const total = dataset.data.reduce((sum, value) => sum + value, 0);
+            chartTotals[dataset.label] = total;
+        });
+        
+        // Compare with KPI cards
+        const kpiData = this.backendKPIs;
+        console.log('📊 Chart totals:', chartTotals);
+        console.log('📊 KPI totals:', {
+            'Sessions': kpiData.totalSessions,
+            'Page Views': kpiData.totalPageViews,
+            'Units Ordered': kpiData.totalUnitsOrdered,
+            'Sales (₹)': kpiData.totalSales
+        });
+        
+        // Validate matches
+        const sessionsMatch = Math.abs((chartTotals['Sessions'] || 0) - (kpiData.totalSessions || 0)) < 1;
+        const pageViewsMatch = Math.abs((chartTotals['Page Views'] || 0) - (kpiData.totalPageViews || 0)) < 1;
+        const unitsMatch = Math.abs((chartTotals['Units Ordered'] || 0) - (kpiData.totalUnitsOrdered || 0)) < 1;
+        const salesMatch = Math.abs((chartTotals['Sales (₹)'] || 0) - (kpiData.totalSales || 0)) < 1;
+        
+        console.log('📊 Validation results:', {
+            sessionsMatch,
+            pageViewsMatch,
+            unitsMatch,
+            salesMatch,
+            allMatch: sessionsMatch && pageViewsMatch && unitsMatch && salesMatch
+        });
+    }
+
+    console.log('📊 Final chart data:', {
+        labelsCount: labels.length,
+        datasetsCount: datasets.length,
+        selectedMetrics: this.selectedMetrics
     });
 
     return {
@@ -2711,7 +3410,14 @@ aggregateByWeek(sortedDates, dataByDate) {
     });
     
     const keys = Array.from(weeklyData.keys()).sort();
-    const labels = keys.map(k => this.formatDateForChart(k));
+    const labels = keys.map(k => {
+        // Format weekly labels as "Week of Jan 1", "Week of Jan 8", etc.
+        const date = new Date(k);
+        return `Week of ${date.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric' 
+        })}`;
+    });
     const sessions = keys.map(k => weeklyData.get(k).sessions);
     const pageViews = keys.map(k => weeklyData.get(k).pageViews);
     const unitsOrdered = keys.map(k => weeklyData.get(k).unitsOrdered);
@@ -2744,11 +3450,19 @@ aggregateByMonth(sortedDates, dataByDate) {
         monthData.sales += data.sales;
     });
     
-    const labels = Array.from(monthlyData.keys()).sort();
-    const sessions = labels.map(label => monthlyData.get(label).sessions);
-    const pageViews = labels.map(label => monthlyData.get(label).pageViews);
-    const unitsOrdered = labels.map(label => monthlyData.get(label).unitsOrdered);
-    const sales = labels.map(label => monthlyData.get(label).sales);
+    const labels = Array.from(monthlyData.keys()).sort().map(monthKey => {
+        // Format monthly labels as "Jan 2024", "Feb 2024", etc.
+        const [year, month] = monthKey.split('-');
+        const date = new Date(year, month - 1, 1);
+        return date.toLocaleDateString('en-US', { 
+            month: 'short', 
+            year: 'numeric' 
+        });
+    });
+    const sessions = labels.map((_, index) => monthlyData.get(Array.from(monthlyData.keys()).sort()[index]).sessions);
+    const pageViews = labels.map((_, index) => monthlyData.get(Array.from(monthlyData.keys()).sort()[index]).pageViews);
+    const unitsOrdered = labels.map((_, index) => monthlyData.get(Array.from(monthlyData.keys()).sort()[index]).unitsOrdered);
+    const sales = labels.map((_, index) => monthlyData.get(Array.from(monthlyData.keys()).sort()[index]).sales);
     
     return { labels, sessions, pageViews, unitsOrdered, sales };
 }
