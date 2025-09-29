@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Past Forward - Your Time Journey</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand:wght@400&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/result.css" />
+</head>
+<body>
+  <!-- Animated background particles -->
+  <div class="particles-bg"></div>
+  
+  <!-- Floating era elements -->
+  <div class="era-elements"></div>
+  
+  <div class="wrap">
+    <header class="result-header">
+      <h1>Past Forward</h1>
+      <p class="sub">Your Historical Transformation</p>
+      <div class="journey-info">
+        <span class="era-badge" id="era-display">1920s</span>
+        <span class="country-badge" id="country-display">United States</span>
+      </div>
+    </header>
+    
+    <div id="board" class="board">
+      <div class="transformation-container">
+        <!-- This will be populated by JavaScript -->
+      </div>
+    </div>
+    
+    <div class="action-panel">
+      <button id="regenerate-btn" class="btn btn-secondary">
+        <svg viewBox="0 0 24 24" width="16" height="16">
+          <path fill="currentColor" d="M4 12a8 8 0 0 1 14.93-4H17a1 1 0 1 0 0 2h4a1 1 0 0 0 1-1V5a1 1 0 1 0-2 0v1.07A10 10 0 1 0 14 22a1 1 0 1 0 0-2 8 8 0 0 1-10-8z"/>
+        </svg>
+        Try Different Era
+      </button>
+      
+      <button id="new-photo-btn" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" width="16" height="16">
+          <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+        New Adventure
+      </button>
+    </div>
+    
+    <div id="msg" class="footer">Preparing your magical journey...</div>
+    
+    <!-- Success notification -->
+    <div id="success-notification" class="success-notification">
+      <div class="success-content">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+        </svg>
+        <span>Image downloaded successfully!</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="/result.js"></script>
+</body>
+</html>
