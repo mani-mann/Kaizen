@@ -870,7 +870,8 @@ body {
     background: var(--bg-primary);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
-    overflow: hidden;
+    /* Allow dropdowns inside to overflow without being clipped */
+    overflow: visible;
     border: 1px solid var(--border-primary);
 }
 
@@ -1058,7 +1059,8 @@ body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     max-height: 300px;
     overflow-y: auto;
-    z-index: 1002;
+    /* Ensure this appears above sticky headers/toolbars */
+    z-index: 5000;
     display: none;
     margin-top: 5px;
 }
@@ -1103,13 +1105,19 @@ body {
 /* Ensure dropdown appears above pagination */
 .name-filter {
     position: relative;
-    z-index: 1000;
+    /* Above table controls and other sticky elements */
+    z-index: 1300;
 }
 
 /* Ensure dropdown appears above pagination without affecting layout */
 .name-filter.dropdown-open {
     position: relative;
-    z-index: 1001;
+    z-index: 1301;
+}
+
+/* Raise the whole controls bar above subsequent straps when dropdown is open */
+.table-controls:has(.name-filter.dropdown-open) {
+    z-index: 5001; /* higher than dropdown siblings and other sticky rows */
 }
 
 /* Hide pagination when dropdown is open */
