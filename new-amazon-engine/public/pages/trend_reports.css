@@ -18,6 +18,23 @@
     font-weight: 600;
 }
 
+/* Search-terms METRIC column positioning (Search Term + Campaign Name) */
+.data-table.category-search-terms th:nth-child(3),
+.data-table.category-search-terms td:nth-child(3) {
+    position: sticky;
+    left: 400px; /* 200 (Search Term) + 200 (Campaign Name) */
+    z-index: 8;
+    background: var(--bg-primary);
+    min-width: 140px;
+    box-shadow: 1px 0 0 0 var(--border-primary);
+}
+
+/* Ensure header cell of METRIC column has higher z-index */
+.data-table.category-search-terms thead th:nth-child(3) {
+    z-index: 10;
+    background: var(--bg-secondary);
+}
+
 /* Search-terms TOTAL column positioning (Search Term + Campaign Name + Metric) */
 .data-table.category-search-terms th.total-col {
     position: sticky; /* header sticks on vertical scroll */

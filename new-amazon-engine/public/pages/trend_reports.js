@@ -2265,6 +2265,26 @@ class TrendReports {
         this.renderTable();
     }
 
+    updateSortIcons() {
+        // Reset all sort icons
+        document.querySelectorAll('.sortable .material-icons').forEach(icon => {
+            icon.textContent = 'keyboard_arrow_down';
+            icon.style.opacity = '0.5';
+        });
+        
+        // Highlight current sort column
+        if (this.sortColumn) {
+            const currentHeader = document.querySelector(`[data-sort="${this.sortColumn}"]`);
+            if (currentHeader) {
+                const icon = currentHeader.querySelector('.material-icons');
+                if (icon) {
+                    icon.textContent = this.sortDirection === 'asc' ? 'keyboard_arrow_up' : 'keyboard_arrow_down';
+                    icon.style.opacity = '1';
+                }
+            }
+        }
+    }
+
     getGroupedTableData() {
         let categoryData = this.currentData.filter(item => item.category === this.currentCategory);
         
@@ -2588,6 +2608,21 @@ class TrendReports {
                 const bn = b.name.toLowerCase();
                 return this.sortDirection === 'asc' ? (an > bn ? 1 : -1) : (an < bn ? 1 : -1);
             }
+            
+            // Total column sorting
+            if (this.sortColumn === 'total') {
+                // Choose totals based on category preference
+                // Products: Sales totals; Campaigns/Search-terms: Ad Spend totals
+                const aTotal = (this.currentCategory === 'products')
+                    ? Number(a.__totalSales || 0)
+                    : Number(a.__totalSpend || 0);
+                const bTotal = (this.currentCategory === 'products')
+                    ? Number(b.__totalSales || 0)
+                    : Number(b.__totalSpend || 0);
+                return this.sortDirection === 'asc' ? (aTotal - bTotal) : (bTotal - aTotal);
+            }
+            
+            
             const aKey = a.__totalSales || a.__totalSpend || 0;
             const bKey = b.__totalSales || b.__totalSpend || 0;
             // Descending by default so non-zero first
@@ -2598,17 +2633,15 @@ class TrendReports {
             return a.name.localeCompare(b.name);
         });
 
-        // For search-terms, ensure DAILY TOTAL appears at the top (same as campaigns)
-        if (this.currentCategory === 'search-terms') {
+        // Ensure DAILY TOTAL rows always stay on top for all categories
+        {
             const isTotalName = (nm) => {
                 const s = String(nm || '');
                 return s.includes('📊') || s.toLowerCase().includes('daily total');
             };
             const totalsFirst = [];
             const others = [];
-            sortedData.forEach(g => {
-                if (isTotalName(g.name)) totalsFirst.push(g); else others.push(g);
-            });
+            sortedData.forEach(g => { (isTotalName(g.name) ? totalsFirst : others).push(g); });
             sortedData = [...totalsFirst, ...others];
         }
         
@@ -2638,10 +2671,9 @@ class TrendReports {
                 <span class="material-icons">keyboard_arrow_down</span>
             </th>
             ${this.currentCategory === 'search-terms' ? '<th class="campaign-col"><span>Campaign Name</span></th>' : ''}
-            <th>
-                <span>Metric</span>
-            </th>
-            <th class="total-col"><span>Total</span></th>
+            ${this.currentCategory === 'search-terms' ? '<th><span>Metric</span></th>' : ''}
+            ${this.currentCategory !== 'search-terms' ? '<th><span>Metric</span></th>' : ''}
+            <th class="total-col sortable" data-sort="total"><span>Total</span><span class="material-icons">keyboard_arrow_down</span></th>
             ${buckets.labels.map(lbl => `<th><span>${lbl}</span></th>`).join('')}
         `;
         
@@ -2699,7 +2731,31 @@ class TrendReports {
             // Filter to only show selected metrics (read current checkbox state directly)
             const checkboxes = document.querySelectorAll('#chartMetricOptions input[type="checkbox"]:checked');
             const currentSelectedMetrics = Array.from(checkboxes).map(cb => cb.id.replace('metric-', ''));
-            const metricRows = allMetrics.filter(metric => currentSelectedMetrics.includes(metric.key));
+            let metricRows = allMetrics.filter(metric => currentSelectedMetrics.includes(metric.key));
+            
+            // Sort metric rows by date column if date sorting is active
+            if (this.sortColumn && this.sortColumn.startsWith('date-')) {
+                const dateLabel = this.sortColumn.replace('date-', '');
+                metricRows = metricRows.sort((a, b) => {
+                    // Choose sorting metric based on category
+                    let aValue, bValue;
+                    if (this.currentCategory === 'products') {
+                        // Products: Sort by Sales values
+                        aValue = Number(a.data?.[dateLabel] || 0);
+                        bValue = Number(b.data?.[dateLabel] || 0);
+                    } else {
+                        // Campaigns & Search Terms: Sort by Ad Spend values
+                        aValue = Number(a.data?.[dateLabel] || 0);
+                        bValue = Number(b.data?.[dateLabel] || 0);
+                    }
+                    
+                    if (this.sortDirection === 'asc') {
+                        return aValue - bValue;
+                    } else {
+                        return bValue - aValue;
+                    }
+                });
+            }
             
             // Debug: Log table metrics
             console.log('📊 Table metrics:', {
@@ -2867,6 +2923,16 @@ class TrendReports {
         
         this.updatePagination(sortedData.length);
         this.updateResultsCount(sortedData.length);
+        
+        // Re-attach sort event listeners for date columns
+        document.querySelectorAll('.sortable').forEach(header => {
+            header.addEventListener('click', (e) => {
+                this.sortTable(e.currentTarget.dataset.sort);
+            });
+        });
+        
+        // Update sort icons
+        this.updateSortIcons();
     }
 
     buildDateBuckets(data) {
@@ -3507,6 +3573,8 @@ class TrendReports {
                     const bn = b.name.toLowerCase();
                     return this.sortDirection === 'asc' ? (an > bn ? 1 : -1) : (an < bn ? 1 : -1);
                 }
+                
+                
                 const aKey = a.__totalSales || a.__totalSpend || 0;
                 const bKey = b.__totalSales || b.__totalSpend || 0;
                 if (bKey !== aKey) return bKey - aKey;
