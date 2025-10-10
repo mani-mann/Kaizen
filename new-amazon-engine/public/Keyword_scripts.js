@@ -523,20 +523,8 @@ class AmazonDashboard {
     }
 
     async refreshForCurrentRange() {
-        const payload = await this.fetchAnalytics(this.dateRange.start, this.dateRange.end);
-        if (payload) this.applyAnalyticsPayload(payload);
-        this.updateKPIs();
-        // Update KPI trend vs previous equal-length period
-        await this.updateKPITrends(this.kpis);
-        this.updateTable();
-        const periodSelect = document.getElementById('chartPeriod');
-        const period = periodSelect ? periodSelect.value : 'daily';
-        this.updateChart(period);
-        this.updateResultsCount();
-        this.updateLastUpdateTime();
-        // Re-render filter controls without any preselected values
-        this.populateFilterOptions();
-        this.updateFilterVisibility();
+        // Two-phase load: KPIs first (fast), then full rows/graph
+        await this.fetchTwoPhase(this.dateRange.start, this.dateRange.end);
     }
 
     updateDateDisplay() {
@@ -1102,15 +1090,9 @@ class AmazonDashboard {
             // Show loading state
             this.showLoading();
             
-            // Fetch analytics for initial range from database
-            const initialPayload = await this.fetchAnalytics(this.dateRange.start, this.dateRange.end);
-            if (initialPayload) {
-                this.applyAnalyticsPayload(initialPayload);
-            } else {
-                // Fallback to sample data if database is not available
-                this.loadSampleData();
-            }
-            
+            // Two-phase for initial load as well
+            await this.fetchTwoPhase(this.dateRange.start, this.dateRange.end);
+
             // Load ALL data for chart (independent of date picker)
             await this.loadChartData();
             
@@ -1248,7 +1230,7 @@ class AmazonDashboard {
         }
     }
 
-    async fetchAnalytics(start, end) {
+    async fetchAnalytics(start, end, options = {}) {
         try {
             // Use string dates directly if available, otherwise format Date objects
             const startStr = this.dateRange.startStr || this.toInputDate(new Date(start));
@@ -1258,12 +1240,13 @@ class AmazonDashboard {
                 start: startStr,
                 end: endStr
             });
+            if (options.kpisOnly) params.set('kpisOnly', 'true');
             
             // Use the backend server URL (port 5000)
             const apiBase = this.getApiBase();
-            const res = await fetch(`${apiBase}/api/analytics?${params.toString()}`, { 
-                headers: { 'Accept': 'application/json' } 
-            });
+            const fetchOpts = { headers: { 'Accept': 'application/json' } };
+            if (options.signal) fetchOpts.signal = options.signal;
+            const res = await fetch(`${apiBase}/api/analytics?${params.toString()}`, fetchOpts);
             
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -1296,6 +1279,41 @@ class AmazonDashboard {
         } catch (e) {
             // Analytics fetch failed
             return null; // Return null to trigger fallback
+        }
+    }
+
+    // New helper: two-phase load (KPIs first, then rows + chart)
+    async fetchTwoPhase(start, end) {
+        try {
+            // 1) Fast KPIs path
+            const kpiPayload = await this.fetchAnalytics(start, end, { kpisOnly: true });
+            if (kpiPayload && kpiPayload.kpis) {
+                this.kpis = kpiPayload.kpis;
+                this.updateKPIs();
+                await this.updateKPITrends(this.kpis);
+            }
+
+            // 2) Full payload in background with cancellation
+            if (this.fullFetchController) {
+                try { this.fullFetchController.abort(); } catch(_) {}
+            }
+            this.fullFetchController = new AbortController();
+            const fullPayload = await this.fetchAnalytics(start, end, { signal: this.fullFetchController.signal });
+            if (fullPayload) {
+                this.applyAnalyticsPayload(fullPayload);
+                this.updateKPIs();
+                // Update table and chart after full data arrives
+                this.updateTable();
+                const periodSelect = document.getElementById('chartPeriod');
+                const period = periodSelect ? periodSelect.value : 'daily';
+                this.updateChart(period);
+                this.updateResultsCount();
+                this.updateLastUpdateTime();
+                this.populateFilterOptions();
+                this.updateFilterVisibility();
+            }
+        } catch(_) {
+            // Ignore aborts or transient errors; UI will keep latest successful state
         }
     }
 
@@ -3275,6 +3293,7 @@ class AmazonDashboard {
     async exportToExcel() {
         try {
             this.showNotification('Preparing Excel export...', 'info');
+            
             const payload = await this.fetchAnalytics(this.dateRange.start, this.dateRange.end);
             if (!payload || !payload.rows) {
                 this.showNotification('No data available for export', 'warning');

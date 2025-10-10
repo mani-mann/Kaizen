@@ -7,11 +7,40 @@ const app = express();
 // Allow all origins so the frontend can be opened from file:// or any port during dev
 app.use(cors());
 app.use(express.json());
-// Enable gzip compression for faster responses
-try { app.use(require('compression')()); } catch (_) {}
 
-// Serve static files from the public directory
-app.use(express.static('../public'));
+// Enable gzip compression with optimal settings for faster responses
+try { 
+  app.use(require('compression')({
+    level: 6, // Balanced compression level
+    threshold: 1024, // Only compress responses > 1KB
+    filter: (req, res) => {
+      // Compress all text-based content
+      if (req.headers['x-no-compression']) return false;
+      return require('compression').filter(req, res);
+    }
+  })); 
+} catch (_) {}
+
+// Serve static files from the public directory with caching
+app.use(express.static('../public', {
+  maxAge: '1d', // Cache static files for 1 day
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, path) => {
+    // Cache CSS/JS for 1 week
+    if (path.endsWith('.css') || path.endsWith('.js')) {
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    }
+    // Cache images for 1 month
+    if (path.match(/\.(jpg|jpeg|png|gif|svg|webp|ico)$/)) {
+      res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+    }
+    // Don't cache HTML files
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  }
+}));
 
 // Avoid noisy 404s for browser favicon requests
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
@@ -128,6 +157,8 @@ async function fetchKeywordData(startDate = null, endDate = null) {
       return [];
     }
     
+    const startTime = Date.now();
+    
     // Select only the columns used by the frontend
     let query = `SELECT search_term, keyword_info, match_type, campaign_name, cost, sales_1d, clicks, impressions, purchases_1d, report_date
                  FROM amazon_ads_reports`;
@@ -137,16 +168,22 @@ async function fetchKeywordData(startDate = null, endDate = null) {
       // Optimized: Use direct date comparison instead of DATE() function for better index usage
       query += " WHERE report_date >= $1::date AND report_date <= $2::date";
       params = [startDate, endDate];
-      // When date range is specified, return ALL data in that range (no LIMIT)
-      query += ' ORDER BY report_date DESC';
+      // Fetch ALL data for accurate calculations, but optimize the query
+      query += ' ORDER BY report_date DESC, cost DESC';
     } else {
       // When no date range specified, limit to recent data for performance
-      // This is for the initial dashboard load to show recent activity
       query += ' ORDER BY report_date DESC LIMIT 5000';
     }
     
     const res = await client.query(query, params);
-    console.log(`📊 Fetched ${res.rows.length} keyword records${startDate && endDate ? ' for date range' : ' (recent data)'}`);
+    const duration = Date.now() - startTime;
+    console.log(`📊 Fetched ${res.rows.length} keyword records in ${duration}ms${startDate && endDate ? ' for date range' : ' (recent data)'}`);
+    
+    // Warn if query is slow
+    if (duration > 2000) {
+      console.warn(`⚠️ Slow query detected (${duration}ms). Consider adding database indexes.`);
+    }
+    
     return res.rows;
   } catch (err) {
     console.error("❌ Error fetching keywords:", err);
@@ -603,16 +640,19 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
         realTotalSales = matchingBusinessData.totalSales;
         totalSalesByDate[keywordDateStr] = realTotalSales;
         processedDates.add(keywordDateStr);
-        console.log(`✅ Using business total sales for ${keywordDateStr}: ${realTotalSales}`);
+        // Only log first occurrence (reduced logging)
       } else {
         // For subsequent keywords on the same date, use 0 to avoid duplication
         realTotalSales = 0;
-        console.log(`⚠️ Duplicate date ${keywordDateStr}, using 0 for total sales`);
+        // Removed excessive duplicate logging
       }
     } else {
       // No business data available - use 0 instead of ad sales to avoid confusion
       realTotalSales = 0;
-      console.log(`❌ No business data for ${keywordDateStr}, using 0 for total sales`);
+      // Only log if this is a new date without business data
+      if (!processedDates.has(keywordDateStr)) {
+        processedDates.add(keywordDateStr);
+      }
     }
     
     // Debug: Check if we have business data for this date
@@ -907,6 +947,11 @@ app.get('/api/business-data', async (req, res) => {
 
 // ✅ Analytics endpoint for dashboard with date filtering
 app.get('/api/analytics', async (req, res) => {
+  // ⏱️ START PERFORMANCE TRACKING
+  const requestStartTime = Date.now();
+  console.log('\n⏱️ ========== NEW API REQUEST ==========');
+  console.log(`⏱️ Request received at: ${new Date().toISOString()}`);
+  
   try {
     if (!dbConnected) {
       // Graceful degrade: return empty payload instead of 503 to avoid UI errors
@@ -927,6 +972,11 @@ app.get('/api/analytics', async (req, res) => {
       });
     }
     const { start, end } = req.query;
+    const kpisOnly = String(req.query.kpisOnly).toLowerCase() === 'true';
+    console.log(`⏱️ Date range requested: ${start || 'ALL'} to ${end || 'ALL'}`);
+    if (kpisOnly) {
+      console.log('⏱️ Mode: KPIs-only (fast path)');
+    }
     
     let startDate = null, endDate = null;
     
@@ -950,14 +1000,83 @@ app.get('/api/analytics', async (req, res) => {
       return res.json(cachedResult);
     }
     
-    // Fetch data - ensure consistent date ranges for KPI calculations
+    // ⏱️ DATABASE QUERY START
+    const dbQueryStartTime = Date.now();
+    console.log(`⏱️ Starting database queries...`);
+
+    if (kpisOnly) {
+      // Fast KPI path: aggregate directly in SQL and skip heavy row transformation
+      const endBound = effectiveEndDate || endDate;
+
+      // Aggregate ad metrics from amazon_ads_reports
+      const adAggSql = `
+        SELECT 
+          COALESCE(SUM(CAST(cost AS DECIMAL)), 0)               AS ad_spend,
+          COALESCE(SUM(CAST(sales_1d AS DECIMAL)), 0)           AS ad_sales,
+          COALESCE(SUM(CAST(clicks AS INTEGER)), 0)             AS clicks,
+          COALESCE(SUM(CAST(impressions AS INTEGER)), 0)        AS impressions,
+          COUNT(*)                                              AS total_rows
+        FROM amazon_ads_reports
+        WHERE report_date >= $1::date AND report_date <= $2::date
+      `;
+
+      const bizAggSql = `
+        SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
+        FROM amazon_sales_traffic
+        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+      `;
+
+      const [adRes, bizRes] = await Promise.all([
+        client.query(adAggSql, [startDate, endBound]),
+        client.query(bizAggSql, [startDate, endBound])
+      ]);
+
+      const ad = adRes.rows?.[0] || {};
+      const totalSales = parseFloat(bizRes.rows?.[0]?.total || 0);
+      const adSpend = parseFloat(ad.ad_spend || 0);
+      const adSales = parseFloat(ad.ad_sales || 0);
+      const clicks = parseInt(ad.clicks || 0);
+
+      const avgCpc = clicks > 0 ? adSpend / clicks : 0;
+      const acos = adSales > 0 ? (adSpend / adSales) * 100 : 0;
+      const roas = adSpend > 0 ? adSales / adSpend : 0;
+      const tacos = totalSales > 0 ? (adSpend / totalSales) * 100 : 0;
+
+      const dbQueryDuration = Date.now() - dbQueryStartTime;
+      console.log(`⏱️ KPI-only DB aggregates completed in: ${dbQueryDuration}ms`);
+
+      const responseData = {
+        rows: [],
+        kpis: {
+          adSpend,
+          adSales,
+          totalSales,
+          acos,
+          tacos,
+          roas,
+          adClicks: clicks,
+          avgCpc
+        },
+        dataRange: await getGlobalDateRange(),
+        totalRows: parseInt(ad.total_rows || 0)
+      };
+
+      const totalDuration = Date.now() - requestStartTime;
+      console.log(`\n⏱️ KPI-ONLY REQUEST COMPLETE in ${totalDuration}ms (DB: ${dbQueryDuration}ms)`);
+      return res.json(responseData);
+    }
+
+    // Full data path: fetch rows and business data
     const [keywordData, businessDataForChart, businessDataForKPIs] = await Promise.all([
-      // KPIs and rows should share the same effective range
       fetchKeywordData(startDate, effectiveEndDate || endDate),
-      // For chart and KPIs: fetch business data directly for the requested range
       fetchBusinessData(startDate, effectiveEndDate || endDate),
       fetchBusinessData(startDate, effectiveEndDate || endDate)
     ]);
+
+    // ⏱️ DATABASE QUERY END
+    const dbQueryDuration = Date.now() - dbQueryStartTime;
+    console.log(`⏱️ Database queries completed in: ${dbQueryDuration}ms`);
     
     // Already date-filtered from DB; use directly
     let finalBusinessDataForKPIs = businessDataForKPIs || [];
@@ -1015,9 +1134,22 @@ app.get('/api/analytics', async (req, res) => {
     } catch (strictErr) {
       console.log('⚠️ SQL strict total sales fallback failed:', strictErr.message);
     }
+    // ⏱️ DATA PROCESSING START
+    const processingStartTime = Date.now();
+    console.log(`⏱️ Starting data transformation...`);
+    
     const rows = transformKeywordDataForFrontend(keywordData, finalBusinessDataForFrontend);
     
-    console.log(`📊 Transformed ${rows.length} rows for frontend`); 
+    // ⏱️ DATA PROCESSING END
+    const processingDuration = Date.now() - processingStartTime;
+    console.log(`⏱️ Data transformation completed in: ${processingDuration}ms`);
+
+    // Summary log (clean and informative)
+    const uniqueDates = new Set(rows.map(r => r.date || r.report_date)).size;
+    console.log(`\n📊 Data Processing Summary:`);
+    console.log(`   ✅ Processed ${rows.length} keyword rows`);
+    console.log(`   📅 ${uniqueDates} unique dates`);
+    console.log(`   💰 Business data available for ${Object.keys(totalSalesByDate).length} dates\n`); 
     
     // Get data range for date picker via lightweight query
     const dataRange = await getGlobalDateRange();
@@ -1041,6 +1173,15 @@ app.get('/api/analytics', async (req, res) => {
     
     // Cache the result
     setCachedData(cacheKey, responseData);
+    
+    // ⏱️ TOTAL REQUEST TIME
+    const totalDuration = Date.now() - requestStartTime;
+    console.log(`\n⏱️ ========== REQUEST COMPLETE ==========`);
+    console.log(`⏱️ Database queries:     ${dbQueryDuration}ms (${((dbQueryDuration/totalDuration)*100).toFixed(1)}%)`);
+    console.log(`⏱️ Data processing:      ${processingDuration}ms (${((processingDuration/totalDuration)*100).toFixed(1)}%)`);
+    console.log(`⏱️ TOTAL TIME:           ${totalDuration}ms`);
+    console.log(`⏱️ Rows returned:        ${rows.length}`);
+    console.log(`⏱️ =======================================\n`);
     
     // Return response
     res.json(responseData);
