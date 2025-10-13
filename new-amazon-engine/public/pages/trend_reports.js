@@ -833,7 +833,7 @@ class TrendReports {
             } else if (location.port === '5000' || (location.hostname === 'localhost' && location.port === '')) {
                 apiBase = '';
             } else {
-                apiBase = 'http://localhost:5000';
+                apiBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
             }
             const apiUrl = `${apiBase}/api/trend-reports?${params.toString()}`;
             

@@ -548,12 +548,15 @@ function calculateDashboardKPIs(keywordData, businessData) {
   }
 
   console.log('🔍 KPI Calculation Debug:', {
-    totalAdSpend,
-    totalAdSales,
-    totalSales,
+    totalAdSpend: totalAdSpend.toFixed(2),
+    totalAdSales: totalAdSales.toFixed(2),
+    totalSales: totalSales.toFixed(2),
     businessDataLength: businessData ? businessData.length : 0,
     keywordDataLength: keywordData ? keywordData.length : 0,
     dataIntegrityCheck: totalSales >= totalAdSales ? 'PASS' : 'FAIL',
+    calculatedACOS: totalAdSales > 0 ? ((totalAdSpend / totalAdSales) * 100).toFixed(2) + '%' : '0%',
+    calculatedTCOS: totalSales > 0 ? ((totalAdSpend / totalSales) * 100).toFixed(2) + '%' : '0%',
+    calculatedROAS: totalAdSpend > 0 ? (totalAdSales / totalAdSpend).toFixed(2) : '0',
     businessDataSample: businessData ? businessData.slice(0, 3).map(row => ({
       date: row.date,
       ordered_product_sales: row.ordered_product_sales
@@ -1149,7 +1152,7 @@ app.get('/api/analytics', async (req, res) => {
     console.log(`\n📊 Data Processing Summary:`);
     console.log(`   ✅ Processed ${rows.length} keyword rows`);
     console.log(`   📅 ${uniqueDates} unique dates`);
-    console.log(`   💰 Business data available for ${Object.keys(totalSalesByDate).length} dates\n`); 
+    console.log(`   💰 Business data available for ${finalBusinessDataForFrontend.length} dates\n`); 
     
     // Get data range for date picker via lightweight query
     const dataRange = await getGlobalDateRange();
@@ -1709,5 +1712,5 @@ app.get('/api/trend-reports', async (req, res) => {
 // Start Server
 // --------------------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
 

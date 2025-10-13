@@ -136,7 +136,7 @@ async waitForBackendReady(apiBase, maxAttempts = 6, delayMs = 500) {
 
             // Fallback: explicitly try localhost:5000 if not already
             try {
-                const localBase = 'http://localhost:5000';
+                const localBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
                 if (!apiBase || !apiBase.includes('localhost:5000')) {
                     const res2 = await fetch(`${localBase}/health`);
                     if (res2.ok) {
@@ -164,7 +164,7 @@ getApiBase() {
         // Use same origin for deployed environments (run.app, vercel, etc.)
         return `${protocol}//${host}${port ? `:${port}` : ''}`;
     } catch (_) {
-        return 'http://localhost:5000';
+        return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
     }
 }
 

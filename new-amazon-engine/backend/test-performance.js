@@ -16,7 +16,7 @@ async function testPerformance() {
       console.log(`   Range: ${test.start} to ${test.end}`);
       
       const startTime = Date.now();
-      const response = await fetch(`http://localhost:5000/api/analytics?start=${test.start}&end=${test.end}`);
+      const response = await fetch(`http://localhost:${process.env.PORT || 5000}/api/analytics?start=${test.start}&end=${test.end}`);
       const data = await response.json();
       const duration = Date.now() - startTime;
       

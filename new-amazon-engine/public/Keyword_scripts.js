@@ -55,9 +55,9 @@ class AmazonDashboard {
             }
             
             // If on Live Server (port 5500) or other ports, connect to backend on port 5000
-            return 'http://localhost:5000';
+            return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
         } catch (_) {
-            return 'http://localhost:5000';
+            return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
         }
     }
     
