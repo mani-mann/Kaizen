@@ -171,8 +171,9 @@ async function fetchKeywordData(startDate = null, endDate = null) {
       // Fetch ALL data for accurate calculations, but optimize the query
       query += ' ORDER BY report_date DESC, cost DESC';
     } else {
-      // When no date range specified, limit to recent data for performance
-      query += ' ORDER BY report_date DESC LIMIT 5000';
+      // When no date range specified, fetch ALL data (removed 5000 limit to show all campaigns)
+      // With 18K-20K records, this should still be fast enough
+      query += ' ORDER BY report_date DESC, cost DESC';
     }
     
     const res = await client.query(query, params);
