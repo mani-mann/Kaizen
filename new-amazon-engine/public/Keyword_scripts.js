@@ -25,7 +25,7 @@ class AmazonDashboard {
         this.dataMaxDate = null; // set after data load
         this.kpis = null;
         this.currentTab = 'keywords'; // Default to keywords tab
-        this.rowsPerPage = 25; // Show 25 entries per page like reference image
+        this.rowsPerPage = Number(localStorage.getItem('kw_rows_per_page') || 25); // Default 25, persisted
         this.activeFilters = { campaign: '', keyword: '', campaigns: [], keywords: [] };
         
         // Mobile navigation state for daily view
@@ -875,6 +875,32 @@ class AmazonDashboard {
         // Pagination events
         document.getElementById('prevPage')?.addEventListener('click', () => this.goToPreviousPage());
         document.getElementById('nextPage')?.addEventListener('click', () => this.goToNextPage());
+
+        // Rows-per-page selector
+        const pageSizeSelect = document.getElementById('pageSizeSelect');
+        if (pageSizeSelect) {
+            const allowed = [10, 30, 50, 100, 200, 500];
+            // Ensure options reflect allowed list
+            if (pageSizeSelect.options.length !== allowed.length) {
+                pageSizeSelect.innerHTML = allowed.map(v => `<option value="${v}">${v}</option>`).join('');
+            }
+            // Set current selection from state
+            if (!allowed.includes(this.rowsPerPage)) {
+                this.rowsPerPage = 25;
+            }
+            pageSizeSelect.value = String(this.rowsPerPage);
+            pageSizeSelect.addEventListener('change', (e) => {
+                const val = Number(e.target.value);
+                if (!Number.isFinite(val)) return;
+                this.rowsPerPage = val;
+                localStorage.setItem('kw_rows_per_page', String(val));
+                // Reset to page 1 and re-render
+                this.currentPage = 1;
+                this.updateTable();
+                this.updateResultsCount();
+                this.updatePagination();
+            });
+        }
         
         // Mobile menu handling
         const mobileMenuBtn = document.getElementById('mobileMenuBtn');

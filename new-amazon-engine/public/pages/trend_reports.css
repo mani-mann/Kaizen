@@ -976,6 +976,23 @@ body {
     z-index: 1; /* Lower than dropdown */
 }
 
+/* Match keyword/business page select styling */
+.period-selector {
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.period-selector:focus {
+    outline: none;
+    border-color: var(--orange);
+}
+
 .search-container {
     position: relative;
     flex: 1;

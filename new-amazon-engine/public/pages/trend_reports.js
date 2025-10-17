@@ -13,7 +13,7 @@ class TrendReports {
         this.selectedName = '';
         this.selectedNames = new Set(); // multi-select names
         this.currentPage = 1;
-        this.itemsPerPage = 20;
+        this.itemsPerPage = Number(localStorage.getItem('trend_rows_per_page') || 20);
         this.sortColumn = 'date';
         this.selectedMetrics = []; // No default selection
         // Keep metric selections separate per category/tab
@@ -142,6 +142,27 @@ class TrendReports {
         document.getElementById('nextPage').addEventListener('click', () => {
             this.nextPage();
         });
+        // Rows-per-page selector
+        const pageSizeSelect = document.getElementById('trendPageSizeSelect');
+        if (pageSizeSelect) {
+            const allowed = [10, 30, 50, 100, 200, 500];
+            if (pageSizeSelect.options.length !== allowed.length) {
+                pageSizeSelect.innerHTML = allowed.map(v => `<option value="${v}">${v}</option>`).join('');
+            }
+            if (!allowed.includes(this.itemsPerPage)) {
+                this.itemsPerPage = 20;
+            }
+            pageSizeSelect.value = String(this.itemsPerPage);
+            pageSizeSelect.addEventListener('change', (e) => {
+                const val = Number(e.target.value);
+                if (!Number.isFinite(val)) return;
+                this.itemsPerPage = val;
+                localStorage.setItem('trend_rows_per_page', String(val));
+                this.currentPage = 1;
+                this.renderTable();
+                this.updatePaginationSummary();
+            });
+        }
 
         // Export buttons
         document.getElementById('exportExcel').addEventListener('click', () => {

@@ -13,7 +13,7 @@ constructor() {
         businessData: [],
         filteredData: [],
         currentPage: 1,
-        itemsPerPage: 23,
+        itemsPerPage: Number(localStorage.getItem('biz_rows_per_page') || 23),
         sortColumn: '',
         sortDirection: 'desc',
         searchTerm: '',
@@ -389,6 +389,27 @@ setupEventListeners() {
     const nextPage = document.getElementById('nextPage');
     if (prevPage) prevPage.addEventListener('click', () => this.goToPage(this.state.currentPage - 1));
     if (nextPage) nextPage.addEventListener('click', () => this.goToPage(this.state.currentPage + 1));
+    // Rows-per-page selector
+    const pageSizeSelect = document.getElementById('bizPageSizeSelect');
+    if (pageSizeSelect) {
+        const allowed = [10, 30, 50, 100, 200, 500];
+        if (pageSizeSelect.options.length !== allowed.length) {
+            pageSizeSelect.innerHTML = allowed.map(v => `<option value="${v}">${v}</option>`).join('');
+        }
+        if (!allowed.includes(this.state.itemsPerPage)) {
+            this.state.itemsPerPage = 23;
+        }
+        pageSizeSelect.value = String(this.state.itemsPerPage);
+        pageSizeSelect.addEventListener('change', (e) => {
+            const val = Number(e.target.value);
+            if (!Number.isFinite(val)) return;
+            this.state.itemsPerPage = val;
+            localStorage.setItem('biz_rows_per_page', String(val));
+            this.state.currentPage = 1;
+            this.renderTable();
+            this.updateResultsCount();
+        });
+    }
     
     document.querySelectorAll('.sortable').forEach(header => {
         header.addEventListener('click', (e) => this.handleSort(e.currentTarget.dataset.sort));
@@ -1395,18 +1416,23 @@ initializeProductFilter() {
 }
 
 filterData() {
-    // Filter works within the calendar-selected date range (businessData)
+    // Filter within the calendar-selected date range (businessData)
+    let rows;
     if (this.state.selectedProducts.size === 0) {
-        // No filter applied - show all data from calendar range
-        this.state.filteredData = [...this.state.businessData];
+        // No filter applied - use all rows from current date window
+        rows = [...this.state.businessData];
     } else {
-        // Apply filter to the calendar-selected data only
-        this.state.filteredData = this.state.businessData.filter(row => 
+        // Apply product filter to date-window rows
+        rows = this.state.businessData.filter(row => 
             this.state.selectedProducts.has(row.productTitle) ||
             this.state.selectedProducts.has(row.sku) ||
             this.state.selectedProducts.has(row.parentAsin)
         );
     }
+
+    // Always aggregate after filtering so counts reflect combined entries (not per-day rows)
+    this.state.filteredData = this.aggregateBySku(rows);
+    this.state.currentPage = 1;
     
     // Recalculate KPIs from filtered data (within calendar range)
     const filteredKPIs = this.computeKPIsFromRows(this.state.filteredData);
