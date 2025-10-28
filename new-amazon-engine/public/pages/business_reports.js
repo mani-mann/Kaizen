@@ -1217,12 +1217,45 @@ setupProductFilter() {
         nameFilterDropdown.style.display = 'block';
         nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
         
-        // If there are selected products, show them
-        if (this.state.selectedProducts.size > 0) {
-            this.showSelectedProductsInDropdown();
+        // Update placeholder based on current selection
+        const count = this.state.selectedProducts.size;
+        if (count > 0) {
+            nameFilterInput.placeholder = `${count} selected`;
         } else {
-            // If no products selected, show all products
+            nameFilterInput.placeholder = 'Search products...';
+        }
+        
+        // Show all products with selected ones at top
+        this.filterProductOptions('');
+    });
+
+    // Power-user: Enter or Escape clears only the search text (keeps selections)
+    nameFilterInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+            e.preventDefault();
+            // Clear search text but keep selected products intact
+            nameFilterInput.value = '';
+            // Keep dropdown open and show all, with selected items at top
+            nameFilterDropdown.style.display = 'block';
+            nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
             this.filterProductOptions('');
+        }
+    });
+
+    // Also handle Enter/Escape when focus is inside the dropdown (e.g., on a checkbox)
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== 'Escape') return;
+        const isOpen = nameFilterDropdown && nameFilterDropdown.style.display === 'block';
+        if (!isOpen) return;
+        const active = document.activeElement;
+        if (active === nameFilterInput || (nameFilterDropdown && nameFilterDropdown.contains(active))) {
+            e.preventDefault();
+            nameFilterInput.value = '';
+            nameFilterDropdown.style.display = 'block';
+            nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
+            this.filterProductOptions('');
+            // Return focus to input for immediate typing
+            nameFilterInput.focus();
         }
     });
     
@@ -1266,13 +1299,10 @@ setupProductFilter() {
             this.filterProductOptions(searchValue);
             nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
         } else {
-            // If input is empty, show selected products or hide dropdown
-            if (this.state.selectedProducts.size > 0) {
-                this.showSelectedProductsInDropdown();
-            } else {
-                nameFilterDropdown.style.display = 'none';
-                nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
-            }
+            // If input is empty, show all products with selected ones at top
+            nameFilterDropdown.style.display = 'block';
+            this.filterProductOptions('');
+            nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
         }
     });
     
@@ -1309,10 +1339,13 @@ addProductOption(product, isSelected, isSelectedNotMatching) {
         if (cb.checked) this.state.selectedProducts.add(product); 
         else this.state.selectedProducts.delete(product);
         
-        // Update input text only if not currently typing
-        if (nameFilterInput !== document.activeElement) {
-            const count = this.state.selectedProducts.size;
-            nameFilterInput.value = count === 0 ? '' : `${count} selected`;
+        // Clear input value and update placeholder
+        nameFilterInput.value = '';
+        const count = this.state.selectedProducts.size;
+        if (count > 0) {
+            nameFilterInput.placeholder = `${count} selected`;
+        } else {
+            nameFilterInput.placeholder = 'Search products...';
         }
         this.state.currentPage = 1;
         this.filterData();
@@ -1332,12 +1365,12 @@ filterProductOptions(searchTerm) {
     const allProductsOption = nameFilterDropdown.querySelector('.filter-option');
     allProductsOption.addEventListener('mousedown', (e) => {
         e.preventDefault();
-        this.state.selectedProducts.clear();
-        // Only clear input if not currently typing
-        if (nameFilterInput !== document.activeElement) {
-            nameFilterInput.value = '';
-        }
-        nameFilterDropdown.style.display = 'none';
+        // Show all products but keep selected products intact
+        this.state.selectedProducts = this.state.selectedProducts || new Set();
+        nameFilterInput.value = '';
+        nameFilterInput.placeholder = 'Search products...';
+        nameFilterDropdown.style.display = 'block';
+        this.filterProductOptions('');
         this.state.currentPage = 1;
         this.filterData();
     });
@@ -1477,9 +1510,10 @@ showSelectedProductsInDropdown() {
     allProductsOption.textContent = 'All Products';
     allProductsOption.addEventListener('mousedown', (e) => {
         e.preventDefault();
-        this.state.selectedProducts.clear();
+        // Show all products WITHOUT clearing selected ones
         nameFilterInput.value = '';
-        nameFilterDropdown.style.display = 'none';
+        nameFilterDropdown.style.display = 'block';
+        this.filterProductOptions('');
         this.state.currentPage = 1;
         this.filterData();
     });
@@ -1509,9 +1543,11 @@ showSelectedProductsInDropdown() {
     clearAllOption.style.fontWeight = '500';
     clearAllOption.addEventListener('mousedown', (e) => {
         e.preventDefault();
+        // Explicit user action to clear selections
         this.state.selectedProducts.clear();
         nameFilterInput.value = '';
-        nameFilterDropdown.style.display = 'none';
+        nameFilterDropdown.style.display = 'block';
+        this.filterProductOptions('');
         this.state.currentPage = 1;
         this.filterData();
     });

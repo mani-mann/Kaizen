@@ -12,6 +12,13 @@ class TrendReports {
         this.groupedTableData = [];
         this.selectedName = '';
         this.selectedNames = new Set(); // multi-select names
+        
+        // Separate selections per category (like metrics)
+        this.selectedNamesByCategory = {
+            'products': new Set(),
+            'campaigns': new Set(), 
+            'search-terms': new Set()
+        };
         this.currentPage = 1;
         this.itemsPerPage = Number(localStorage.getItem('trend_rows_per_page') || 20);
         this.sortColumn = 'date';
@@ -700,6 +707,9 @@ class TrendReports {
     }
 
     async switchCategory(category) {
+        // Preserve which category we are leaving so we can save its selections
+        const previousCategory = this.currentCategory;
+        // Now switch the current category
         this.currentCategory = category;
         
         // Update active tab
@@ -711,12 +721,15 @@ class TrendReports {
         // Reset pagination and filters when switching categories
         this.currentPage = 1;
         this.selectedName = '';
-        // Clear multi-select names to avoid carrying selection across tabs
-        if (this.selectedNames && this.selectedNames.size) {
-            this.selectedNames.clear();
-        } else {
-            this.selectedNames = new Set();
+        
+        // Save current selections before switching
+        if (this.selectedNames && this.selectedNames.size > 0 && previousCategory) {
+            this.selectedNamesByCategory[previousCategory] = new Set(this.selectedNames);
         }
+        
+        // Load selections for the new category
+        this.selectedNames = new Set(this.selectedNamesByCategory[category] || []);
+        
         const nameInputEl = document.getElementById('nameFilterInput');
         if (nameInputEl) nameInputEl.value = '';
         
@@ -2024,9 +2037,24 @@ class TrendReports {
                 paginationControls.style.display = 'none';
             }
             
-            this.filterNameOptions('');
+            // Preserve current search term when focusing
+            const currentSearchTerm = nameFilterInput.value.trim();
+            this.filterNameOptions(currentSearchTerm);
         });
         
+        // Power-user: Enter or Escape clears only the search text (keeps selections)
+        nameFilterInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === 'Escape') {
+                e.preventDefault();
+                // Clear search text but keep selectedNames intact
+                nameFilterInput.value = '';
+                // Keep dropdown open and show all, with selected items pinned on top
+                nameFilterDropdown.style.display = 'block';
+                nameFilterInput.closest('.name-filter').classList.add('dropdown-open');
+                this.filterNameOptions('');
+            }
+        });
+
         nameFilterInput.addEventListener('blur', (e) => {
             // Delay hiding to allow click on dropdown
             setTimeout(() => {
@@ -2087,8 +2115,10 @@ class TrendReports {
         // Store the name map for filtering
         this.nameMap = nameMap;
         
-        // Update the dropdown with all names
-        this.filterNameOptions('');
+        // Update the dropdown with all names, preserving current search term
+        const nameFilterInput = document.getElementById('nameFilterInput');
+        const currentSearchTerm = nameFilterInput ? nameFilterInput.value.trim() : '';
+        this.filterNameOptions(currentSearchTerm);
     }
 
     filterNameOptions(searchTerm) {
@@ -2102,14 +2132,12 @@ class TrendReports {
         const allNamesOption = nameFilterDropdown.querySelector('.filter-option');
         allNamesOption.addEventListener('mousedown', (e) => {
             e.preventDefault();
+            // Clear selections for current category only
             this.selectedName = '';
             this.selectedNames.clear();
-            nameFilterInput.value = '';
-            // If dropdown is open, uncheck all visible checkboxes immediately
-            try {
-                nameFilterDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
-            } catch (_) {}
-            nameFilterDropdown.style.display = 'none';
+            this.selectedNamesByCategory[this.currentCategory].clear();
+            nameFilterDropdown.style.display = 'block';
+            this.filterNameOptions('');
             this.currentPage = 1;
             this.updateChart();
             this.renderTable();
@@ -2118,6 +2146,7 @@ class TrendReports {
         // Filter names
         const allNames = Object.keys(this.nameMap || {})
             .filter(name => name.toLowerCase().includes(searchTerm.toLowerCase()));
+        
         // Sort: selected names first (keep alphabetical inside groups)
         const selectedFirst = [];
         const unselected = [];
@@ -2127,6 +2156,14 @@ class TrendReports {
         selectedFirst.sort();
         unselected.sort();
         const filteredNames = [...selectedFirst, ...unselected];
+        
+        // Update input placeholder to show selected count
+        const selectedCount = this.selectedNames ? this.selectedNames.size : 0;
+        if (selectedCount > 0) {
+            nameFilterInput.placeholder = `${selectedCount} selected`;
+        } else {
+            nameFilterInput.placeholder = 'Search names...';
+        }
         
         filteredNames.forEach(name => {
             const dates = Array.from(this.nameMap[name]).sort();
@@ -2169,17 +2206,28 @@ class TrendReports {
             option.addEventListener('mousedown', (e) => {
                 e.preventDefault(); // keep dropdown
                 cb.checked = !cb.checked;
-                if (cb.checked) this.selectedNames.add(name); else this.selectedNames.delete(name);
-                // Update input text
+                if (cb.checked) {
+                    this.selectedNames.add(name);
+                    this.selectedNamesByCategory[this.currentCategory].add(name);
+                } else {
+                    this.selectedNames.delete(name);
+                    this.selectedNamesByCategory[this.currentCategory].delete(name);
+                }
+                // Preserve current search term in the input (do not clear value)
+                const currentSearchTerm = nameFilterInput.value.trim();
+                // Only update placeholder count; keep user's typed text intact
                 const count = this.selectedNames.size;
-                nameFilterInput.value = count === 0 ? '' : `${count} selected`;
+                if (count > 0) {
+                    nameFilterInput.placeholder = `${count} selected`;
+                } else {
+                    nameFilterInput.placeholder = 'Search names...';
+                }
                 this.currentPage = 1;
                 this.updateChart();
                 this.renderTable();
                 // Re-render dropdown so selected items jump to top without reopening
-                const term = (nameFilterInput.value === `${count} selected`) ? '' : nameFilterInput.value;
                 const previousScroll = nameFilterDropdown.scrollTop;
-                this.filterNameOptions(term);
+                this.filterNameOptions(currentSearchTerm);
                 nameFilterDropdown.style.display = 'block';
                 nameFilterDropdown.scrollTop = previousScroll;
             });
@@ -2187,15 +2235,27 @@ class TrendReports {
             // Also support direct checkbox click without closing
             cb.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (cb.checked) this.selectedNames.add(name); else this.selectedNames.delete(name);
+                if (cb.checked) {
+                    this.selectedNames.add(name);
+                    this.selectedNamesByCategory[this.currentCategory].add(name);
+                } else {
+                    this.selectedNames.delete(name);
+                    this.selectedNamesByCategory[this.currentCategory].delete(name);
+                }
+                // Preserve current search term in the input (do not clear value)
+                const currentSearchTerm = nameFilterInput.value.trim();
+                // Only update placeholder count; keep user's typed text intact
                 const count = this.selectedNames.size;
-                nameFilterInput.value = count === 0 ? '' : `${count} selected`;
+                if (count > 0) {
+                    nameFilterInput.placeholder = `${count} selected`;
+                } else {
+                    nameFilterInput.placeholder = 'Search names...';
+                }
                 this.currentPage = 1;
                 this.updateChart();
                 this.renderTable();
-                const term = (nameFilterInput.value === `${count} selected`) ? '' : nameFilterInput.value;
                 const previousScroll = nameFilterDropdown.scrollTop;
-                this.filterNameOptions(term);
+                this.filterNameOptions(currentSearchTerm);
                 nameFilterDropdown.style.display = 'block';
                 nameFilterDropdown.scrollTop = previousScroll;
             });
