@@ -1257,7 +1257,7 @@ setupProductFilter() {
             // Return focus to input for immediate typing
             nameFilterInput.focus();
         }
-    });
+    }); 
     
     // Also handle click events for better UX
     nameFilterInput.addEventListener('click', () => {

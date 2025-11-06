@@ -1024,11 +1024,11 @@ app.get('/api/analytics', async (req, res) => {
         WHERE report_date >= $1::date AND report_date <= $2::date
       `;
 
+      // Use direct date comparison to avoid timezone casting issues when the column is DATE
       const bizAggSql = `
         SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
         FROM amazon_sales_traffic
-        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
-          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+        WHERE date >= $1::date AND date <= $2::date
       `;
 
       const [adRes, bizRes] = await Promise.all([
@@ -1126,8 +1126,7 @@ app.get('/api/analytics', async (req, res) => {
         const totalSalesSql = `
           SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
           FROM amazon_sales_traffic
-          WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
-            AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+          WHERE date >= $1::date AND date <= $2::date
         `;
         const totalSalesRes = await client.query(totalSalesSql, [startDate, endBound]);
         const strictTotal = parseFloat(totalSalesRes.rows?.[0]?.total || 0);
@@ -1161,7 +1160,8 @@ app.get('/api/analytics', async (req, res) => {
     // Prepare response data
     const responseData = {
       rows: rows || [],
-      kpis: rows && rows.length > 0 ? kpis : {
+      // Always return computed KPIs (they already use business data totals when ads are missing)
+      kpis: kpis || {
         adSpend: 0,
         adSales: 0,
         totalSales: 0,
