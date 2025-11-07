@@ -999,15 +999,19 @@ class AmazonDashboard {
             if (row.searchTerm) allKeywords.add(String(row.searchTerm).trim());
         }
 
-        // If campaigns are selected, also show keywords from those campaigns (for context)
-        // But always allow selecting any keyword from the full list
+        // If campaigns are selected, filter keywords to show only those from selected campaigns
+        // If no campaigns selected, show all keywords (independent mode)
         const selectedCampaigns = new Set((this.activeFilters.campaigns || []).map(s => String(s).toLowerCase()));
         const campaignKeywords = new Set();
+        
         if (selectedCampaigns.size > 0) {
+            // Filter rows that belong to selected campaigns
             const sourceRows = this.currentData.filter(r => {
                 const cn = String(r.campaignName || '').toLowerCase();
-                return Array.from(selectedCampaigns).some(sc => cn.includes(sc));
+                return Array.from(selectedCampaigns).some(sc => cn.includes(sc) || sc.includes(cn));
             });
+            
+            // Collect keywords from rows that belong to selected campaigns
             for (const row of sourceRows) {
                 if (row.keywords) {
                     row.keywords.split(',').forEach(k => {
@@ -1034,16 +1038,17 @@ class AmazonDashboard {
         const currentKeywordSelections = this.activeFilters.keywords || [];
 
         // Render custom multi-selects with tags + live filter input and tick checkboxes
+        // Campaign filter: show tags/chips with campaign names
         this.renderMultiSelect('campaignFilter', Array.from(campaigns), this.activeFilters.campaigns || [], 'Filter Campaigns...', (vals)=>{
             this.handleFilter('campaigns', vals);
-        }, prevState['campaignFilter'] || { open: false, query: '' });
-        // FIXED: Pass current selections directly - renderMultiSelect will filter invalid ones
+        }, prevState['campaignFilter'] || { open: false, query: '' }, true); // true = show tags
+        // Keyword filter: show only count in placeholder (no tags)
         this.renderMultiSelect('keywordFilter', keywordsToShow, currentKeywordSelections, 'Filter Keywords...', (vals)=>{
             this.handleFilter('keywords', vals);
-        }, prevState['keywordFilter'] || { open: false, query: '' });
+        }, prevState['keywordFilter'] || { open: false, query: '' }, false); // false = show count only
     }
 
-    renderMultiSelect(targetId, items, selectedValues, placeholder, onChange, initialState = { open: false, query: '' }) {
+    renderMultiSelect(targetId, items, selectedValues, placeholder, onChange, initialState = { open: false, query: '' }, showTags = false) {
         const anchor = document.getElementById(targetId);
         if (!anchor) return;
         // Hide native control
@@ -1068,7 +1073,7 @@ class AmazonDashboard {
         // Always rebuild structure to update options list
         container.innerHTML = `
             <div class="ms-control">
-                <div class="ms-tags" style="display:none;"></div>
+                <div class="ms-tags"></div>
                 <input class="ms-input" placeholder="${this.escapeHtml(placeholder)}" />
             </div>
             <div class="ms-dropdown" style="display:none"></div>
@@ -1078,9 +1083,25 @@ class AmazonDashboard {
         const tagsEl = container.querySelector('.ms-tags');
         const dropdown = container.querySelector('.ms-dropdown');
         
-        // Ensure tags container stays hidden
+        // Set initial tags container visibility based on showTags parameter
         if (tagsEl) {
-            tagsEl.style.display = 'none';
+            if (!showTags) {
+                tagsEl.style.display = 'none';
+                tagsEl.style.visibility = 'hidden';
+                tagsEl.style.height = '0';
+                tagsEl.style.width = '0';
+                tagsEl.style.overflow = 'hidden';
+            } else {
+                tagsEl.style.display = 'flex';
+                tagsEl.style.visibility = 'visible';
+                tagsEl.style.height = 'auto';
+                tagsEl.style.width = 'auto';
+                tagsEl.style.overflow = 'visible';
+                tagsEl.style.flexWrap = 'wrap';
+                tagsEl.style.gap = '4px';
+                tagsEl.style.alignItems = 'center';
+                tagsEl.style.padding = '2px 4px';
+            }
         }
 
         // FIXED: Always use selectedValues parameter (from this.activeFilters) as source of truth
@@ -1095,19 +1116,54 @@ class AmazonDashboard {
 
         const updateInputPlaceholder = () => {
             const count = state.selected.size;
-            if (count > 0) {
-                input.placeholder = `${count} selected`;
-            } else {
+            if (showTags) {
+                // For campaign filter: always show original placeholder when tags are visible
                 input.placeholder = placeholder;
+            } else {
+                // For keyword filter: show count in placeholder
+                if (count > 0) {
+                    input.placeholder = `${count} selected`;
+                } else {
+                    input.placeholder = placeholder;
+                }
             }
         };
 
         const syncTags = () => {
-            // Don't show tags in input box - just update placeholder with count
-            // Keep tags container hidden
-            if (tagsEl) {
-                tagsEl.innerHTML = '';
-                tagsEl.style.display = 'none';
+            if (showTags) {
+                // Show tags/chips for campaign filter
+                if (tagsEl) {
+                    tagsEl.innerHTML = '';
+                    state.selected.forEach(val => {
+                        const tag = document.createElement('span');
+                        tag.className = 'ms-tag';
+                        tag.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: #e3f2fd; color: #1976d2; border-radius: 12px; font-size: 12px; margin: 2px;';
+                        tag.innerHTML = `${this.escapeHtml(val)}<button type="button" class="ms-remove" aria-label="Remove" style="background: none; border: none; color: #1976d2; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; margin-left: 4px;">×</button>`;
+                        
+                        const removeBtn = tag.querySelector('.ms-remove');
+                        removeBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            state.selected.delete(val);
+                            syncTags();
+                            syncOptions();
+                            updateInputPlaceholder();
+                            onChange(Array.from(state.selected));
+                        });
+                        
+                        tagsEl.appendChild(tag);
+                    });
+                    tagsEl.style.display = state.selected.size > 0 ? 'flex' : 'none';
+                }
+            } else {
+                // Hide tags for keyword filter - show count in placeholder only
+                if (tagsEl) {
+                    tagsEl.innerHTML = '';
+                    tagsEl.style.display = 'none';
+                    tagsEl.style.visibility = 'hidden';
+                    tagsEl.style.height = '0';
+                    tagsEl.style.width = '0';
+                    tagsEl.style.overflow = 'hidden';
+                }
             }
             updateInputPlaceholder();
         };
@@ -1339,15 +1395,6 @@ class AmazonDashboard {
         input.value = state.query || '';
         syncOptions();
         updateInputPlaceholder();
-        
-        // Ensure tags container is always hidden (no tags shown in input)
-        if (tagsEl) {
-            tagsEl.style.display = 'none';
-            tagsEl.style.visibility = 'hidden';
-            tagsEl.style.height = '0';
-            tagsEl.style.width = '0';
-            tagsEl.style.overflow = 'hidden';
-        }
         
         if (initialState.open) {
             dropdown.style.display = 'block';
@@ -3655,34 +3702,67 @@ class AmazonDashboard {
         // FIXED: Only re-populate filter options when campaigns change (not when keywords change)
         // This preserves keyword multi-select state when selecting multiple keywords
         if (filterType === 'campaigns' || filterType === 'campaign') {
-            // When campaigns change, drop keyword selections that no longer belong
+            // When campaigns change, drop keyword selections that no longer belong to selected campaigns
             const selectedCampaignsSet = new Set((this.activeFilters.campaigns || []).map(s => String(s).toLowerCase()));
+            
             if (selectedCampaignsSet.size > 0) {
-                const validKeywords = new Set();
-                for (const row of this.currentData.filter(r => {
-                    const cn = String(r.campaignName || '').toLowerCase();
-                    return Array.from(selectedCampaignsSet).some(sc => cn.includes(sc));
-                })) {
+                // Build a map: keyword -> set of campaigns it belongs to
+                const keywordToCampaigns = new Map();
+                
+                // First pass: collect all keywords and their associated campaigns
+                for (const row of this.currentData) {
+                    const campaignName = String(row.campaignName || '').toLowerCase();
+                    const keywords = [];
+                    
+                    // Collect keywords from keywords field
                     if (row.keywords) {
                         row.keywords.split(',').forEach(k => {
                             const trimmed = k.trim();
-                            if (trimmed) validKeywords.add(trimmed);
+                            if (trimmed) keywords.push(trimmed);
                         });
                     }
+                    
+                    // Collect search terms
                     if (row.searchTerm) {
                         const trimmed = String(row.searchTerm).trim();
-                        if (trimmed) validKeywords.add(trimmed);
+                        if (trimmed) keywords.push(trimmed);
                     }
+                    
+                    // Map each keyword to its campaigns
+                    keywords.forEach(kw => {
+                        const kwLower = kw.toLowerCase();
+                        if (!keywordToCampaigns.has(kwLower)) {
+                            keywordToCampaigns.set(kwLower, new Set());
+                        }
+                        keywordToCampaigns.get(kwLower).add(campaignName);
+                    });
                 }
-                // Normalize keyword comparison (case-insensitive, trimmed)
-                const validKeywordsLower = new Set(Array.from(validKeywords).map(k => k.toLowerCase()));
+                
+                // Second pass: filter keywords - keep only those that belong to at least one selected campaign
+                const validKeywordsLower = new Set();
+                keywordToCampaigns.forEach((campaigns, keywordLower) => {
+                    // Check if this keyword belongs to any selected campaign
+                    const belongsToSelectedCampaign = Array.from(campaigns).some(campaign => {
+                        return Array.from(selectedCampaignsSet).some(selectedCampaign => {
+                            return campaign.includes(selectedCampaign) || selectedCampaign.includes(campaign);
+                        });
+                    });
+                    
+                    if (belongsToSelectedCampaign) {
+                        validKeywordsLower.add(keywordLower);
+                    }
+                });
+                
+                // Filter out keywords that don't belong to any selected campaign
                 this.activeFilters.keywords = (this.activeFilters.keywords || []).filter(k => {
                     const normalized = String(k).trim().toLowerCase();
-                    return validKeywordsLower.has(normalized) || validKeywords.has(String(k).trim());
+                    return validKeywordsLower.has(normalized);
                 });
             } else {
-                // No campaigns selected - keep all keyword selections
+                // No campaigns selected - keep all keyword selections (independent mode)
             }
+            
+            // Re-populate filter options to update keyword dropdown with filtered list
             this.populateFilterOptions();
         }
     }
