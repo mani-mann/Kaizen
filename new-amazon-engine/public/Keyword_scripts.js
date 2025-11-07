@@ -988,30 +988,57 @@ class AmazonDashboard {
             }
         }
 
-        // Determine which rows should drive the keyword list: if campaigns are selected,
-        // restrict keywords to those belonging to selected campaigns (dependency like trend page)
+        // FIXED: Always build keyword list from ALL data (not restricted by campaigns)
+        // This allows independent multi-select of keywords even when no campaigns are selected
+        // Build keyword set from ALL rows (also include search terms)
+        const allKeywords = new Set();
+        for (const row of this.currentData) {
+            if (row.keywords) {
+                row.keywords.split(',').forEach(k => allKeywords.add(k.trim()));
+            }
+            if (row.searchTerm) allKeywords.add(String(row.searchTerm).trim());
+        }
+
+        // If campaigns are selected, also show keywords from those campaigns (for context)
+        // But always allow selecting any keyword from the full list
         const selectedCampaigns = new Set((this.activeFilters.campaigns || []).map(s => String(s).toLowerCase()));
-        const sourceRows = selectedCampaigns.size
-            ? this.currentData.filter(r => {
+        const campaignKeywords = new Set();
+        if (selectedCampaigns.size > 0) {
+            const sourceRows = this.currentData.filter(r => {
                 const cn = String(r.campaignName || '').toLowerCase();
                 return Array.from(selectedCampaigns).some(sc => cn.includes(sc));
-            })
-            : this.currentData;
-
-        // Build keyword set from filtered rows (also include search terms)
-        const keywords = new Set();
-        for (const row of sourceRows) {
-            if (row.keywords) {
-                row.keywords.split(',').forEach(k => keywords.add(k.trim()));
+            });
+            for (const row of sourceRows) {
+                if (row.keywords) {
+                    row.keywords.split(',').forEach(k => {
+                        const trimmed = k.trim();
+                        if (trimmed) campaignKeywords.add(trimmed);
+                    });
+                }
+                if (row.searchTerm) {
+                    const trimmed = String(row.searchTerm).trim();
+                    if (trimmed) campaignKeywords.add(trimmed);
+                }
             }
-            if (row.searchTerm) keywords.add(String(row.searchTerm).trim());
         }
+
+        // Decide which keywords to show:
+        // - If NO campaigns selected: show ALL keywords (independent multi-select)
+        // - If campaigns ARE selected: restrict to ONLY keywords belonging to those campaigns
+        const keywordsToShow = selectedCampaigns.size > 0 
+            ? Array.from(campaignKeywords) 
+            : Array.from(allKeywords);
+
+        // FIXED: Always use this.activeFilters.keywords directly as source of truth
+        // renderMultiSelect will filter out invalid ones automatically
+        const currentKeywordSelections = this.activeFilters.keywords || [];
 
         // Render custom multi-selects with tags + live filter input and tick checkboxes
         this.renderMultiSelect('campaignFilter', Array.from(campaigns), this.activeFilters.campaigns || [], 'Filter Campaigns...', (vals)=>{
             this.handleFilter('campaigns', vals);
         }, prevState['campaignFilter'] || { open: false, query: '' });
-        this.renderMultiSelect('keywordFilter', Array.from(keywords), this.activeFilters.keywords || [], 'Filter Keywords...', (vals)=>{
+        // FIXED: Pass current selections directly - renderMultiSelect will filter invalid ones
+        this.renderMultiSelect('keywordFilter', keywordsToShow, currentKeywordSelections, 'Filter Keywords...', (vals)=>{
             this.handleFilter('keywords', vals);
         }, prevState['keywordFilter'] || { open: false, query: '' });
     }
@@ -1023,6 +1050,14 @@ class AmazonDashboard {
         anchor.style.display = 'none';
         const containerId = `${targetId}-ms`;
         let container = document.getElementById(containerId);
+        
+        // Preserve query state from existing input (if any)
+        let existingQuery = '';
+        if (container) {
+            const existingInput = container.querySelector('.ms-input');
+            if (existingInput) existingQuery = existingInput.value || '';
+        }
+        
         if (!container) {
             container = document.createElement('div');
             container.id = containerId;
@@ -1030,10 +1065,10 @@ class AmazonDashboard {
             anchor.parentNode.insertBefore(container, anchor.nextSibling);
         }
 
-        // Build structure
+        // Always rebuild structure to update options list
         container.innerHTML = `
             <div class="ms-control">
-                <div class="ms-tags"></div>
+                <div class="ms-tags" style="display:none;"></div>
                 <input class="ms-input" placeholder="${this.escapeHtml(placeholder)}" />
             </div>
             <div class="ms-dropdown" style="display:none"></div>
@@ -1042,69 +1077,278 @@ class AmazonDashboard {
         const input = container.querySelector('.ms-input');
         const tagsEl = container.querySelector('.ms-tags');
         const dropdown = container.querySelector('.ms-dropdown');
+        
+        // Ensure tags container stays hidden
+        if (tagsEl) {
+            tagsEl.style.display = 'none';
+        }
 
+        // FIXED: Always use selectedValues parameter (from this.activeFilters) as source of truth
+        // Filter to only include items that are in the current items list (handles campaign filtering)
+        const itemsSet = new Set(items || []);
+        const finalSelectedValues = (selectedValues || []).filter(v => itemsSet.has(v));
+        
         const state = {
-            selected: new Set((selectedValues || []).filter(Boolean)),
-            query: initialState.query || ''
+            selected: new Set(finalSelectedValues.filter(Boolean)),
+            query: initialState.query || existingQuery || ''
+        };
+
+        const updateInputPlaceholder = () => {
+            const count = state.selected.size;
+            if (count > 0) {
+                input.placeholder = `${count} selected`;
+            } else {
+                input.placeholder = placeholder;
+            }
         };
 
         const syncTags = () => {
-            tagsEl.innerHTML = '';
-            state.selected.forEach(val => {
-                const tag = document.createElement('span');
-                tag.className = 'ms-tag';
-                tag.innerHTML = `${this.escapeHtml(val)}<button type="button" class="ms-remove" aria-label="Remove">×</button>`;
-                tag.querySelector('.ms-remove').addEventListener('click', (e) => {
-                    e.stopPropagation();
+            // Don't show tags in input box - just update placeholder with count
+            // Keep tags container hidden
+            if (tagsEl) {
+                tagsEl.innerHTML = '';
+                tagsEl.style.display = 'none';
+            }
+            updateInputPlaceholder();
+        };
+
+        const addOption = (val, isSelected, isSelectedNotMatching) => {
+            const option = document.createElement('div');
+            option.className = 'ms-option';
+            option.dataset.value = val;
+            
+            const id = `ms-opt-${targetId}-${Math.random().toString(36).slice(2)}`;
+            const checked = isSelected ? 'checked' : '';
+            const notMatchingStyle = isSelectedNotMatching ? 'opacity: 0.7; font-style: italic; color: #666;' : '';
+            const notMatchingLabel = isSelectedNotMatching ? '<span style="font-size: 12px; color: #999; margin-left: auto;">(selected)</span>' : '';
+            
+            option.innerHTML = `
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 8px;">
+                    <input type="checkbox" id="${id}" ${checked} />
+                    <span style="${notMatchingStyle}">${this.escapeHtml(val)}</span>
+                    ${notMatchingLabel}
+                </label>
+            `;
+            
+            const cb = option.querySelector('input[type="checkbox"]');
+            cb.addEventListener('change', (e) => {
+                if (cb.checked) {
+                    state.selected.add(val);
+                } else {
                     state.selected.delete(val);
-                    syncTags();
-                    syncOptions();
-                    onChange(Array.from(state.selected));
-                });
-                tagsEl.appendChild(tag);
+                }
+                // Clear input value but KEEP the search query so filtered list continues to show
+                // This allows selecting multiple items with the same search term
+                input.value = '';
+                // DON'T clear state.query - keep it so filtered results stay visible
+                syncTags();
+                syncOptions(); // This will use the existing state.query to show filtered results
+                updateInputPlaceholder();
+                onChange(Array.from(state.selected));
+                // Keep dropdown open and input focused for multi-select
+                dropdown.style.display = 'block';
+                input.focus();
             });
+            
+            dropdown.appendChild(option);
         };
 
         const syncOptions = () => {
             const q = state.query.toLowerCase();
-            const sorted = (items || []).slice().sort((a,b)=>a.localeCompare(b));
-            dropdown.innerHTML = sorted
-                .filter(v => !q || v.toLowerCase().includes(q))
-                .map(v => {
-                    const checked = state.selected.has(v) ? 'checked' : '';
-                    // Option row with a checkbox tick similar to trend filter
-                    return `<label class="ms-option" data-value="${this.escapeHtml(v)}" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 8px;">
-                                <input type="checkbox" ${checked} />
-                                <span>${this.escapeHtml(v)}</span>
-                            </label>`;
-                }).join('');
-            dropdown.querySelectorAll('.ms-option').forEach(opt => {
-                const val = opt.getAttribute('data-value');
-                const cb = opt.querySelector('input[type="checkbox"]');
-                const toggle = () => {
-                    if (state.selected.has(val)) state.selected.delete(val); else state.selected.add(val);
-                    syncTags();
-                    // Update only the checkbox state without rebuilding whole list to avoid flicker
-                    cb.checked = state.selected.has(val);
-                    onChange(Array.from(state.selected));
-                    input.focus();
-                };
-                opt.addEventListener('mousedown', (e) => { e.preventDefault(); toggle(); });
-                cb.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+            dropdown.innerHTML = '';
+            
+            // Add "Clear All" / "All Items" option at top
+            const allOption = document.createElement('div');
+            allOption.className = 'ms-option';
+            allOption.textContent = 'All Items';
+            allOption.style.padding = '6px 8px';
+            allOption.style.cursor = 'pointer';
+            allOption.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                state.selected.clear();
+                // Clear input value
+                input.value = '';
+                syncTags();
+                syncOptions();
+                updateInputPlaceholder();
+                onChange(Array.from(state.selected));
             });
+            dropdown.appendChild(allOption);
+            
+            // Add separator if there are selected items
+            if (state.selected.size > 0) {
+                const separator = document.createElement('div');
+                separator.className = 'ms-option-separator';
+                separator.style.height = '1px';
+                separator.style.backgroundColor = '#e0e0e0';
+                separator.style.margin = '4px 0';
+                dropdown.appendChild(separator);
+            }
+            
+            // Get all items
+            const allItems = Array.from(items || []);
+            
+            // If no search term, show all items with selected ones at top
+            if (!q || q.trim() === '') {
+                const selectedItems = Array.from(state.selected);
+                const otherItems = allItems.filter(item => !state.selected.has(item));
+                const orderedItems = [...selectedItems, ...otherItems];
+                
+                orderedItems.forEach(item => {
+                    addOption(item, state.selected.has(item), false);
+                });
+            } else {
+                // Filter items based on search term
+                const filteredItems = allItems.filter(item => 
+                    item.toLowerCase().includes(q)
+                );
+                
+                // Always show selected items at the top, even if they don't match search
+                const selectedItems = Array.from(state.selected);
+                const selectedInSearch = selectedItems.filter(item => 
+                    item.toLowerCase().includes(q)
+                );
+                const selectedNotInSearch = selectedItems.filter(item => 
+                    !item.toLowerCase().includes(q)
+                );
+                
+                // Combine: selected items (matching search) + other matching items + selected items (not matching search)
+                const orderedItems = [
+                    ...selectedInSearch,
+                    ...filteredItems.filter(item => !state.selected.has(item)),
+                    ...selectedNotInSearch
+                ];
+                
+                orderedItems.forEach(item => {
+                    const isSelected = state.selected.has(item);
+                    const isSelectedNotMatching = isSelected && !item.toLowerCase().includes(q);
+                    addOption(item, isSelected, isSelectedNotMatching);
+                });
+                
+                // Show "No results" if no matches
+                if (filteredItems.length === 0 && selectedInSearch.length === 0) {
+                    const noResults = document.createElement('div');
+                    noResults.className = 'ms-option';
+                    noResults.textContent = 'No matching items found';
+                    noResults.style.color = '#999';
+                    noResults.style.cursor = 'default';
+                    noResults.style.padding = '6px 8px';
+                    dropdown.appendChild(noResults);
+                }
+            }
+            
+            // Add "Clear All" option at bottom if there are selections
+            if (state.selected.size > 0) {
+                const clearAllOption = document.createElement('div');
+                clearAllOption.className = 'ms-option';
+                clearAllOption.textContent = 'Clear All';
+                clearAllOption.style.color = '#e74c3c';
+                clearAllOption.style.fontWeight = '500';
+                clearAllOption.style.padding = '6px 8px';
+                clearAllOption.style.cursor = 'pointer';
+                clearAllOption.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    state.selected.clear();
+                    // Clear input value
+                    input.value = '';
+                    syncTags();
+                    syncOptions();
+                    updateInputPlaceholder();
+                    onChange(Array.from(state.selected));
+                });
+                dropdown.appendChild(clearAllOption);
+            }
         };
 
-        input.addEventListener('focus', () => { dropdown.style.display = 'block'; });
-        input.addEventListener('input', () => { state.query = input.value || ''; syncOptions(); dropdown.style.display = 'block';});
-        container.addEventListener('click', () => { input.focus(); dropdown.style.display = 'block'; });
+        // Input focus/click events - show dropdown
+        input.addEventListener('focus', () => {
+            // Always clear input value when focused so user can type
+            input.value = '';
+            dropdown.style.display = 'block';
+            updateInputPlaceholder();
+            syncOptions(); // Will use existing state.query if any
+        });
+        
+        input.addEventListener('click', () => {
+            // Always clear input value when clicked so user can type
+            input.value = '';
+            dropdown.style.display = 'block';
+            updateInputPlaceholder();
+            syncOptions(); // Will use existing state.query if any
+        });
+        
+        // Power-user: Enter or Escape clears only the search text (keeps selections)
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === 'Escape') {
+                e.preventDefault();
+                // Clear search text AND query state but keep selected items intact
+                input.value = '';
+                state.query = ''; // Clear query so all items show
+                // Keep dropdown open and show all, with selected items at top
+                dropdown.style.display = 'block';
+                syncOptions();
+            }
+        });
+        
+        // Also handle Enter/Escape when focus is inside the dropdown (e.g., on a checkbox)
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== 'Escape') return;
+            const isOpen = dropdown && dropdown.style.display !== 'none';
+            if (!isOpen) return;
+            const active = document.activeElement;
+            if (active === input || (dropdown && dropdown.contains(active))) {
+                e.preventDefault();
+                input.value = '';
+                state.query = ''; // Clear query so all items show
+                dropdown.style.display = 'block';
+                syncOptions();
+                // Return focus to input for immediate typing
+                input.focus();
+            }
+        });
+        
+        // Input search - show dropdown when user types
+        input.addEventListener('input', (e) => {
+            state.query = e.target.value.trim();
+            dropdown.style.display = 'block';
+            syncOptions();
+        });
+        
+        // Blur handling with delay to allow clicks inside dropdown
+        input.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (!dropdown.contains(document.activeElement) && 
+                    !dropdown.matches(':hover')) {
+                    dropdown.style.display = 'none';
+                    // Clear input value - only show count in placeholder, not in input value
+                    input.value = '';
+                    updateInputPlaceholder();
+                }
+            }, 200);
+        });
+        
+        // Click outside to close
         document.addEventListener('click', (e) => {
-            if (!container.contains(e.target)) dropdown.style.display = 'none';
+            if (!container.contains(e.target)) {
+                dropdown.style.display = 'none';
+            }
         });
 
         syncTags();
         // Apply initial query and open state to preserve UX during multi-select
         input.value = state.query || '';
         syncOptions();
+        updateInputPlaceholder();
+        
+        // Ensure tags container is always hidden (no tags shown in input)
+        if (tagsEl) {
+            tagsEl.style.display = 'none';
+            tagsEl.style.visibility = 'hidden';
+            tagsEl.style.height = '0';
+            tagsEl.style.width = '0';
+            tagsEl.style.overflow = 'hidden';
+        }
+        
         if (initialState.open) {
             dropdown.style.display = 'block';
             input.focus();
@@ -3408,7 +3652,37 @@ class AmazonDashboard {
         
         this.updateTable();
         this.updateResultsCount();
+        // FIXED: Only re-populate filter options when campaigns change (not when keywords change)
+        // This preserves keyword multi-select state when selecting multiple keywords
         if (filterType === 'campaigns' || filterType === 'campaign') {
+            // When campaigns change, drop keyword selections that no longer belong
+            const selectedCampaignsSet = new Set((this.activeFilters.campaigns || []).map(s => String(s).toLowerCase()));
+            if (selectedCampaignsSet.size > 0) {
+                const validKeywords = new Set();
+                for (const row of this.currentData.filter(r => {
+                    const cn = String(r.campaignName || '').toLowerCase();
+                    return Array.from(selectedCampaignsSet).some(sc => cn.includes(sc));
+                })) {
+                    if (row.keywords) {
+                        row.keywords.split(',').forEach(k => {
+                            const trimmed = k.trim();
+                            if (trimmed) validKeywords.add(trimmed);
+                        });
+                    }
+                    if (row.searchTerm) {
+                        const trimmed = String(row.searchTerm).trim();
+                        if (trimmed) validKeywords.add(trimmed);
+                    }
+                }
+                // Normalize keyword comparison (case-insensitive, trimmed)
+                const validKeywordsLower = new Set(Array.from(validKeywords).map(k => k.toLowerCase()));
+                this.activeFilters.keywords = (this.activeFilters.keywords || []).filter(k => {
+                    const normalized = String(k).trim().toLowerCase();
+                    return validKeywordsLower.has(normalized) || validKeywords.has(String(k).trim());
+                });
+            } else {
+                // No campaigns selected - keep all keyword selections
+            }
             this.populateFilterOptions();
         }
     }
