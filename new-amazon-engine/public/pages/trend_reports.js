@@ -19,6 +19,14 @@ class TrendReports {
             'campaigns': new Set(), 
             'search-terms': new Set()
         };
+        
+        // Campaign filter for search-terms tab
+        this.selectedCampaigns = new Set(); // multi-select campaigns
+        this.selectedCampaignsByCategory = {
+            'products': new Set(),
+            'campaigns': new Set(), 
+            'search-terms': new Set()
+        };
         this.currentPage = 1;
         this.itemsPerPage = Number(localStorage.getItem('trend_rows_per_page') || 20);
         this.sortColumn = 'date';
@@ -71,6 +79,15 @@ class TrendReports {
         
         // Ensure DOM is fully ready before loading data and setting up dropdowns
         setTimeout(() => {
+            // Set initial campaign filter visibility
+            const campaignFilterContainer = document.getElementById('campaignFilterContainer');
+            if (campaignFilterContainer) {
+                if (this.currentCategory === 'search-terms') {
+                    campaignFilterContainer.style.display = 'flex';
+                } else {
+                    campaignFilterContainer.style.display = 'none';
+                }
+            }
             this.loadInitialData();
         }, 100);
         
@@ -141,6 +158,9 @@ class TrendReports {
         // Name filter functionality (multi-select)
         // Name filter functionality (multi-select)
         this.setupNameFilter();
+        
+        // Campaign filter functionality (multi-select) - only for search-terms tab
+        this.setupCampaignFilter();
 
         // Pagination
         document.getElementById('prevPage').addEventListener('click', () => {
@@ -727,11 +747,30 @@ class TrendReports {
             this.selectedNamesByCategory[previousCategory] = new Set(this.selectedNames);
         }
         
+        // Save campaign selections before switching (for search-terms)
+        if (this.selectedCampaigns && this.selectedCampaigns.size > 0 && previousCategory) {
+            this.selectedCampaignsByCategory[previousCategory] = new Set(this.selectedCampaigns);
+        }
+        
         // Load selections for the new category
         this.selectedNames = new Set(this.selectedNamesByCategory[category] || []);
+        this.selectedCampaigns = new Set(this.selectedCampaignsByCategory[category] || []);
+        
+        // Show/hide campaign filter based on category
+        const campaignFilterContainer = document.getElementById('campaignFilterContainer');
+        if (campaignFilterContainer) {
+            if (category === 'search-terms') {
+                campaignFilterContainer.style.display = 'flex';
+            } else {
+                campaignFilterContainer.style.display = 'none';
+            }
+        }
         
         const nameInputEl = document.getElementById('nameFilterInput');
         if (nameInputEl) nameInputEl.value = '';
+        
+        const campaignInputEl = document.getElementById('campaignFilterInput');
+        if (campaignInputEl) campaignInputEl.value = '';
         
         // Restore per-category metric selections or set defaults
         let saved = this.selectedMetricsByCategory[this.currentCategory] || [];
@@ -764,6 +803,9 @@ class TrendReports {
             // Fetch new data for the selected category
             await this.fetchDataFromDatabase();
             this.updateNameFilter();
+            if (category === 'search-terms') {
+                this.updateCampaignFilter();
+            }
             this.updateChart();
             this.renderTable();
         } catch (error) {
@@ -819,6 +861,9 @@ class TrendReports {
             // Fetch real data from database
             await this.fetchDataFromDatabase();
             this.updateNameFilter();
+            if (this.currentCategory === 'search-terms') {
+                this.updateCampaignFilter();
+            }
             this.updateChart();
             this.renderTable();
         } catch (error) {
@@ -1378,9 +1423,20 @@ class TrendReports {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
         
+        // Apply campaign filter for search-terms tab
+        if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                if (isTotal) return true; // Keep DAILY TOTAL rows
+                const campaignName = item.campaignName || item.campaign_name || '';
+                return campaignName && this.selectedCampaigns.has(campaignName);
+            });
+        }
+        
         // If filter is applied, use ALL data for that filter (ignore date range)
         // Only apply date range if NO filter is selected
-        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName || (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0);
         
         // Debug: Log filter status for chart
         console.log('🔍 Chart Filter Priority Debug:', {
@@ -2119,23 +2175,47 @@ class TrendReports {
         const nameFilterInput = document.getElementById('nameFilterInput');
         const currentSearchTerm = nameFilterInput ? nameFilterInput.value.trim() : '';
         this.filterNameOptions(currentSearchTerm);
+        
+        // Update campaign filter if on search-terms tab
+        if (this.currentCategory === 'search-terms') {
+            this.updateCampaignFilter();
+        }
     }
 
     filterNameOptions(searchTerm) {
         const nameFilterDropdown = document.getElementById('nameFilterDropdown');
         const nameFilterInput = document.getElementById('nameFilterInput');
         
-        // Clear existing options and add "All Names" (clears selection)
-        nameFilterDropdown.innerHTML = '<div class="filter-option" data-value="">All Names</div>';
+        // Clear existing options and add "All Names" header with Clear button
+        const headerDiv = document.createElement('div');
+        headerDiv.className = 'filter-header'; // Add class so cleanup doesn't remove it
+        headerDiv.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-primary); background: var(--bg-secondary); font-weight: 600;';
+        headerDiv.innerHTML = `
+            <span>All Names</span>
+            <button id="clearNameFilterBtn" style="background: var(--primary); color: white; border: none; padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 500;">Clear</button>
+        `;
+        nameFilterDropdown.innerHTML = '';
+        nameFilterDropdown.appendChild(headerDiv);
         
-        // Add click event for "All Names" option
-        const allNamesOption = nameFilterDropdown.querySelector('.filter-option');
-        allNamesOption.addEventListener('mousedown', (e) => {
+        // Add click event for "All Names" - just show all options, don't clear
+        headerDiv.querySelector('span').addEventListener('mousedown', (e) => {
             e.preventDefault();
+            // Just reset search and show all options, don't clear selections
+            nameFilterInput.value = '';
+            nameFilterDropdown.style.display = 'block';
+            this.filterNameOptions('');
+        });
+        
+        // Add click event for Clear button - actually clear selections
+        const clearNameBtn = document.getElementById('clearNameFilterBtn');
+        clearNameBtn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             // Clear selections for current category only
             this.selectedName = '';
             this.selectedNames.clear();
             this.selectedNamesByCategory[this.currentCategory].clear();
+            nameFilterInput.value = '';
             nameFilterDropdown.style.display = 'block';
             this.filterNameOptions('');
             this.currentPage = 1;
@@ -2277,7 +2357,8 @@ class TrendReports {
         setTimeout(() => {
             const allElements = nameFilterDropdown.querySelectorAll('*');
             allElements.forEach(el => {
-                if (!el.classList.contains('filter-option') && !el.closest('.filter-option')) {
+                // Preserve filter-header and filter-option elements
+                if (!el.classList.contains('filter-option') && !el.classList.contains('filter-header') && !el.closest('.filter-option') && !el.closest('.filter-header')) {
                     el.remove();
                 }
             });
@@ -2325,7 +2406,8 @@ class TrendReports {
                     el.textContent.includes('results') ||
                     el.textContent.includes('Showing')
                 )) {
-                    if (!el.classList.contains('filter-option')) {
+                    // Preserve filter-header and filter-option elements
+                    if (!el.classList.contains('filter-option') && !el.classList.contains('filter-header')) {
                         el.remove();
                     }
                 }
@@ -2334,6 +2416,285 @@ class TrendReports {
     }
 
     // filterData method removed - using name filter only
+
+    setupCampaignFilter() {
+        const campaignFilterInput = document.getElementById('campaignFilterInput');
+        const campaignFilterDropdown = document.getElementById('campaignFilterDropdown');
+        
+        if (!campaignFilterInput || !campaignFilterDropdown) return;
+        
+        // Input focus/blur events
+        campaignFilterInput.addEventListener('focus', () => {
+            campaignFilterDropdown.style.display = 'block';
+            campaignFilterInput.closest('.name-filter').classList.add('dropdown-open');
+            
+            // Hide pagination when dropdown opens
+            const paginationControls = document.querySelector('.pagination-controls');
+            if (paginationControls) {
+                paginationControls.style.display = 'none';
+            }
+            
+            // Preserve current search term when focusing
+            const currentSearchTerm = campaignFilterInput.value.trim();
+            this.filterCampaignOptions(currentSearchTerm);
+        });
+        
+        // Power-user: Enter or Escape clears only the search text (keeps selections)
+        campaignFilterInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === 'Escape') {
+                e.preventDefault();
+                // Clear search text but keep selectedCampaigns intact
+                campaignFilterInput.value = '';
+                // Keep dropdown open and show all, with selected items pinned on top
+                campaignFilterDropdown.style.display = 'block';
+                campaignFilterInput.closest('.name-filter').classList.add('dropdown-open');
+                this.filterCampaignOptions('');
+            }
+        });
+
+        campaignFilterInput.addEventListener('blur', (e) => {
+            // Delay hiding to allow click on dropdown
+            setTimeout(() => {
+                if (!campaignFilterDropdown.contains(document.activeElement) && 
+                    !campaignFilterDropdown.matches(':hover')) {
+                    campaignFilterDropdown.style.display = 'none';
+                    campaignFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+                    
+                    // Show pagination when dropdown closes
+                    const paginationControls = document.querySelector('.pagination-controls');
+                    if (paginationControls) {
+                        paginationControls.style.display = '';
+                    }
+                }
+            }, 200);
+        });
+        
+        // Input search
+        campaignFilterInput.addEventListener('input', (e) => {
+            campaignFilterDropdown.style.display = 'block';
+            this.filterCampaignOptions(e.target.value);
+            campaignFilterInput.closest('.name-filter').classList.add('dropdown-open');
+        });
+        
+        // Click outside to close
+        document.addEventListener('click', (e) => {
+            if (!campaignFilterInput.contains(e.target) && !campaignFilterDropdown.contains(e.target)) {
+                campaignFilterDropdown.style.display = 'none';
+                campaignFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+                
+                // Show pagination when dropdown closes
+                const paginationControls = document.querySelector('.pagination-controls');
+                if (paginationControls) {
+                    paginationControls.style.display = '';
+                }
+            }
+        });
+    }
+
+    updateCampaignFilter() {
+        // Only update if we're on search-terms tab
+        if (this.currentCategory !== 'search-terms') return;
+        
+        const categoryData = this.currentData.filter(item => item.category === this.currentCategory);
+        
+        // Get unique campaign names
+        const campaignMap = {};
+        categoryData.forEach(item => {
+            const campaignName = item.campaignName || item.campaign_name || '';
+            if (!campaignName) return;
+            // Do not include total helper rows
+            const name = item.displayName || item.name;
+            if ((name || '').includes('📊') || (name || '').toLowerCase().includes('daily total') || (name || '').toLowerCase().includes('total')) {
+                return;
+            }
+            if (!campaignMap[campaignName]) {
+                campaignMap[campaignName] = new Set();
+            }
+            campaignMap[campaignName].add(item.date);
+        });
+        
+        // Store the campaign map for filtering
+        this.campaignMap = campaignMap;
+        
+        // Update the dropdown with all campaigns, preserving current search term
+        const campaignFilterInput = document.getElementById('campaignFilterInput');
+        const currentSearchTerm = campaignFilterInput ? campaignFilterInput.value.trim() : '';
+        this.filterCampaignOptions(currentSearchTerm);
+    }
+
+    filterCampaignOptions(searchTerm) {
+        // Only work on search-terms tab
+        if (this.currentCategory !== 'search-terms') return;
+        
+        const campaignFilterDropdown = document.getElementById('campaignFilterDropdown');
+        const campaignFilterInput = document.getElementById('campaignFilterInput');
+        
+        if (!campaignFilterDropdown || !campaignFilterInput) return;
+        
+        // Clear existing options and add "All Campaigns" header with Clear button
+        const headerDiv = document.createElement('div');
+        headerDiv.className = 'filter-header'; // Add class so cleanup doesn't remove it
+        headerDiv.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-primary); background: var(--bg-secondary); font-weight: 600;';
+        headerDiv.innerHTML = `
+            <span>All Campaigns</span>
+            <button id="clearCampaignFilterBtn" style="background: var(--primary); color: white; border: none; padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 500;">Clear</button>
+        `;
+        campaignFilterDropdown.innerHTML = '';
+        campaignFilterDropdown.appendChild(headerDiv);
+        
+        // Add click event for "All Campaigns" - just show all options, don't clear
+        headerDiv.querySelector('span').addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            // Just reset search and show all options, don't clear selections
+            campaignFilterInput.value = '';
+            campaignFilterDropdown.style.display = 'block';
+            this.filterCampaignOptions('');
+        });
+        
+        // Add click event for Clear button - actually clear selections
+        const clearCampaignBtn = document.getElementById('clearCampaignFilterBtn');
+        clearCampaignBtn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            // Clear selections for current category only
+            this.selectedCampaigns.clear();
+            this.selectedCampaignsByCategory[this.currentCategory].clear();
+            campaignFilterInput.value = '';
+            campaignFilterDropdown.style.display = 'block';
+            this.filterCampaignOptions('');
+            this.currentPage = 1;
+            this.updateChart();
+            this.renderTable();
+        });
+        
+        // Filter campaigns
+        const allCampaigns = Object.keys(this.campaignMap || {})
+            .filter(campaign => campaign.toLowerCase().includes(searchTerm.toLowerCase()));
+        
+        // Sort: selected campaigns first (keep alphabetical inside groups)
+        const selectedFirst = [];
+        const unselected = [];
+        allCampaigns.forEach(c => {
+            if (this.selectedCampaigns && this.selectedCampaigns.has(c)) selectedFirst.push(c); else unselected.push(c);
+        });
+        selectedFirst.sort();
+        unselected.sort();
+        const filteredCampaigns = [...selectedFirst, ...unselected];
+        
+        // Update input placeholder to show selected count
+        const selectedCount = this.selectedCampaigns ? this.selectedCampaigns.size : 0;
+        if (selectedCount > 0) {
+            campaignFilterInput.placeholder = `${selectedCount} selected`;
+        } else {
+            campaignFilterInput.placeholder = 'Filter campaigns...';
+        }
+        
+        filteredCampaigns.forEach(campaign => {
+            const dates = Array.from(this.campaignMap[campaign]).sort();
+            const dateCount = dates.length;
+            const option = document.createElement('div');
+            option.className = 'filter-option';
+            option.dataset.value = campaign;
+            
+            // Format dates based on time period
+            let dateText = '';
+            if (this.currentTimePeriod === 'daily') {
+                dateText = dates.slice(0, 5).map(d => new Date(d).getDate()).join(', ');
+                if (dates.length > 5) dateText += `... (+${dates.length - 5} more)`;
+            } else if (this.currentTimePeriod === 'weekly') {
+                dateText = dates.slice(0, 3).map(d => {
+                    const date = new Date(d);
+                    const weekStart = new Date(date);
+                    weekStart.setDate(date.getDate() - date.getDay());
+                    return `Week of ${weekStart.getDate()}`;
+                }).join(', ');
+                if (dates.length > 3) dateText += `... (+${dates.length - 3} more)`;
+            } else if (this.currentTimePeriod === 'monthly') {
+                dateText = dates.slice(0, 3).map(d => {
+                    const date = new Date(d);
+                    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                }).join(', ');
+                if (dates.length > 3) dateText += `... (+${dates.length - 3} more)`;
+            }
+            
+            // Render with a checkbox for multi-select
+            const id = `campaign-opt-${Math.random().toString(36).slice(2)}`;
+            option.innerHTML = `
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="${id}">
+                    <span>${campaign} (${dateCount} dates: ${dateText})</span>
+                </label>
+            `;
+            const cb = option.querySelector('input');
+            cb.checked = this.selectedCampaigns.has(campaign);
+            option.addEventListener('mousedown', (e) => {
+                e.preventDefault(); // keep dropdown
+                cb.checked = !cb.checked;
+                if (cb.checked) {
+                    this.selectedCampaigns.add(campaign);
+                    this.selectedCampaignsByCategory[this.currentCategory].add(campaign);
+                } else {
+                    this.selectedCampaigns.delete(campaign);
+                    this.selectedCampaignsByCategory[this.currentCategory].delete(campaign);
+                }
+                // Preserve current search term in the input
+                const currentSearchTerm = campaignFilterInput.value.trim();
+                const count = this.selectedCampaigns.size;
+                if (count > 0) {
+                    campaignFilterInput.placeholder = `${count} selected`;
+                } else {
+                    campaignFilterInput.placeholder = 'Filter campaigns...';
+                }
+                this.currentPage = 1;
+                this.updateChart();
+                this.renderTable();
+                // Re-render dropdown so selected items jump to top without reopening
+                const previousScroll = campaignFilterDropdown.scrollTop;
+                this.filterCampaignOptions(currentSearchTerm);
+                campaignFilterDropdown.style.display = 'block';
+                campaignFilterDropdown.scrollTop = previousScroll;
+            });
+
+            // Also support direct checkbox click without closing
+            cb.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (cb.checked) {
+                    this.selectedCampaigns.add(campaign);
+                    this.selectedCampaignsByCategory[this.currentCategory].add(campaign);
+                } else {
+                    this.selectedCampaigns.delete(campaign);
+                    this.selectedCampaignsByCategory[this.currentCategory].delete(campaign);
+                }
+                // Preserve current search term in the input
+                const currentSearchTerm = campaignFilterInput.value.trim();
+                const count = this.selectedCampaigns.size;
+                if (count > 0) {
+                    campaignFilterInput.placeholder = `${count} selected`;
+                } else {
+                    campaignFilterInput.placeholder = 'Filter campaigns...';
+                }
+                this.currentPage = 1;
+                this.updateChart();
+                this.renderTable();
+                const previousScroll = campaignFilterDropdown.scrollTop;
+                this.filterCampaignOptions(currentSearchTerm);
+                campaignFilterDropdown.style.display = 'block';
+                campaignFilterDropdown.scrollTop = previousScroll;
+            });
+            
+            campaignFilterDropdown.appendChild(option);
+        });
+        
+        // Show "No results" if no matches
+        if (filteredCampaigns.length === 0 && searchTerm) {
+            const noResults = document.createElement('div');
+            noResults.className = 'filter-option';
+            noResults.textContent = 'No matching campaigns found';
+            noResults.style.color = 'var(--text-muted)';
+            noResults.style.cursor = 'default';
+            campaignFilterDropdown.appendChild(noResults);
+        }
+    }
 
     sortTable(column) {
         if (this.sortColumn === column) {
@@ -2511,9 +2872,20 @@ class TrendReports {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
         
+        // Apply campaign filter for search-terms tab
+        if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                if (isTotal) return true; // Keep DAILY TOTAL rows
+                const campaignName = item.campaignName || item.campaign_name || '';
+                return campaignName && this.selectedCampaigns.has(campaignName);
+            });
+        }
+        
         // If filter is applied, use ALL data for that filter (ignore date range)
         // Only apply date range if NO filter is selected
-        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName || (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0);
         
         // Debug: Log filter status for table
         console.log('🔍 Table Filter Priority Debug:', {
@@ -3242,9 +3614,20 @@ class TrendReports {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
         
+        // Apply campaign filter for search-terms tab
+        if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                if (isTotal) return true; // Keep DAILY TOTAL rows
+                const campaignName = item.campaignName || item.campaign_name || '';
+                return campaignName && this.selectedCampaigns.has(campaignName);
+            });
+        }
+        
         // If filter is applied, use ALL data for that filter (ignore date range)
         // Only apply date range if NO filter is selected
-        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName || (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0);
         if (!hasFilterApplied) {
             // Apply date range filter only when no filter is applied
             data = this.filterDataByDateRange(data);
@@ -3300,7 +3683,7 @@ class TrendReports {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `trend-reports-${new Date().toISOString().split('T')[0]}.csv`;
+        a.download = this.generateExportFilename('.csv');
         a.click();
         window.URL.revokeObjectURL(url);
     }
@@ -3316,7 +3699,7 @@ class TrendReports {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `trend-reports-${new Date().toISOString().split('T')[0]}.xlsx`;
+        a.download = this.generateExportFilename('.xlsx');
         a.click();
         window.URL.revokeObjectURL(url);
     }
@@ -3345,9 +3728,20 @@ class TrendReports {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
         
+        // Apply campaign filter for search-terms tab
+        if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                if (isTotal) return true; // Keep DAILY TOTAL rows
+                const campaignName = item.campaignName || item.campaign_name || '';
+                return campaignName && this.selectedCampaigns.has(campaignName);
+            });
+        }
+        
         // If filter is applied, use ALL data for that filter (ignore date range)
         // Only apply date range if NO filter is selected
-        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName;
+        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName || (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0);
         if (!hasFilterApplied) {
             // Apply date range filter only when no filter is applied
             data = this.filterDataByDateRange(data);
@@ -3910,6 +4304,70 @@ class TrendReports {
         return { headers, rows };
     }
 
+    generateExportFilename(extension) {
+        // Base filename parts
+        const parts = ['trend-pivot'];
+        
+        // Add category/tab name
+        const categoryNames = {
+            'products': 'products',
+            'campaigns': 'campaigns',
+            'search-terms': 'search-terms'
+        };
+        parts.push(categoryNames[this.currentCategory] || this.currentCategory);
+        
+        // Add date range if available
+        if (this.currentDateRange && this.currentDateRange.start && this.currentDateRange.end) {
+            const startStr = this.formatLocalDate(this.currentDateRange.start);
+            const endStr = this.formatLocalDate(this.currentDateRange.end);
+            parts.push(`${startStr}-to-${endStr}`);
+        } else {
+            // Use today's date as fallback
+            parts.push(new Date().toISOString().split('T')[0]);
+        }
+        
+        // Add time period
+        if (this.currentTimePeriod) {
+            parts.push(this.currentTimePeriod);
+        }
+        
+        // Add selected names if any
+        if (this.selectedNames && this.selectedNames.size > 0) {
+            const nameList = Array.from(this.selectedNames).slice(0, 3).map(n => {
+                // Clean name for filename (remove special chars, limit length)
+                return n.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10);
+            }).join('-');
+            if (nameList) {
+                parts.push(`names-${nameList}`);
+                if (this.selectedNames.size > 3) {
+                    parts.push(`+${this.selectedNames.size - 3}more`);
+                }
+            }
+        }
+        
+        // Add selected campaigns if any (search-terms tab)
+        if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
+            const campaignList = Array.from(this.selectedCampaigns).slice(0, 2).map(c => {
+                // Clean campaign name for filename
+                return c.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10);
+            }).join('-');
+            if (campaignList) {
+                parts.push(`campaigns-${campaignList}`);
+                if (this.selectedCampaigns.size > 2) {
+                    parts.push(`+${this.selectedCampaigns.size - 2}more`);
+                }
+            }
+        }
+        
+        // Add timestamp for uniqueness (HH-MM-SS)
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+        parts.push(timeStr);
+        
+        // Join parts and add extension
+        return parts.join('-') + extension;
+    }
+
 	downloadCSVPivot(headers, rows) {
 		const flat = [headers.join(',')];
 		rows.forEach(r => {
@@ -3929,7 +4387,7 @@ class TrendReports {
 		const url = window.URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
-		a.download = `trend-pivot-${this.currentCategory}-${new Date().toISOString().split('T')[0]}.csv`;
+		a.download = this.generateExportFilename('.csv');
 		a.click();
 		window.URL.revokeObjectURL(url);
 	}
@@ -3945,7 +4403,7 @@ class TrendReports {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-		a.download = `trend-pivot-${this.currentCategory}-${new Date().toISOString().split('T')[0]}.xlsx`;
+		a.download = this.generateExportFilename('.xlsx');
         a.click();
         window.URL.revokeObjectURL(url);
     }

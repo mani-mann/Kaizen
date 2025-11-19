@@ -4,8 +4,33 @@ const { Client } = require('pg');
 const cors = require('cors');
 
 const app = express();
-// Allow all origins so the frontend can be opened from file:// or any port during dev
-app.use(cors());
+
+// CORS Configuration
+const SERVER_ORIGIN = process.env.SERVER_ORIGIN || `http://localhost:${process.env.PORT || 5000}`;
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [SERVER_ORIGIN, 'http://localhost:5500', 'http://127.0.0.1:5000', 'http://127.0.0.1:5500'];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list
+    if (ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      // In development, allow any origin
+      if (process.env.NODE_ENV !== 'production') {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 
 // Enable gzip compression with optimal settings for faster responses
@@ -1024,11 +1049,11 @@ app.get('/api/analytics', async (req, res) => {
         WHERE report_date >= $1::date AND report_date <= $2::date
       `;
 
-      // Use direct date comparison to avoid timezone casting issues when the column is DATE
       const bizAggSql = `
         SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
         FROM amazon_sales_traffic
-        WHERE date >= $1::date AND date <= $2::date
+        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
       `;
 
       const [adRes, bizRes] = await Promise.all([
@@ -1126,7 +1151,8 @@ app.get('/api/analytics', async (req, res) => {
         const totalSalesSql = `
           SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
           FROM amazon_sales_traffic
-          WHERE date >= $1::date AND date <= $2::date
+          WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
+            AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
         `;
         const totalSalesRes = await client.query(totalSalesSql, [startDate, endBound]);
         const strictTotal = parseFloat(totalSalesRes.rows?.[0]?.total || 0);
@@ -1160,8 +1186,7 @@ app.get('/api/analytics', async (req, res) => {
     // Prepare response data
     const responseData = {
       rows: rows || [],
-      // Always return computed KPIs (they already use business data totals when ads are missing)
-      kpis: kpis || {
+      kpis: rows && rows.length > 0 ? kpis : {
         adSpend: 0,
         adSales: 0,
         totalSales: 0,
@@ -1713,5 +1738,9 @@ app.get('/api/trend-reports', async (req, res) => {
 // Start Server
 // --------------------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 http://localhost:5000`);
+  console.log(`📍 Server origin: ${SERVER_ORIGIN}`);
+});
 
