@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { Client } = require('pg');
+const { Pool } = require('pg');
 const cors = require('cors');
 
 const app = express();
@@ -71,7 +71,7 @@ app.use(express.static('../public', {
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
 // --------------------
-// PostgreSQL Client Setup
+// PostgreSQL Pool Setup
 // --------------------
 // Respect sslmode in DATABASE_URL and allow overriding via PGSSL env
 const shouldUseSSL = (() => {
@@ -88,12 +88,18 @@ const shouldUseSSL = (() => {
   return true;
 })();
 
-const client = new Client({
+// Use Pool instead of Client for automatic connection management and parallel requests
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
   connectionTimeoutMillis: 5000,
+  // Pool configuration for better performance with multiple concurrent requests
+  max: 20, // Maximum number of clients in the pool
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  allowExitOnIdle: false, // Keep pool alive even when idle
 });
-// Track connection status explicitly (client.connected is not reliable)
+
+// Track connection status
 let dbConnected = false;
 
 // Simple in-memory cache for KPI calculations
@@ -122,13 +128,15 @@ function setCachedData(key, data) {
   });
 }
 
-client.connect()
+// Test pool connection on startup
+pool.query('SELECT NOW()')
   .then(() => {
     dbConnected = true;
-    console.log("✅ Connected to PostgreSQL");
+    console.log("✅ PostgreSQL Pool initialized successfully");
   })
   .catch(err => {
-    console.error("❌ DB Connection Error:", err);
+    dbConnected = false;
+    console.error("❌ DB Pool Connection Error:", err);
     console.log("💡 To fix this error:");
     console.log("   1. Make sure PostgreSQL is running");
     console.log("   2. Check your DATABASE_URL in .env file");
@@ -136,39 +144,39 @@ client.connect()
     console.log("   4. For local development, try: PGSSL=disable");
   });
 
-client.on('error', (err) => {
-  dbConnected = false;
-  console.error('❌ PostgreSQL client error:', err);
+// Handle pool errors (individual connection errors, not pool errors)
+pool.on('error', (err, client) => {
+  console.error('❌ Unexpected error on idle PostgreSQL client:', err);
+  // Pool automatically handles reconnection, so we don't set dbConnected = false here
 });
 
-client.on('end', () => {
-  dbConnected = false;
-  console.warn('⚠️ PostgreSQL connection ended');
+// Handle pool connection events
+pool.on('connect', () => {
+  if (!dbConnected) {
+    dbConnected = true;
+    console.log('🔌 New PostgreSQL connection established');
+  }
 });
 
-// Lightweight DB probe and reconnect helpers used by health checks
+// Lightweight DB probe used by health checks
+// Pool automatically manages connections, so no manual reconnection needed
 async function probeDb() {
   try {
-    // Use a very cheap query
-    await client.query('SELECT 1');
+    // Use a very cheap query - pool handles connection automatically
+    await pool.query('SELECT 1');
+    dbConnected = true; // Update status on successful query
     return true;
-  } catch (_) {
+  } catch (err) {
+    dbConnected = false;
+    console.warn('⚠️ DB probe failed:', err?.message || err);
     return false;
   }
 }
 
+// No need for reconnectDbIfNeeded - Pool handles reconnection automatically
 async function reconnectDbIfNeeded() {
-  if (dbConnected) return true;
-  try {
-    // Attempt to connect; pg Client.connect() is idempotent if already connected
-    await client.connect();
-    dbConnected = true;
-    console.log('🔌 Reconnected to PostgreSQL');
-    return true;
-  } catch (err) {
-    console.warn('⚠️ Reconnect attempt failed:', err?.message || err);
-    return false;
-  }
+  // Pool automatically handles reconnection, so we just probe
+  return await probeDb();
 }
 
 // --------------------
@@ -176,12 +184,6 @@ async function reconnectDbIfNeeded() {
 // --------------------
 async function fetchKeywordData(startDate = null, endDate = null) {
   try {
-    // Check if database is connected
-    if (!dbConnected) {
-      console.log("⚠️ Database not connected, returning empty data");
-      return [];
-    }
-    
     const startTime = Date.now();
     
     // Select only the columns used by the frontend
@@ -201,7 +203,7 @@ async function fetchKeywordData(startDate = null, endDate = null) {
       query += ' ORDER BY report_date DESC, cost DESC';
     }
     
-    const res = await client.query(query, params);
+    const res = await pool.query(query, params);
     const duration = Date.now() - startTime;
     console.log(`📊 Fetched ${res.rows.length} keyword records in ${duration}ms${startDate && endDate ? ' for date range' : ' (recent data)'}`);
     
@@ -223,11 +225,6 @@ async function fetchKeywordData(startDate = null, endDate = null) {
 // --------------------
 async function fetchBusinessData(startDate = null, endDate = null) {
   try {
-    // Check if database is connected
-    if (!dbConnected) {
-      console.log("⚠️ Database not connected, returning empty aggregated data (no mock)");
-      return [];
-    }
     
     console.log('🔍 fetchBusinessData called with:', { startDate, endDate });
     
@@ -247,7 +244,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
         ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
       `;
       
-      const res = await client.query(query);
+      const res = await pool.query(query);
       console.log(`📊 Aggregated ${res.rows.length} unique dates from business data (ALL dates)`);
       
       // Debug: Show first few rows of business data
@@ -297,15 +294,15 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
       LIMIT 10
     `;
-    const debugResult = await client.query(debugQuery);
+    const debugResult = await pool.query(debugQuery);
     console.log('🔍 Available dates in database (first 10):', debugResult.rows);
     
     // Check raw date values
     const rawDateQuery = `SELECT date FROM amazon_sales_traffic ORDER BY date DESC LIMIT 5`;
-    const rawDateResult = await client.query(rawDateQuery);
+    const rawDateResult = await pool.query(rawDateQuery);
     console.log('🔍 Raw date values in database:', rawDateResult.rows.map(r => r.date));
     
-    const res = await client.query(query, [startDate, endDate]);
+    const res = await pool.query(query, [startDate, endDate]);
     console.log(`📊 Found ${res.rows.length} records for date range ${startDate} to ${endDate}`);
     console.log('🔍 Query result sample:', res.rows.slice(0, 3));
     console.log('🔍 All dates in result:', res.rows.map(r => ({ date: r.date, sessions: r.sessions, sales: r.ordered_product_sales })));
@@ -315,23 +312,23 @@ async function fetchBusinessData(startDate = null, endDate = null) {
       console.log('🔍 Let me check what dates actually exist in the database...');
       
       // Check all available dates
-      const dateCheck = await client.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic ORDER BY date LIMIT 10");
+      const dateCheck = await pool.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic ORDER BY date LIMIT 10");
       console.log('🔍 Available dates in database:', dateCheck.rows.map(r => r.date));
       
       // Check raw date values
-      const rawDateCheck = await client.query('SELECT date FROM amazon_sales_traffic ORDER BY date LIMIT 5');
+      const rawDateCheck = await pool.query('SELECT date FROM amazon_sales_traffic ORDER BY date LIMIT 5');
       console.log('🔍 Raw date values:', rawDateCheck.rows.map(r => r.date));
       
       // Check if there's data in August 2025 at all
-      const augCheck = await client.query('SELECT COUNT(*) as count FROM amazon_sales_traffic WHERE EXTRACT(YEAR FROM date) = 2025 AND EXTRACT(MONTH FROM date) = 8');
+      const augCheck = await pool.query('SELECT COUNT(*) as count FROM amazon_sales_traffic WHERE EXTRACT(YEAR FROM date) = 2025 AND EXTRACT(MONTH FROM date) = 8');
       console.log('🔍 Records in August 2025:', augCheck.rows[0].count);
       
       // Check what dates exist around the requested range
-      const rangeCheck = await client.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date - INTERVAL '7 days' AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date + INTERVAL '7 days' ORDER BY date", [startDate, endDate]);
+      const rangeCheck = await pool.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date - INTERVAL '7 days' AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date + INTERVAL '7 days' ORDER BY date", [startDate, endDate]);
       console.log('🔍 Dates around requested range (±7 days):', rangeCheck.rows.map(r => r.date));
       
       // Check total records in table
-      const totalCheck = await client.query('SELECT COUNT(*) as count FROM amazon_sales_traffic');
+      const totalCheck = await pool.query('SELECT COUNT(*) as count FROM amazon_sales_traffic');
       console.log('🔍 Total records in amazon_sales_traffic table:', totalCheck.rows[0].count);
       
       console.log('🔍 ===== CHECKING FOR AVAILABLE DATES WITHIN SELECTED RANGE =====');
@@ -345,7 +342,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
         ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
       `;
       
-      const availableDatesResult = await client.query(availableDatesQuery, [startDate, endDate]);
+      const availableDatesResult = await pool.query(availableDatesQuery, [startDate, endDate]);
       console.log('🔍 Available dates within selected range:', availableDatesResult.rows.map(r => r.date));
       
       if (availableDatesResult.rows.length > 0) {
@@ -364,7 +361,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
           ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
         `;
         
-        const availableDataResult = await client.query(availableDataQuery, [startDate, endDate]);
+        const availableDataResult = await pool.query(availableDataQuery, [startDate, endDate]);
         console.log('✅ Found data for', availableDataResult.rows.length, 'dates within selected range');
         console.log('🔍 Available dates with data:', availableDataResult.rows.map(r => r.date));
         return availableDataResult.rows;
@@ -455,7 +452,7 @@ async function fetchBusinessRows(startDate, endDate, includeAll = false) {
       `;
     }
 
-    const res = await client.query(query, [startDate, endDate]);
+    const res = await pool.query(query, [startDate, endDate]);
     console.log(`📦 Fetched ${res.rows.length} business rows for table between ${startDate} and ${endDate}`);
     
     // If no data found for the specific date range, return empty array
@@ -476,8 +473,8 @@ async function getGlobalDateRange() {
   try {
     if (!dbConnected) return null;
     const [adMinMax, bizMinMax] = await Promise.all([
-      client.query('SELECT MIN(report_date) AS min, MAX(report_date) AS max FROM amazon_ads_reports'),
-      client.query("SELECT MIN((date AT TIME ZONE 'Asia/Kolkata')::date) AS min, MAX((date AT TIME ZONE 'Asia/Kolkata')::date) AS max FROM amazon_sales_traffic")
+      pool.query('SELECT MIN(report_date) AS min, MAX(report_date) AS max FROM amazon_ads_reports'),
+      pool.query("SELECT MIN((date AT TIME ZONE 'Asia/Kolkata')::date) AS min, MAX((date AT TIME ZONE 'Asia/Kolkata')::date) AS max FROM amazon_sales_traffic")
     ]);
     const dates = [];
     if (adMinMax.rows[0].min) { dates.push(new Date(adMinMax.rows[0].min)); }
@@ -897,7 +894,7 @@ app.get('/api/business-data', async (req, res) => {
           GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
           ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date
         `;
-        const dateCheckResult = await client.query(dateCheckQuery, [startDate, endDate]);
+        const dateCheckResult = await pool.query(dateCheckQuery, [startDate, endDate]);
         console.log('🔍 Dates found in database for range:', dateCheckResult.rows);
         console.log('🔍 Total dates with data:', dateCheckResult.rows.length);
         
@@ -908,7 +905,7 @@ app.get('/api/business-data', async (req, res) => {
           ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
           LIMIT 20
         `;
-        const allDatesResult = await client.query(allDatesQuery);
+        const allDatesResult = await pool.query(allDatesQuery);
         console.log('🔍 Recent dates in entire database:', allDatesResult.rows.map(r => r.date));
         
       } catch (debugErr) {
@@ -1057,8 +1054,8 @@ app.get('/api/analytics', async (req, res) => {
       `;
 
       const [adRes, bizRes] = await Promise.all([
-        client.query(adAggSql, [startDate, endBound]),
-        client.query(bizAggSql, [startDate, endBound])
+        pool.query(adAggSql, [startDate, endBound]),
+        pool.query(bizAggSql, [startDate, endBound])
       ]);
 
       const ad = adRes.rows?.[0] || {};
@@ -1154,7 +1151,7 @@ app.get('/api/analytics', async (req, res) => {
           WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
             AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
         `;
-        const totalSalesRes = await client.query(totalSalesSql, [startDate, endBound]);
+        const totalSalesRes = await pool.query(totalSalesSql, [startDate, endBound]);
         const strictTotal = parseFloat(totalSalesRes.rows?.[0]?.total || 0);
         // Override KPI totalSales and recompute dependent metrics
         kpis.totalSales = strictTotal;
@@ -1244,7 +1241,7 @@ app.get('/api/date-range', async (req, res) => {
       FROM amazon_sales_traffic
     `;
     
-    const result = await client.query(query);
+    const result = await pool.query(query);
     const { min_date, max_date, total_records } = result.rows[0];
     
     console.log('📅 Available date range:', { min_date, max_date, total_records });
@@ -1297,7 +1294,7 @@ app.get('/api/business-date-range', async (req, res) => {
       WHERE date IS NOT NULL
     `;
     
-    const result = await client.query(query);
+    const result = await pool.query(query);
     const { min_date, max_date, total_records, unique_dates } = result.rows[0];
     
     console.log('📅 Business data date range:', { 
@@ -1352,7 +1349,7 @@ app.get('/api/business-available-dates', async (req, res) => {
       ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date ASC
     `;
     
-    const result = await client.query(query);
+    const result = await pool.query(query);
     const dates = result.rows.map(row => row.date);
     
     console.log('📅 Available business dates:', { 
@@ -1394,34 +1391,34 @@ app.get('/api/debug-dates', async (req, res) => {
     
     // Test 1: Get all dates in business table
     const businessDatesQuery = `SELECT DISTINCT date FROM amazon_sales_traffic ORDER BY date DESC LIMIT 20`;
-    const businessDatesResult = await client.query(businessDatesQuery);
+    const businessDatesResult = await pool.query(businessDatesQuery);
     const businessDates = businessDatesResult.rows.map(row => row.date);
     
     // Test 2: Get all dates in ads table
     const adsDatesQuery = `SELECT DISTINCT report_date FROM amazon_ads_reports ORDER BY report_date DESC LIMIT 20`;
-    const adsDatesResult = await client.query(adsDatesQuery);
+    const adsDatesResult = await pool.query(adsDatesQuery);
     const adsDates = adsDatesResult.rows.map(row => row.report_date);
     
     // Test 3: Get date ranges for both tables
     const businessRangeQuery = `SELECT MIN(date) as min_date, MAX(date) as max_date, COUNT(*) as count FROM amazon_sales_traffic`;
-    const businessRangeResult = await client.query(businessRangeQuery);
+    const businessRangeResult = await pool.query(businessRangeQuery);
     
     const adsRangeQuery = `SELECT MIN(report_date) as min_date, MAX(report_date) as max_date, COUNT(*) as count FROM amazon_ads_reports`;
-    const adsRangeResult = await client.query(adsRangeQuery);
+    const adsRangeResult = await pool.query(adsRangeQuery);
     
     // Test 4: If date range provided, test the query
     let rangeQueryResult = null;
     if (start && end) {
       const rangeQuery = `SELECT DISTINCT date FROM amazon_sales_traffic WHERE date >= $1::date AND date <= $2::date ORDER BY date`;
-      rangeQueryResult = await client.query(rangeQuery, [start, end]);
+      rangeQueryResult = await pool.query(rangeQuery, [start, end]);
     }
     
     // Test 5: Get sample data from both tables
     const businessSampleQuery = `SELECT date, parent_asin, sessions FROM amazon_sales_traffic ORDER BY date DESC LIMIT 5`;
-    const businessSampleResult = await client.query(businessSampleQuery);
+    const businessSampleResult = await pool.query(businessSampleQuery);
     
     const adsSampleQuery = `SELECT report_date, search_term, cost, sales_1d FROM amazon_ads_reports ORDER BY report_date DESC LIMIT 5`;
-    const adsSampleResult = await client.query(adsSampleQuery);
+    const adsSampleResult = await pool.query(adsSampleQuery);
     
     res.json({
       businessDates: businessDates,
@@ -1547,7 +1544,7 @@ app.get('/api/trend-reports', async (req, res) => {
       
       // Ensure we treat dates as local date-only strings to match frontend
       const params = start && end ? [start, end] : [];
-      const result = await client.query(query, params);
+      const result = await pool.query(query, params);
       
       data = result.rows.map(row => {
         const spend = parseFloat(row.total_spend || 0);
@@ -1615,7 +1612,7 @@ app.get('/api/trend-reports', async (req, res) => {
         `;
         
         const params = start && end ? [start, end, start, end] : [];
-        const result = await client.query(query, params);
+        const result = await pool.query(query, params);
         
         data = result.rows.map(row => ({
           date: row.date,
@@ -1650,7 +1647,7 @@ app.get('/api/trend-reports', async (req, res) => {
         `;
       
         const params = start && end ? [start, end] : [];
-        const result = await client.query(query, params);
+        const result = await pool.query(query, params);
         
         data = result.rows.map(row => ({
           date: row.date,
@@ -1692,7 +1689,7 @@ app.get('/api/trend-reports', async (req, res) => {
       `;
       
       const params = start && end ? [start, end] : [];
-      const result = await client.query(query, params);
+      const result = await pool.query(query, params);
       
       data = result.rows.map(row => {
         const spend = parseFloat(row.spend || 0);
@@ -1738,9 +1735,32 @@ app.get('/api/trend-reports', async (req, res) => {
 // Start Server
 // --------------------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🚀 http://localhost:5000`);
   console.log(`📍 Server origin: ${SERVER_ORIGIN}`);
+});
+
+// Graceful shutdown - close pool connections
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+    pool.end(() => {
+      console.log('✅ PostgreSQL pool closed');
+      process.exit(0);
+    });
+  });
+});
+
+process.on('SIGINT', async () => {
+  console.log('🛑 SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+    pool.end(() => {
+      console.log('✅ PostgreSQL pool closed');
+      process.exit(0);
+    });
+  });
 });
 
