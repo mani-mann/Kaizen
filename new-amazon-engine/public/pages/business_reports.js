@@ -82,6 +82,9 @@ constructor() {
         ['B004','PTableChartCombo'],
         ['B005','Mbharat: BooknCards']
     ]);
+    
+    // Cache configuration
+    this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL
     // Map short internal parent codes to canonical live ASINs so both combine
     this.aliasParentToRealAsin = new Map([
         ['B001','B0DNKGMNTP'],
@@ -119,6 +122,120 @@ constructor() {
     ]);
     
     this.init();
+}
+
+// Cache helper methods
+getNextNoon() {
+    const now = new Date();
+    const noon = new Date(now);
+    noon.setHours(12, 0, 0, 0);
+    
+    // If it's past noon today, set for tomorrow
+    if (now > noon) {
+        noon.setDate(noon.getDate() + 1);
+    }
+    
+    return noon.getTime();
+}
+
+getCachedData(cacheKey) {
+    try {
+        const cached = localStorage.getItem(cacheKey);
+        if (!cached) return null;
+        
+        const parsed = JSON.parse(cached);
+        const now = Date.now();
+        const nextNoon = this.getNextNoon();
+        const lastNoon = nextNoon - (24 * 60 * 60 * 1000); // 24 hours before next noon
+        
+        // Check if cache was created after last noon (still valid today)
+        // If it's past 12 PM and cache was created before today's noon, clear it
+        if (parsed.timestamp <= lastNoon) {
+            localStorage.removeItem(cacheKey);
+            console.log('🔄 Cache expired (past 12 PM), cleared:', cacheKey);
+            return null;
+        }
+        
+        // Also check 1 hour TTL as fallback
+        if (now - parsed.timestamp > this.CACHE_TTL) {
+            localStorage.removeItem(cacheKey);
+            return null;
+        }
+        
+        return parsed;
+    } catch (e) {
+        console.warn('Cache read error:', e);
+        return null;
+    }
+}
+
+setCachedData(cacheKey, data) {
+    try {
+        const cacheEntry = {
+            data: data,
+            timestamp: Date.now()
+        };
+        localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
+        const nextRefresh = new Date(this.getNextNoon());
+        console.log(`💾 Cached data for key: ${cacheKey}. Next refresh: ${nextRefresh.toLocaleString()}`);
+    } catch (e) {
+        console.warn('Cache write error:', e);
+        // If storage is full, try to clear old cache entries
+        try {
+            const keys = Object.keys(localStorage);
+            const cacheKeys = keys.filter(k => k.startsWith('business_data_') || k.startsWith('analytics_data_'));
+            if (cacheKeys.length > 10) {
+                // Remove oldest 5 entries
+                const entries = cacheKeys.map(k => ({
+                    key: k,
+                    timestamp: JSON.parse(localStorage.getItem(k))?.timestamp || 0
+                })).sort((a, b) => a.timestamp - b.timestamp);
+                
+                entries.slice(0, 5).forEach(e => localStorage.removeItem(e.key));
+                console.log('🧹 Cleared old cache entries');
+                
+                // Retry saving
+                localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
+            }
+        } catch (e2) {
+            console.warn('Cache cleanup failed:', e2);
+        }
+    }
+}
+
+clearExpiredCache() {
+    try {
+        const keys = Object.keys(localStorage);
+        const cacheKeys = keys.filter(k => k.startsWith('business_data_') || k.startsWith('analytics_data_'));
+        const nextNoon = this.getNextNoon();
+        const lastNoon = nextNoon - (24 * 60 * 60 * 1000);
+        let clearedCount = 0;
+        
+        cacheKeys.forEach(key => {
+            try {
+                const cached = localStorage.getItem(key);
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    // Only clear if cache was created before last noon (expired at 12 PM)
+                    // Don't clear if it's still valid (created after last noon)
+                    if (parsed.timestamp && parsed.timestamp <= lastNoon) {
+                        localStorage.removeItem(key);
+                        clearedCount++;
+                    }
+                }
+            } catch (e) {
+                // Invalid cache entry, remove it
+                localStorage.removeItem(key);
+                clearedCount++;
+            }
+        });
+        
+        if (clearedCount > 0) {
+            console.log(`🔄 Cleared ${clearedCount} expired cache entries (past 12 PM refresh)`);
+        }
+    } catch (e) {
+        console.warn('Error clearing expired cache:', e);
+    }
 }
 
 // Lightweight health check to avoid calling APIs while DB is disconnected
@@ -191,6 +308,10 @@ async init() {
 
 async initializeComponents() {
     console.log('🔍 Initializing business reports components...');
+    
+    // Clear expired cache entries (past 12 PM) on page load
+    this.clearExpiredCache();
+    
     this.setupEventListeners();
     this.initializeDatePicker();
     this.initializeChart();
@@ -526,6 +647,38 @@ setupEventListeners() {
 
 async loadData() {
     try {
+        // Check cache first
+        const cacheKey = `business_data_${this.state.dateRange?.startStr || 'all'}_${this.state.dateRange?.endStr || 'all'}`;
+        const cached = this.getCachedData(cacheKey);
+        
+        if (cached && cached.data && Array.isArray(cached.data) && cached.data.length > 0) {
+            console.log('💾 Using cached business data:', cached.data.length, 'rows');
+            this.state.businessData = cached.data;
+            this.state.filteredData = this.aggregateBySku([...this.state.businessData]);
+            
+            // Update KPIs from cached data
+            const frontendKpis = this.computeKPIsFromRows(this.state.businessData);
+            this.updateKPIs(frontendKpis);
+            this.backendKPIs = frontendKpis;
+            
+            // Update UI
+            this.renderTable();
+            this.updateResultsCount();
+            this.updateChart();
+            this.initializeProductFilter();
+            
+            // Apply filters if any
+            if (this.state.selectedProducts.size > 0) {
+                this.filterData();
+            }
+            
+            return; // Skip API call if cache is valid
+        } else if (cached) {
+            console.warn('⚠️ Cached data is invalid or empty, fetching fresh data');
+            // Clear invalid cache
+            localStorage.removeItem(cacheKey);
+        }
+        
         const apiBase = this.getApiBase();
         const timestamp = Date.now(); // Cache busting
         // Ensure backend DB is connected before we issue queries
@@ -543,6 +696,8 @@ async loadData() {
             }
         }
         // Additionally clamp end to the latest available business date from backend (e.g., 16th if 17th has no data)
+        // CRITICAL: Preserve startStr when clamping endStr
+        const originalStartStr = this.state.dateRange?.startStr;
         try {
             const rangeRes = await fetch(`${apiBase}/api/business-date-range`);
             if (rangeRes.ok) {
@@ -552,20 +707,33 @@ async loadData() {
                     // Parse in local time to avoid UTC -> previous-day drift
                     const maxD = new Date(maxDateStr);
                     const localMaxStr = this.formatDate(maxD);
-                    if (!this.state.dateRange?.endStr || this.state.dateRange.endStr > localMaxStr) {
+                    if (this.state.dateRange?.endStr && this.state.dateRange.endStr > localMaxStr) {
+                        // Only clamp if endStr exists and is greater than max
                         this.state.dateRange.endStr = localMaxStr;
                         this.state.dateRange.end = new Date(
                             maxD.getFullYear(), maxD.getMonth(), maxD.getDate(), 23, 59, 59, 999
                         );
                     }
+                    // CRITICAL: Ensure startStr is preserved after clamping
+                    if (originalStartStr && !this.state.dateRange.startStr) {
+                        this.state.dateRange.startStr = originalStartStr;
+                    }
                 }
             }
         } catch (_) { /* ignore; fallback to today clamp */ }
-        const url = this.state.dateRange.startStr && this.state.dateRange.endStr 
-            ? `${apiBase}/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}&t=${timestamp}`
-            : `${apiBase}/api/business-data?t=${timestamp}`;
+        // CRITICAL: Ensure date range is properly set before making API call
+        // If date range is missing or incomplete, log error and use fallback
+        if (!this.state.dateRange || !this.state.dateRange.startStr || !this.state.dateRange.endStr) {
+            console.error('❌ Date range is missing or incomplete:', this.state.dateRange);
+            console.error('❌ Cannot fetch filtered data without date range');
+            // Don't proceed with API call if date range is missing
+            return;
+        }
         
-        console.log('🔍 Loading business data...');
+        // Always request includeAll=true to get all dates (including zero-activity days) for accurate calculations
+        const url = `${apiBase}/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}&includeAll=true&t=${timestamp}`;
+        
+        console.log('🔍 Loading business data from API...');
         console.log('🔍 Date range:', this.state.dateRange);
         console.log('🔍 API URL:', url);
         console.log('🔍 Start date:', this.state.dateRange.startStr);
@@ -586,7 +754,7 @@ async loadData() {
                             this.state.dateRange.endStr = maxStr;
                             this.state.dateRange.end = new Date(maxD2.getFullYear(), maxD2.getMonth(), maxD2.getDate(), 23,59,59,999);
                         }
-                        const retryUrl = `${apiBase}/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}&t=${Date.now()}`;
+                        const retryUrl = `${apiBase}/api/business-data?start=${this.state.dateRange.startStr}&end=${this.state.dateRange.endStr}&includeAll=true&t=${Date.now()}`;
                         console.log('🔁 Retrying after 503 with clamped end date:', retryUrl);
                         response = await fetch(retryUrl);
                     }
@@ -625,7 +793,7 @@ async loadData() {
                             new Date(latestDate).getTime() - (29 * 24 * 60 * 60 * 1000) // 30 days before latest
                         ));
                         
-                        const fallbackUrl = `${apiBase}/api/business-data?start=${this.formatDate(fallbackStart)}&end=${this.formatDate(fallbackEnd)}&t=${Date.now()}`;
+                        const fallbackUrl = `${apiBase}/api/business-data?start=${this.formatDate(fallbackStart)}&end=${this.formatDate(fallbackEnd)}&includeAll=true&t=${Date.now()}`;
                         console.log('🔍 Trying fallback to available data range:', fallbackUrl);
                         
                         const fallbackResponse = await fetch(fallbackUrl);
@@ -633,7 +801,10 @@ async loadData() {
                             const fallbackData = await fallbackResponse.json();
                             if (fallbackData.data && fallbackData.data.length > 0) {
                                 console.log('✅ Found data in available range, using that instead');
-                                this.state.businessData = this.transformData(fallbackData.data || []);
+                                // Transform data and fill missing dates with zero values
+                                let fallbackTransformed = this.transformData(fallbackData.data || []);
+                                fallbackTransformed = this.fillMissingDates(fallbackTransformed);
+                                this.state.businessData = fallbackTransformed;
                                 this.state.filteredData = this.aggregateBySku(this.state.businessData);
                                 this.updateKPIs(fallbackData.kpis || {});
                                 this.showNotification(`Showing available data from ${this.formatDate(fallbackStart)} to ${this.formatDate(fallbackEnd)} (no data in selected range)`, 'info');
@@ -664,9 +835,16 @@ async loadData() {
             this.updateKPIs(emptyKPIs);
             this.showNotification('No data available for the selected date range', 'warning');
         } else {
-            this.state.businessData = this.transformData(data.data || []);
+            // Transform data and fill missing dates with zero values
+            let transformedData = this.transformData(data.data || []);
+            transformedData = this.fillMissingDates(transformedData);
+            this.state.businessData = transformedData;
             // Aggregate by SKU
             this.state.filteredData = this.aggregateBySku(this.state.businessData);
+            
+            // Save to cache
+            const cacheKey = `business_data_${this.state.dateRange?.startStr || 'all'}_${this.state.dateRange?.endStr || 'all'}`;
+            this.setCachedData(cacheKey, transformedData);
 
             // Ensure we only consider dates that actually exist (skip missing/zero days)
             // Build totals per available date
@@ -700,8 +878,9 @@ async loadData() {
             
             // Prefer backend KPIs (SQL-accurate for the same date window)
             // Also run a debug cross-check against the rows we display
+            // IMPORTANT: Use businessData (not filteredData) to get correct date count
             const backendKpis = data.kpis || {};
-            const frontendKpis = this.computeKPIsFromRows(this.state.filteredData);
+            const frontendKpis = this.computeKPIsFromRows(this.state.businessData);
             this.debugCompareKpis(backendKpis, frontendKpis);
             this.updateKPIs(backendKpis);
             
@@ -754,12 +933,24 @@ async loadData() {
         }, 100);
         
         // Initialize product filter after data is loaded
+        // This will refresh product list based on new date range and clean up invalid selections
         this.initializeProductFilter();
         
-        // If there are active filters, apply them to the new data
+        // If there are active filters (after cleanup), apply them to the new data
         if (this.state.selectedProducts.size > 0) {
             console.log('🔍 Data loaded - applying filters to new date range');
             this.filterData();
+        } else {
+            // No valid products selected - show all data for the selected date range
+            this.state.filteredData = this.aggregateBySku([...this.state.businessData]);
+            const kpis = this.computeKPIsFromRows(this.state.businessData);
+            this.updateKPIs(kpis);
+            this.backendKPIs = kpis;
+            this.scaledChartData = null;
+            this.syncChartWithKPIs();
+            this.renderTable();
+            this.updateResultsCount();
+            this.updateChart();
         }
         
         console.log('🔍 Data loading completed successfully');
@@ -785,6 +976,25 @@ async applyPreset(key) {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999);
 
+    // CRITICAL: Get latest available date from database instead of using today
+    let latestAvailableDate = endOfToday; // Default to today as fallback
+    try {
+        const rangeRes = await fetch(`${apiBase}/api/business-date-range`);
+        if (rangeRes.ok) {
+            const rangeJson = await rangeRes.json();
+            const maxDateStr = rangeJson?.maxDate || rangeJson?.max_date || null;
+            if (maxDateStr) {
+                const maxD = new Date(maxDateStr);
+                // Use latest available date, but don't go beyond today
+                latestAvailableDate = maxD < endOfToday ? maxD : endOfToday;
+                latestAvailableDate.setHours(23, 59, 59, 999);
+                console.log('📅 Using latest available date from database:', this.formatDate(latestAvailableDate));
+            }
+        }
+    } catch (_) {
+        console.log('⚠️ Could not fetch latest date, using today as fallback');
+    }
+
     const startOfWeek = (d) => {
         const dt = new Date(d);
         const dow = dt.getDay();
@@ -796,37 +1006,63 @@ async applyPreset(key) {
     const endOfWeek = (d) => { const s = startOfWeek(d); const e = new Date(s); e.setDate(s.getDate()+6); e.setHours(23,59,59,999); return e; };
 
     let start = startOfToday;
-    let end = endOfToday;
+    let end = latestAvailableDate; // Use latest available date instead of today
     switch (key) {
         case 'yesterday':
-            start = new Date(startOfToday); start.setDate(start.getDate()-1);
-            end = new Date(start); end.setHours(23,59,59,999);
+            // Yesterday relative to latest available date
+            start = new Date(latestAvailableDate); 
+            start.setDate(start.getDate()-1);
+            start.setHours(0,0,0,0);
+            end = new Date(start); 
+            end.setHours(23,59,59,999);
+            // Don't go beyond latest available date
+            if (end > latestAvailableDate) end = latestAvailableDate;
             break;
         case 'last7':
-            start = new Date(endOfToday); start.setDate(start.getDate()-6); start.setHours(0,0,0,0);
-            end = endOfToday;
+            start = new Date(latestAvailableDate); 
+            start.setDate(start.getDate()-6); 
+            start.setHours(0,0,0,0);
+            end = latestAvailableDate;
             break;
         case 'thisWeek':
-            start = startOfWeek(now); end = endOfWeek(now); break;
+            start = startOfWeek(latestAvailableDate); 
+            end = endOfWeek(latestAvailableDate);
+            // Don't go beyond latest available date
+            if (end > latestAvailableDate) end = latestAvailableDate;
+            break;
         case 'lastWeek':
-            start = startOfWeek(new Date(now.getFullYear(), now.getMonth(), now.getDate()-7));
-            end = endOfWeek(new Date(start));
+            // Last week relative to latest available date
+            const lastWeekEnd = new Date(latestAvailableDate);
+            lastWeekEnd.setDate(lastWeekEnd.getDate() - 7);
+            start = startOfWeek(lastWeekEnd);
+            end = endOfWeek(lastWeekEnd);
+            // Don't go beyond latest available date
+            if (end > latestAvailableDate) end = latestAvailableDate;
             break;
         case 'last30':
-            start = new Date(endOfToday); start.setDate(start.getDate()-29); start.setHours(0,0,0,0);
-            end = endOfToday;
+            start = new Date(latestAvailableDate); 
+            start.setDate(start.getDate()-29); 
+            start.setHours(0,0,0,0);
+            end = latestAvailableDate;
             break;
         case 'thisMonth':
-            start = new Date(now.getFullYear(), now.getMonth(), 1);
-            end = new Date(now.getFullYear(), now.getMonth()+1, 0, 23,59,59,999);
+            // This month: start of current month (based on latest available date) to latest available date
+            start = new Date(latestAvailableDate.getFullYear(), latestAvailableDate.getMonth(), 1);
+            start.setHours(0, 0, 0, 0); // Ensure start of day
+            end = new Date(latestAvailableDate); // Use latest available date as end
+            end.setHours(23, 59, 59, 999); // Ensure end of day
             break;
         case 'lastMonth':
-            start = new Date(now.getFullYear(), now.getMonth()-1, 1);
-            end = new Date(now.getFullYear(), now.getMonth(), 0, 23,59,59,999);
+            // Last month: full last month, but cap end at latest available date if we're still in that month
+            const lastMonthStart = new Date(now.getFullYear(), now.getMonth()-1, 1);
+            const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23,59,59,999);
+            start = lastMonthStart;
+            end = lastMonthEnd < latestAvailableDate ? lastMonthEnd : latestAvailableDate;
             break;
         case 'ytd':
-            start = new Date(now.getFullYear(), 0, 1);
-            end = endOfToday;
+            // Year to date: Jan 1 to latest available date
+            start = new Date(latestAvailableDate.getFullYear(), 0, 1);
+            end = latestAvailableDate;
             break;
         case 'lifetime':
             // Prefer backend-provided minimum business date. If not loaded yet, fetch it once.
@@ -853,21 +1089,55 @@ async applyPreset(key) {
                 }
             }
             start.setHours(0,0,0,0);
-            end = endOfToday;
+            end = latestAvailableDate;
             break;
         default:
             break;
     }
 
+    // CRITICAL: Clear cache BEFORE setting new date range to ensure fresh data
+    // This prevents showing stale/cached data from previous date selections
+    const newStartStr = this.formatDate(start);
+    const newEndStr = this.formatDate(end);
+    const newCacheKey = `business_data_${newStartStr}_${newEndStr}`;
+    if (localStorage.getItem(newCacheKey)) {
+        localStorage.removeItem(newCacheKey);
+        console.log('🗑️ Cleared cache for new date range to ensure fresh data:', newCacheKey);
+    }
+    
     this.state.dateRange = {
         start,
         end,
-        startStr: this.formatDate(start),
-        endStr: this.formatDate(end)
+        startStr: newStartStr,
+        endStr: newEndStr
     };
+    
+    // CRITICAL: Update calendar to reflect the preset selection
+    // Set calendar temp range to match the preset
+    this.calendarState.tempRangeStart = new Date(start);
+    this.calendarState.tempRangeEnd = new Date(end);
+    
+    // Update calendar month to show the month containing the end date (most recent)
+    // This ensures users see the most recent dates when they open the calendar
+    this.calendarState.calendarMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+    
+    console.log('📅 Preset applied - Calendar updated:', {
+        preset: key,
+        dateRange: { start: this.state.dateRange.startStr, end: this.state.dateRange.endStr },
+        calendarMonth: this.calendarState.calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    });
+    
     this.updateDateDisplay();
     // Clear cached chart data when preset dates change
     this.scaledChartData = null;
+    
+    // Re-render calendar if it's open to show the new range
+    const dropdown = document.getElementById('datePickerDropdown');
+    if (dropdown && dropdown.style.display === 'block') {
+        this.updateCalendarSummary();
+        this.renderCalendar();
+    }
+    
     await this.loadData();
 }
 
@@ -948,6 +1218,61 @@ setTrendOnCard(valueId, changePct) {
         if (icon) icon.textContent = 'trending_down';
     }
     if (text) text.textContent = `${abs.toFixed(1)}%`;
+}
+
+// Fill missing dates in the selected range with zero values
+fillMissingDates(data) {
+    if (!this.state.dateRange || !this.state.dateRange.start || !this.state.dateRange.end) {
+        return data; // No date range, return data as is
+    }
+    
+    const start = new Date(this.state.dateRange.start);
+    const end = new Date(this.state.dateRange.end);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    
+    // Create a map of existing dates
+    const existingDates = new Set();
+    data.forEach(row => {
+        if (row.date && row.date !== 'Unknown') {
+            let dateStr = row.date;
+            if (typeof row.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(row.date)) {
+                dateStr = row.date.slice(0, 10);
+            } else {
+                const date = new Date(row.date);
+                if (!isNaN(date.getTime())) {
+                    dateStr = date.toISOString().split('T')[0];
+                }
+            }
+            if (dateStr && dateStr !== 'Unknown') {
+                existingDates.add(dateStr);
+            }
+        }
+    });
+    
+    // Generate all dates in range
+    const allDates = [];
+    const currentDate = new Date(start);
+    while (currentDate <= end) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        if (!existingDates.has(dateStr)) {
+            // Add zero-value row for missing date
+            allDates.push({
+                date: dateStr,
+                sku: 'Unknown',
+                parentAsin: 'Unknown',
+                productTitle: 'Unknown Product',
+                sessions: 0,
+                pageViews: 0,
+                unitsOrdered: 0,
+                sales: 0
+            });
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    // Combine existing data with missing dates
+    return [...data, ...allDates];
 }
 
 transformData(data) {
@@ -1066,9 +1391,118 @@ computeKPIsFromRows(rows) {
             acc.totalSales += Number(r.sales || 0);
             return acc;
         }, { totalSessions: 0, totalPageViews: 0, totalUnitsOrdered: 0, totalSales: 0 });
-        const uniqueDates = new Set(rows.map(r => r.date)).size;
-        const avgSessionsPerDay = uniqueDates > 0 ? totals.totalSessions / uniqueDates : 0;
+        
+        // Calculate unique dates from data (for reference only)
+        const dateStrings = rows.map(r => {
+            if (!r.date || r.date === 'Unknown') return null;
+            if (typeof r.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(r.date)) {
+                return r.date.slice(0, 10);
+            }
+            const date = new Date(r.date);
+            if (isNaN(date.getTime())) return null;
+            return date.toISOString().split('T')[0];
+        }).filter(d => d !== null && d !== 'Unknown');
+        const uniqueDatesFromData = new Set(dateStrings).size;
+        
+        // CRITICAL: Always use the selected date range (calendar days) for Avg Sessions/Day calculation
+        // This ensures correct calculation for single dates and filtered data
+        let totalCalendarDays = 0;
+        let startDate = null;
+        let endDate = null;
+        
+        // Parse date range with proper handling for YYYY-MM-DD format
+        if (this.state.dateRange) {
+            // Priority 1: Use Date objects if available
+            if (this.state.dateRange.start && this.state.dateRange.end) {
+                startDate = new Date(this.state.dateRange.start);
+                endDate = new Date(this.state.dateRange.end);
+            }
+            // Priority 2: Use string dates (YYYY-MM-DD format)
+            else if (this.state.dateRange.startStr && this.state.dateRange.endStr) {
+                // Parse YYYY-MM-DD strings in local timezone to avoid UTC conversion issues
+                const startParts = this.state.dateRange.startStr.split('-');
+                const endParts = this.state.dateRange.endStr.split('-');
+                if (startParts.length === 3 && endParts.length === 3) {
+                    startDate = new Date(parseInt(startParts[0]), parseInt(startParts[1]) - 1, parseInt(startParts[2]));
+                    endDate = new Date(parseInt(endParts[0]), parseInt(endParts[1]) - 1, parseInt(endParts[2]));
+                } else {
+                    // Fallback to Date constructor
+                    startDate = new Date(this.state.dateRange.startStr);
+                    endDate = new Date(this.state.dateRange.endStr);
+                }
+            }
+        }
+        
+        // Calculate total calendar days from date range
+        if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+            // CRITICAL: Check if single date is selected (startStr === endStr)
+            // Also check by comparing date strings directly to ensure accurate detection
+            const startStrCheck = this.state.dateRange?.startStr || '';
+            const endStrCheck = this.state.dateRange?.endStr || '';
+            const isSingleDate = startStrCheck && endStrCheck && startStrCheck === endStrCheck;
+            
+            // Additional check: compare date objects (normalized to dates only, ignoring time)
+            const startDateOnly = new Date(startDate);
+            startDateOnly.setHours(0, 0, 0, 0);
+            const endDateOnly = new Date(endDate);
+            endDateOnly.setHours(0, 0, 0, 0);
+            const isSameDate = startDateOnly.getTime() === endDateOnly.getTime();
+            
+            // Use either check - if strings match OR dates are the same, it's a single date
+            if (isSingleDate || isSameDate) {
+                // Single date selection: always use 1 day
+                totalCalendarDays = 1;
+                console.log(`📅 Avg Sessions/Day calculation: Single date selected, using 1 calendar day`);
+                console.log(`   Start: ${startStrCheck}, End: ${endStrCheck}, Same date: ${isSameDate}`);
+            } else {
+                // Normalize to start of day (00:00:00) and end of day (23:59:59)
+                startDate.setHours(0, 0, 0, 0);
+                endDate.setHours(23, 59, 59, 999);
+                
+                // Calculate difference in days for date range
+                const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                
+                // Always add 1 to include both start and end days
+                // Date range: diffDays = N, totalCalendarDays = N + 1
+                totalCalendarDays = diffDays + 1;
+                
+                console.log(`📅 Avg Sessions/Day calculation: Using ${totalCalendarDays} calendar days (${this.formatDate(startDate)} to ${this.formatDate(endDate)})`);
+            }
+        } else if (uniqueDatesFromData > 0) {
+            // Fallback: use unique dates from data ONLY if date range is not available
+            // This should rarely happen, but provides a safety net
+            totalCalendarDays = uniqueDatesFromData;
+            console.warn(`⚠️ Avg Sessions/Day calculation: Date range not available, using ${uniqueDatesFromData} unique dates from data`);
+        } else {
+            // No date range and no data - cannot calculate
+            totalCalendarDays = 0;
+            console.warn(`⚠️ Avg Sessions/Day calculation: No date range or data available, using 0`);
+        }
+        
+        // Calculate average sessions per day
+        // Always divide by calendar days in the selected range, not by unique dates in data
+        // NOTE: For single day selection, avgSessionsPerDay will equal totalSessions (e.g., 349/1 = 349)
+        // This is mathematically correct - the average for one day IS the total for that day
+        const avgSessionsPerDay = totalCalendarDays > 0 ? totals.totalSessions / totalCalendarDays : 0;
         const conversionRate = totals.totalSessions > 0 ? (totals.totalUnitsOrdered / totals.totalSessions) * 100 : 0;
+        
+        // Debug logging
+        console.log('📊 computeKPIsFromRows calculation:', {
+            totalSessions: totals.totalSessions,
+            totalCalendarDays,
+            avgSessionsPerDay: avgSessionsPerDay.toFixed(2),
+            uniqueDatesFromData,
+            dateRange: this.state.dateRange ? {
+                start: this.state.dateRange.start,
+                end: this.state.dateRange.end,
+                startStr: this.state.dateRange.startStr,
+                endStr: this.state.dateRange.endStr
+            } : 'not set',
+            rowsCount: rows.length,
+            isFiltered: rows.length < (this.state.businessData?.length || 0)
+        });
+        
         return {
             totalSessions: totals.totalSessions,
             totalPageViews: totals.totalPageViews,
@@ -1077,7 +1511,8 @@ computeKPIsFromRows(rows) {
             avgSessionsPerDay,
             conversionRate
         };
-    } catch (_) {
+    } catch (error) {
+        console.error('❌ Error in computeKPIsFromRows:', error);
         return { totalSessions: 0, totalPageViews: 0, totalUnitsOrdered: 0, totalSales: 0, avgSessionsPerDay: 0, conversionRate: 0 };
     }
 }
@@ -1275,6 +1710,14 @@ setupProductFilter() {
     });
     
     nameFilterInput.addEventListener('blur', (e) => {
+        // CRITICAL: Check if the blur is caused by clicking inside the dropdown
+        // If so, don't close the dropdown
+        const relatedTarget = e.relatedTarget;
+        if (relatedTarget && nameFilterDropdown.contains(relatedTarget)) {
+            // User clicked inside dropdown, keep it open
+            return;
+        }
+        
         // Show selection count when user is done typing
         const count = this.state.selectedProducts.size;
         if (count > 0 && !nameFilterInput.value.includes('selected')) {
@@ -1283,12 +1726,17 @@ setupProductFilter() {
         
         // Delay hiding to allow click on dropdown
         setTimeout(() => {
-            if (!nameFilterDropdown.contains(document.activeElement) && 
-                !nameFilterDropdown.matches(':hover')) {
+            // Check if dropdown is still being interacted with
+            const activeElement = document.activeElement;
+            const isClickingInDropdown = nameFilterDropdown.contains(activeElement) || 
+                                        nameFilterDropdown.matches(':hover') ||
+                                        activeElement === nameFilterInput;
+            
+            if (!isClickingInDropdown) {
                 nameFilterDropdown.style.display = 'none';
-                nameFilterInput.closest('.name-filter').classList.remove('dropdown-open');
+                nameFilterInput.closest('.name-filter')?.classList.remove('dropdown-open');
             }
-        }, 200);
+        }, 300); // Increased delay to ensure checkbox clicks register
     });
     
     // Input search - show dropdown when user types something
@@ -1333,11 +1781,43 @@ addProductOption(product, isSelected, isSelectedNotMatching) {
         </label>
     `;
     
-    // Add click event for checkbox
+    // CRITICAL: Prevent blur event from closing dropdown when clicking checkbox/label
     const cb = option.querySelector('input[type="checkbox"]');
+    const label = option.querySelector('label');
+    
+    // Stop propagation on all click events to prevent dropdown from closing
+    option.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // Prevent input blur
+        e.stopPropagation(); // Prevent click outside handler
+    });
+    
+    option.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent click outside handler
+    });
+    
+    label.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // Prevent input blur
+        e.stopPropagation(); // Prevent click outside handler
+    });
+    
+    label.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent click outside handler
+    });
+    
+    cb.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // Prevent input blur
+        e.stopPropagation(); // Prevent click outside handler
+    });
+    
+    // Handle checkbox change event
     cb.addEventListener('change', (e) => {
-        if (cb.checked) this.state.selectedProducts.add(product); 
-        else this.state.selectedProducts.delete(product);
+        e.stopPropagation(); // Prevent event bubbling
+        
+        if (cb.checked) {
+            this.state.selectedProducts.add(product);
+        } else {
+            this.state.selectedProducts.delete(product);
+        }
         
         // Clear input value and update placeholder
         nameFilterInput.value = '';
@@ -1347,6 +1827,15 @@ addProductOption(product, isSelected, isSelectedNotMatching) {
         } else {
             nameFilterInput.placeholder = 'Search products...';
         }
+        
+        // Keep dropdown open
+        nameFilterDropdown.style.display = 'block';
+        nameFilterInput.closest('.name-filter')?.classList.add('dropdown-open');
+        
+        // Re-render to show updated checkboxes
+        const currentSearch = nameFilterInput.value.trim();
+        this.filterProductOptions(currentSearch);
+        
         this.state.currentPage = 1;
         this.filterData();
     });
@@ -1444,7 +1933,29 @@ getUniqueProducts() {
 }
 
 initializeProductFilter() {
-    // Initialize the product filter dropdown with all available products
+    // CRITICAL: Clean up selected products that don't exist in the current date range
+    // This ensures product filter only shows products available in the selected calendar dates
+    if (this.state.selectedProducts.size > 0 && this.state.businessData && this.state.businessData.length > 0) {
+        const availableProducts = this.getUniqueProducts();
+        const availableProductsSet = new Set(availableProducts);
+        
+        // Remove selected products that don't exist in the current date range
+        const productsToRemove = [];
+        this.state.selectedProducts.forEach(product => {
+            if (!availableProductsSet.has(product)) {
+                productsToRemove.push(product);
+            }
+        });
+        
+        if (productsToRemove.length > 0) {
+            productsToRemove.forEach(product => {
+                this.state.selectedProducts.delete(product);
+            });
+            console.log('🔍 Removed invalid products from selection (not in current date range):', productsToRemove);
+        }
+    }
+    
+    // Initialize the product filter dropdown with all available products from current date range
     this.filterProductOptions('');
 }
 
@@ -1468,7 +1979,8 @@ filterData() {
     this.state.currentPage = 1;
     
     // Recalculate KPIs from filtered data (within calendar range)
-    const filteredKPIs = this.computeKPIsFromRows(this.state.filteredData);
+    // IMPORTANT: Use original filtered rows (not aggregated) to get correct unique date count
+    const filteredKPIs = this.computeKPIsFromRows(rows);
     this.updateKPIs(filteredKPIs);
     
     // CRITICAL: Store filtered KPIs for chart to use same data as KPI cards
@@ -1947,9 +2459,15 @@ openCalendar() {
         dateFilter.classList.add('open');
     }
     
-    if (this.state.dateRange.start && this.state.dateRange.end) {
+    // CRITICAL: Always sync temp range from current state.dateRange to reflect preset selections
+    // This ensures calendar shows the correct range when opened after a preset is applied
+    if (this.state.dateRange && this.state.dateRange.start && this.state.dateRange.end) {
         this.calendarState.tempRangeStart = new Date(this.state.dateRange.start);
         this.calendarState.tempRangeEnd = new Date(this.state.dateRange.end);
+        console.log('📅 Calendar opened - synced with current date range:', {
+            start: this.state.dateRange.startStr,
+            end: this.state.dateRange.endStr
+        });
     } else {
         // Use current date range as fallback
         const defaultRange = this.getDefaultDateRange();
@@ -1958,12 +2476,16 @@ openCalendar() {
     }
     
     // Open picker on a sane month (avoid 1970 if temp range is missing/invalid)
-    const base = (this.calendarState.tempRangeEnd && !isNaN(new Date(this.calendarState.tempRangeEnd)))
+    // Use the end date of the range to show the most recent month
+    const base = (this.calendarState.tempRangeEnd && !isNaN(new Date(this.calendarState.tempRangeEnd).getTime()))
         ? new Date(this.calendarState.tempRangeEnd)
-        : (this.calendarState.tempRangeStart && !isNaN(new Date(this.calendarState.tempRangeStart)))
+        : (this.calendarState.tempRangeStart && !isNaN(new Date(this.calendarState.tempRangeStart).getTime()))
             ? new Date(this.calendarState.tempRangeStart)
             : new Date();
     this.calendarState.calendarMonth = new Date(base.getFullYear(), base.getMonth(), 1);
+    
+    // Update calendar summary to show current selection
+    this.updateCalendarSummary();
     
     this.renderCalendar();
 }
@@ -1986,20 +2508,37 @@ closeCalendar() {
             const startYear = this.calendarState.tempRangeStart.getFullYear();
             const startMonth = this.calendarState.tempRangeStart.getMonth();
             const startDay = this.calendarState.tempRangeStart.getDate();
+            
+            // CRITICAL: If tempRangeEnd is null, treat as single date selection
+            // Use the same date for both start and end
             const endRef = this.calendarState.tempRangeEnd || this.calendarState.tempRangeStart;
             const endYear = endRef.getFullYear();
             const endMonth = endRef.getMonth();
             const endDay = endRef.getDate();
 
+            // Create date strings FIRST to ensure consistency
+            const startDateStr = `${startYear}-${String(startMonth + 1).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
+            const endDateStr = `${endYear}-${String(endMonth + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+
             const start = new Date(startYear, startMonth, startDay, 0, 0, 0, 0);
+            // For single date: ensure end equals start (same day)
             const end = new Date(endYear, endMonth, endDay, 23, 59, 59, 999);
 
             this.state.dateRange = {
                 start,
                 end,
-                startStr: this.formatDate(start),
-                endStr: this.formatDate(end)
+                startStr: startDateStr,
+                endStr: endDateStr
             };
+            
+            console.log('📅 Calendar date range applied:', {
+                startStr: startDateStr,
+                endStr: endDateStr,
+                isSingleDate: startDateStr === endDateStr,
+                startDate: start,
+                endDate: end
+            });
+            
             this.updateDateDisplay();
             // Clear cached chart data when calendar dates change
             this.scaledChartData = null;
@@ -2020,7 +2559,10 @@ closeCalendar() {
 
 renderCalendar() {
     const container = document.getElementById('datePickerDropdown');
-    if (!container) return;
+    if (!container) {
+        console.error('❌ Calendar container not found');
+        return;
+    }
     
     container.innerHTML = '';
     
@@ -2043,7 +2585,16 @@ renderCalendar() {
     
     container.appendChild(calendarDiv);
     
+    // Ensure calendar state is valid before rendering days
+    if (!this.calendarState.calendarMonth || isNaN(this.calendarState.calendarMonth.getTime())) {
+        const now = new Date();
+        this.calendarState.calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        console.warn('⚠️ Invalid calendar month, reset to current month');
+    }
+    
     this.renderCalendarDays();
+    
+    console.log('📅 Calendar rendered successfully');
 }
 
 createCalendarHeader() {
@@ -2150,6 +2701,9 @@ createCalendarFooter() {
 renderCalendarDays() {
     const grid = document.getElementById('calendarGrid');
     if (!grid) return;
+    
+    // CRITICAL: Clear the grid before rendering new days
+    grid.innerHTML = '';
     
     // Define current date once for the entire function
     const currentDate = new Date();
@@ -2326,21 +2880,36 @@ handleCalendarDayClick(dateString) {
             return;
         }
         
-        if (!this.calendarState.tempRangeStart || (this.calendarState.tempRangeStart && this.calendarState.tempRangeEnd)) {
+        // Handle date selection logic
+        // Use formatDate to ensure consistent date string format (YYYY-MM-DD)
+        const clickedDateStr = this.formatDate(date);
+        const existingStartStr = this.calendarState.tempRangeStart ? 
+            this.formatDate(this.calendarState.tempRangeStart) : null;
+        
+        // If clicking the same date that's already selected as start, treat as single date selection
+        if (this.calendarState.tempRangeStart && !this.calendarState.tempRangeEnd && 
+            clickedDateStr === existingStartStr) {
+            // Same date clicked twice = single date selection, set both start and end
+            this.calendarState.tempRangeEnd = new Date(date);
+            console.log('🔍 Single date selected (same date clicked twice):', clickedDateStr);
+        } else if (!this.calendarState.tempRangeStart || (this.calendarState.tempRangeStart && this.calendarState.tempRangeEnd)) {
+            // First click or reset: set new start date
             this.calendarState.tempRangeStart = new Date(date);
             this.calendarState.tempRangeEnd = null;
-            console.log('🔍 Set start date:', this.calendarState.tempRangeStart);
+            console.log('🔍 Set start date:', clickedDateStr);
         } else {
+            // Second click on different date: set end date
             const start = new Date(this.calendarState.tempRangeStart);
             start.setHours(0, 0, 0, 0);
+            date.setHours(0, 0, 0, 0);
             
             if (date < start) {
-                this.calendarState.tempRangeEnd = start;
+                this.calendarState.tempRangeEnd = new Date(start);
                 this.calendarState.tempRangeStart = new Date(date);
             } else {
                 this.calendarState.tempRangeEnd = new Date(date);
             }
-            console.log('🔍 Set end date:', this.calendarState.tempRangeEnd);
+            console.log('🔍 Set end date:', this.formatDate(this.calendarState.tempRangeEnd));
         }
         
         this.renderCalendar();
@@ -2394,9 +2963,23 @@ async confirmDateRange() {
         return;
     }
     
+    // CRITICAL: If only start date is set (no end date), treat as single date selection
+    // Set end date to same as start date
+    if (!this.calendarState.tempRangeEnd) {
+        this.calendarState.tempRangeEnd = new Date(this.calendarState.tempRangeStart);
+        console.log('🔍 Single date selection detected - setting end date to same as start');
+    }
+    
+    // Use formatDate for consistent date string comparison (avoids timezone issues)
+    const startStrCheck = this.formatDate(this.calendarState.tempRangeStart);
+    const endStrCheck = this.formatDate(this.calendarState.tempRangeEnd);
+    
     console.log('🔍 Selected range:', {
         start: this.calendarState.tempRangeStart,
-        end: this.calendarState.tempRangeEnd
+        end: this.calendarState.tempRangeEnd,
+        startStr: startStrCheck,
+        endStr: endStrCheck,
+        isSingleDate: startStrCheck === endStrCheck
     });
     
     // Hide calendar immediately when confirm is clicked
@@ -2407,9 +2990,9 @@ async confirmDateRange() {
     const startMonth = this.calendarState.tempRangeStart.getMonth();
     const startDay = this.calendarState.tempRangeStart.getDate();
     
-    const endYear = (this.calendarState.tempRangeEnd || this.calendarState.tempRangeStart).getFullYear();
-    const endMonth = (this.calendarState.tempRangeEnd || this.calendarState.tempRangeStart).getMonth();
-    const endDay = (this.calendarState.tempRangeEnd || this.calendarState.tempRangeStart).getDate();
+    const endYear = this.calendarState.tempRangeEnd.getFullYear();
+    const endMonth = this.calendarState.tempRangeEnd.getMonth();
+    const endDay = this.calendarState.tempRangeEnd.getDate();
     
     // Create date strings FIRST directly from calendar values to avoid timezone conversion
     const startDateStr = `${startYear}-${String(startMonth + 1).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
@@ -2418,10 +3001,13 @@ async confirmDateRange() {
     // Create Date objects using local timezone to avoid UTC conversion
     // Force exact single-day/multi-day ranges without drift
     const start = new Date(startYear, startMonth, startDay, 0, 0, 0, 0);
-    let end = new Date(endYear, endMonth, endDay, 23, 59, 59, 999);
-    if (!this.calendarState.tempRangeEnd) {
-        // single day: end must equal start (23:59:59)
-        end = new Date(startYear, startMonth, startDay, 23, 59, 59, 999);
+    const end = new Date(endYear, endMonth, endDay, 23, 59, 59, 999);
+    
+    // Ensure single date selection: if start and end are the same day, use same date
+    if (startDateStr === endDateStr) {
+        // Single day: end must equal start (same day, end of day)
+        end.setFullYear(startYear, startMonth, startDay);
+        end.setHours(23, 59, 59, 999);
     }
     
     this.state.dateRange = { 

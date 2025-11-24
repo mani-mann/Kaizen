@@ -112,12 +112,36 @@ function clearCache() {
   console.log('🧹 Cache cleared');
 }
 
-// Simple cache helper function
+// Daily cache refresh at 12 PM (24-hour cycle)
+function getNextNoon() {
+  const now = new Date();
+  const noon = new Date(now);
+  noon.setHours(12, 0, 0, 0);
+  
+  // If it's past noon today, set for tomorrow
+  if (now > noon) {
+    noon.setDate(noon.getDate() + 1);
+  }
+  
+  return noon.getTime();
+}
+
+// Cache with daily refresh at 12 PM
 function getCachedData(key) {
   const cached = kpiCache.get(key);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+  if (!cached) return null;
+  
+  const now = Date.now();
+  const nextNoon = getNextNoon();
+  const lastNoon = nextNoon - (24 * 60 * 60 * 1000); // 24 hours before next noon
+  
+  // Check if cache was created after last noon (still valid today)
+  if (cached.timestamp > lastNoon) {
     return cached.data;
   }
+  
+  // Cache expired (past 12 PM), clear it
+  kpiCache.delete(key);
   return null;
 }
 
@@ -126,6 +150,10 @@ function setCachedData(key, data) {
     data: data,
     timestamp: Date.now()
   });
+  
+  // Log cache info
+  const nextRefresh = new Date(getNextNoon());
+  console.log(`💾 Cached data for key: ${key}. Next refresh: ${nextRefresh.toLocaleString()}`);
 }
 
 // Test pool connection on startup
@@ -182,30 +210,38 @@ async function reconnectDbIfNeeded() {
 // --------------------
 // Fetch Keyword Data with Date Filtering
 // --------------------
-async function fetchKeywordData(startDate = null, endDate = null) {
+async function fetchKeywordData(startDate = null, endDate = null, page = 1, limit = 500) {
   try {
     const startTime = Date.now();
+    console.log(`🔍 fetchKeywordData called with: { startDate: '${startDate}', endDate: '${endDate}', page: ${page}, limit: ${limit} }`);
+    
+    // Calculate offset for pagination
+    const offset = (page - 1) * limit;
     
     // Select only the columns used by the frontend
     let query = `SELECT search_term, keyword_info, match_type, campaign_name, cost, sales_1d, clicks, impressions, purchases_1d, report_date
                  FROM amazon_ads_reports`;
     let params = [];
+    let paramIndex = 1;
     
     if (startDate && endDate) {
       // Optimized: Use direct date comparison instead of DATE() function for better index usage
-      query += " WHERE report_date >= $1::date AND report_date <= $2::date";
+      query += ` WHERE report_date >= $${paramIndex}::date AND report_date <= $${paramIndex + 1}::date`;
       params = [startDate, endDate];
-      // Fetch ALL data for accurate calculations, but optimize the query
-      query += ' ORDER BY report_date DESC, cost DESC';
+      paramIndex += 2;
+      // Fetch paginated data with proper sorting
+      query += ` ORDER BY report_date DESC, cost DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(limit, offset);
     } else {
-      // When no date range specified, fetch ALL data (removed 5000 limit to show all campaigns)
-      // With 18K-20K records, this should still be fast enough
-      query += ' ORDER BY report_date DESC, cost DESC';
+      // When no date range specified, fetch paginated data
+      query += ` ORDER BY report_date DESC, cost DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params = [limit, offset];
     }
     
+    console.log(`🔍 Executing keyword query with params:`, params);
     const res = await pool.query(query, params);
     const duration = Date.now() - startTime;
-    console.log(`📊 Fetched ${res.rows.length} keyword records in ${duration}ms${startDate && endDate ? ' for date range' : ' (recent data)'}`);
+    console.log(`📊 Fetched ${res.rows.length} keyword records (page ${page}, limit ${limit}) in ${duration}ms${startDate && endDate ? ' for date range' : ' (recent data)'}`);
     
     // Warn if query is slow
     if (duration > 2000) {
@@ -215,8 +251,28 @@ async function fetchKeywordData(startDate = null, endDate = null) {
     return res.rows;
   } catch (err) {
     console.error("❌ Error fetching keywords:", err);
+    console.error("❌ Error stack:", err.stack);
     console.log("⚠️ Database error, returning empty data");
     return [];
+  }
+}
+
+// Get total count of keyword records for pagination
+async function getKeywordDataCount(startDate = null, endDate = null) {
+  try {
+    let query = `SELECT COUNT(*) as total FROM amazon_ads_reports`;
+    let params = [];
+    
+    if (startDate && endDate) {
+      query += " WHERE report_date >= $1::date AND report_date <= $2::date";
+      params = [startDate, endDate];
+    }
+    
+    const res = await pool.query(query, params);
+    return parseInt(res.rows[0]?.total || 0);
+  } catch (err) {
+    console.error("❌ Error getting keyword count:", err);
+    return 0;
   }
 }
 
@@ -266,8 +322,8 @@ async function fetchBusinessData(startDate = null, endDate = null) {
     }
     
     // If date range provided, aggregate by date for specific date range
-    // Use direct date comparison without timezone conversion to match stored dates
-    let query = `
+    // Optimized: Use date directly in WHERE clause for index usage (date column is 'date' type)
+    const query = `
       SELECT 
         (date AT TIME ZONE 'Asia/Kolkata')::date as date,
         SUM(CAST(sessions AS INTEGER)) as sessions,
@@ -275,113 +331,14 @@ async function fetchBusinessData(startDate = null, endDate = null) {
         SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
         SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
       FROM amazon_sales_traffic
-      WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
-        AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+      WHERE date >= $1::date 
+        AND date <= $2::date
       GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
       ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
     `;
-    
-    console.log('🔍 ===== EXECUTING BUSINESS DATA QUERY =====');
-    console.log('🔍 Query:', query);
-    console.log('🔍 Parameters:', [startDate, endDate]);
-    
-    // First, let's check what dates actually exist in the database
-    console.log('🔍 ===== DEBUGGING: CHECKING DATABASE DATES =====');
-    const debugQuery = `
-      SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date, COUNT(*) as count
-      FROM amazon_sales_traffic 
-      GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
-      ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
-      LIMIT 10
-    `;
-    const debugResult = await pool.query(debugQuery);
-    console.log('🔍 Available dates in database (first 10):', debugResult.rows);
-    
-    // Check raw date values
-    const rawDateQuery = `SELECT date FROM amazon_sales_traffic ORDER BY date DESC LIMIT 5`;
-    const rawDateResult = await pool.query(rawDateQuery);
-    console.log('🔍 Raw date values in database:', rawDateResult.rows.map(r => r.date));
     
     const res = await pool.query(query, [startDate, endDate]);
-    console.log(`📊 Found ${res.rows.length} records for date range ${startDate} to ${endDate}`);
-    console.log('🔍 Query result sample:', res.rows.slice(0, 3));
-    console.log('🔍 All dates in result:', res.rows.map(r => ({ date: r.date, sessions: r.sessions, sales: r.ordered_product_sales })));
-    
-    if (res.rows.length === 0) {
-      console.log('⚠️ ===== NO DATA FOUND - DEBUGGING =====');
-      console.log('🔍 Let me check what dates actually exist in the database...');
-      
-      // Check all available dates
-      const dateCheck = await pool.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic ORDER BY date LIMIT 10");
-      console.log('🔍 Available dates in database:', dateCheck.rows.map(r => r.date));
-      
-      // Check raw date values
-      const rawDateCheck = await pool.query('SELECT date FROM amazon_sales_traffic ORDER BY date LIMIT 5');
-      console.log('🔍 Raw date values:', rawDateCheck.rows.map(r => r.date));
-      
-      // Check if there's data in August 2025 at all
-      const augCheck = await pool.query('SELECT COUNT(*) as count FROM amazon_sales_traffic WHERE EXTRACT(YEAR FROM date) = 2025 AND EXTRACT(MONTH FROM date) = 8');
-      console.log('🔍 Records in August 2025:', augCheck.rows[0].count);
-      
-      // Check what dates exist around the requested range
-      const rangeCheck = await pool.query("SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date FROM amazon_sales_traffic WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date - INTERVAL '7 days' AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date + INTERVAL '7 days' ORDER BY date", [startDate, endDate]);
-      console.log('🔍 Dates around requested range (±7 days):', rangeCheck.rows.map(r => r.date));
-      
-      // Check total records in table
-      const totalCheck = await pool.query('SELECT COUNT(*) as count FROM amazon_sales_traffic');
-      console.log('🔍 Total records in amazon_sales_traffic table:', totalCheck.rows[0].count);
-      
-      console.log('🔍 ===== CHECKING FOR AVAILABLE DATES WITHIN SELECTED RANGE =====');
-      
-      // Check if there are ANY dates within the selected range that have data
-      const availableDatesQuery = `
-        SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date
-        FROM amazon_sales_traffic
-        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
-          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
-        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
-      `;
-      
-      const availableDatesResult = await pool.query(availableDatesQuery, [startDate, endDate]);
-      console.log('🔍 Available dates within selected range:', availableDatesResult.rows.map(r => r.date));
-      
-      if (availableDatesResult.rows.length > 0) {
-        // Get data for all available dates within the selected range
-        const availableDataQuery = `
-          SELECT 
-            (date AT TIME ZONE 'Asia/Kolkata')::date as date,
-            SUM(CAST(sessions AS INTEGER)) as sessions,
-            SUM(CAST(page_views AS INTEGER)) as page_views,
-            SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
-            SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
-          FROM amazon_sales_traffic
-          WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
-            AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
-          GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
-          ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
-        `;
-        
-        const availableDataResult = await pool.query(availableDataQuery, [startDate, endDate]);
-        console.log('✅ Found data for', availableDataResult.rows.length, 'dates within selected range');
-        console.log('🔍 Available dates with data:', availableDataResult.rows.map(r => r.date));
-        return availableDataResult.rows;
-      }
-      
-      console.log('🔍 No data found within selected range, returning empty array');
-      return [];
-    } else {
-      console.log('🔍 ===== DATA FOUND =====');
-      console.log('🔍 Sample data found:', res.rows.slice(0, 2));
-      console.log('🔍 Showing data for available dates within the selected range');
-      console.log('🔍 Found data for dates:', res.rows.map(r => r.date));
-      console.log('🔍 Data summary:', res.rows.map(r => ({
-        date: r.date,
-        sessions: r.sessions,
-        pageViews: r.page_views,
-        unitsOrdered: r.units_ordered,
-        sales: r.ordered_product_sales
-      })));
-    }
+    console.log(`📊 Found ${res.rows.length} business data records for date range ${startDate} to ${endDate}`);
     
     return res.rows;
   } catch (err) {
@@ -997,11 +954,19 @@ app.get('/api/analytics', async (req, res) => {
         totalRows: 0
       });
     }
-    const { start, end } = req.query;
+    const { start, end, page } = req.query;
     const kpisOnly = String(req.query.kpisOnly).toLowerCase() === 'true';
+    const initialLoad = String(req.query.initialLoad).toLowerCase() === 'true';
+    const currentPage = parseInt(page) || 1; // Default to page 1
+    const pageLimit = 500; // 500 rows per page
+    
     console.log(`⏱️ Date range requested: ${start || 'ALL'} to ${end || 'ALL'}`);
     if (kpisOnly) {
       console.log('⏱️ Mode: KPIs-only (fast path)');
+    } else if (initialLoad) {
+      console.log(`⏱️ Mode: INITIAL LOAD (fetching first ${initialLimit} rows)`);
+    } else {
+      console.log('⏱️ Mode: FULL DATA (fetching all remaining rows)');
     }
     
     let startDate = null, endDate = null;
@@ -1010,6 +975,20 @@ app.get('/api/analytics', async (req, res) => {
       // Use date strings directly to avoid any timezone conversion
       startDate = start; // e.g., "2025-07-01"
       endDate = end;     // e.g., "2025-07-02"
+    } else {
+      // Default to current month (1st of current month to today)
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth(); // 0-indexed (0 = January)
+      const currentDay = now.getDate();
+      
+      // Start: 1st of current month
+      startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+      
+      // End: Today (or latest data date if available)
+      endDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}`;
+      
+      console.log(`⏱️ No date range provided, defaulting to current month: ${startDate} to ${endDate}`);
     }
     
     // Use the exact start/end provided by the UI without modification
@@ -1089,16 +1068,39 @@ app.get('/api/analytics', async (req, res) => {
       };
 
       const totalDuration = Date.now() - requestStartTime;
-      console.log(`\n⏱️ KPI-ONLY REQUEST COMPLETE in ${totalDuration}ms (DB: ${dbQueryDuration}ms)`);
+      
+      // Summary log at the end
+      console.log(`\n⏱️ ========== REQUEST SUMMARY ==========`);
+      console.log(`⏱️ Mode:                  KPIs-only (fast path)`);
+      console.log(`⏱️ Date range:            ${startDate || 'ALL'} to ${endDate || 'ALL'}`);
+      console.log(`⏱️ Database queries:      ${dbQueryDuration}ms`);
+      console.log(`⏱️ TOTAL TIME:            ${totalDuration}ms`);
+      console.log(`⏱️ Rows returned:         0 (KPIs only)`);
+      console.log(`⏱️ =======================================\n`);
+      
       return res.json(responseData);
     }
 
     // Full data path: fetch rows and business data
-    const [keywordData, businessDataForChart, businessDataForKPIs] = await Promise.all([
-      fetchKeywordData(startDate, effectiveEndDate || endDate),
-      fetchBusinessData(startDate, effectiveEndDate || endDate),
+    // If initialLoad, fetch only first 500 rows; otherwise fetch all
+    let keywordData, businessDataForChart, businessDataForKPIs;
+    
+    let totalRowsCount = null;
+    
+    // Always use pagination for keyword data (500 rows per page)
+    // Get total count and paginated keyword data in parallel
+    const [keywordDataResult, totalCountResult, businessDataResult] = await Promise.all([
+      fetchKeywordData(startDate, effectiveEndDate || endDate, currentPage, pageLimit),
+      getKeywordDataCount(startDate, effectiveEndDate || endDate),
       fetchBusinessData(startDate, effectiveEndDate || endDate)
     ]);
+    
+    keywordData = keywordDataResult || [];
+    totalRowsCount = totalCountResult || 0;
+    businessDataForChart = businessDataResult || [];
+    businessDataForKPIs = businessDataResult || [];
+    
+    console.log(`⏱️ Fetched page ${currentPage}: ${keywordData.length} keyword rows (of ${totalRowsCount} total)`);
 
     // ⏱️ DATABASE QUERY END
     const dbQueryDuration = Date.now() - dbQueryStartTime;
@@ -1133,9 +1135,9 @@ app.get('/api/analytics', async (req, res) => {
       console.log('❌ No business data available for KPI calculation');
     }
     
-    console.log(`📊 Fetched ${keywordData.length} keyword rows from database`);
-    console.log(`📊 Fetched ${businessDataForChart.length} business rows for chart`);
-    console.log(`📊 Fetched ${businessDataForKPIs.length} business rows for KPIs`);
+    console.log(`📊 Fetched ${keywordData ? keywordData.length : 0} keyword rows from database`);
+    console.log(`📊 Fetched ${businessDataForChart ? businessDataForChart.length : 0} business rows for chart`);
+    console.log(`📊 Fetched ${businessDataForKPIs ? businessDataForKPIs.length : 0} business rows for KPIs`);
     console.log(`📊 Using ${finalBusinessDataForKPIs.length} business rows for final KPI calculation`);
     console.log(`📊 Using ${finalBusinessDataForFrontend.length} business rows for frontend transformation`);
     
@@ -1180,6 +1182,11 @@ app.get('/api/analytics', async (req, res) => {
     // Get data range for date picker via lightweight query
     const dataRange = await getGlobalDateRange();
     
+    // Calculate pagination info
+    const totalPages = Math.ceil((totalRowsCount || 0) / pageLimit);
+    const hasNextPage = currentPage < totalPages;
+    const hasPrevPage = currentPage > 1;
+    
     // Prepare response data
     const responseData = {
       rows: rows || [],
@@ -1194,7 +1201,15 @@ app.get('/api/analytics', async (req, res) => {
         avgCpc: 0
       },
       dataRange,
-      totalRows: rows ? rows.length : 0
+      pagination: {
+        currentPage: currentPage,
+        pageLimit: pageLimit,
+        totalRows: totalRowsCount || 0,
+        totalPages: totalPages,
+        hasNextPage: hasNextPage,
+        hasPrevPage: hasPrevPage
+      },
+      totalRows: totalRowsCount !== null ? totalRowsCount : (rows ? rows.length : 0)
     };
     
     // Cache the result
@@ -1202,11 +1217,19 @@ app.get('/api/analytics', async (req, res) => {
     
     // ⏱️ TOTAL REQUEST TIME
     const totalDuration = Date.now() - requestStartTime;
-    console.log(`\n⏱️ ========== REQUEST COMPLETE ==========`);
-    console.log(`⏱️ Database queries:     ${dbQueryDuration}ms (${((dbQueryDuration/totalDuration)*100).toFixed(1)}%)`);
-    console.log(`⏱️ Data processing:      ${processingDuration}ms (${((processingDuration/totalDuration)*100).toFixed(1)}%)`);
-    console.log(`⏱️ TOTAL TIME:           ${totalDuration}ms`);
-    console.log(`⏱️ Rows returned:        ${rows.length}`);
+    
+    // Determine mode for summary
+    const mode = kpisOnly ? 'KPIs-only (fast path)' : 
+                 `PAGINATED (page ${currentPage} of ${totalPages}, ${pageLimit} rows per page)`;
+    
+    // Summary log at the end
+    console.log(`\n⏱️ ========== REQUEST SUMMARY ==========`);
+    console.log(`⏱️ Mode:                  ${mode}`);
+    console.log(`⏱️ Date range:            ${startDate || 'ALL'} to ${endDate || 'ALL'}`);
+    console.log(`⏱️ Database queries:      ${dbQueryDuration}ms (${((dbQueryDuration/totalDuration)*100).toFixed(1)}%)`);
+    console.log(`⏱️ Data processing:       ${processingDuration}ms (${((processingDuration/totalDuration)*100).toFixed(1)}%)`);
+    console.log(`⏱️ TOTAL TIME:            ${totalDuration}ms`);
+    console.log(`⏱️ Rows returned:         ${rows.length}`);
     console.log(`⏱️ =======================================\n`);
     
     // Return response
@@ -1742,25 +1765,69 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 });
 
 // Graceful shutdown - close pool connections
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', () => {
   console.log('🛑 SIGTERM received, shutting down gracefully...');
+  
+  let shutdownComplete = false;
+  
+  // Force exit after 5 seconds if graceful shutdown hangs
+  const forceExit = setTimeout(() => {
+    if (!shutdownComplete) {
+      console.log('⚠️ Forcing exit after timeout...');
+      process.exit(1);
+    }
+  }, 5000);
+  
   server.close(() => {
     console.log('✅ HTTP server closed');
-    pool.end(() => {
-      console.log('✅ PostgreSQL pool closed');
-      process.exit(0);
-    });
+    
+    // Close database pool using Promise pattern (no callback)
+    pool.end()
+      .then(() => {
+        console.log('✅ PostgreSQL pool closed');
+        shutdownComplete = true;
+        clearTimeout(forceExit);
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error('❌ Error closing pool:', err);
+        shutdownComplete = true;
+        clearTimeout(forceExit);
+        process.exit(1);
+      });
   });
 });
 
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   console.log('🛑 SIGINT received, shutting down gracefully...');
+  
+  let shutdownComplete = false;
+  
+  // Force exit after 5 seconds if graceful shutdown hangs
+  const forceExit = setTimeout(() => {
+    if (!shutdownComplete) {
+      console.log('⚠️ Forcing exit after timeout...');
+      process.exit(1);
+    }
+  }, 5000);
+  
+  // Try to close server gracefully
   server.close(() => {
     console.log('✅ HTTP server closed');
-    pool.end(() => {
-      console.log('✅ PostgreSQL pool closed');
-      process.exit(0);
-    });
+    
+    // Close database pool using Promise pattern (no callback)
+    pool.end()
+      .then(() => {
+        console.log('✅ PostgreSQL pool closed');
+        shutdownComplete = true;
+        clearTimeout(forceExit);
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error('❌ Error closing pool:', err);
+        shutdownComplete = true;
+        clearTimeout(forceExit);
+        process.exit(1);
+      });
   });
 });
-
