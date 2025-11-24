@@ -722,6 +722,62 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
   });
 }
 
+// Ensure every business date appears in keyword rows (even when no keywords exist that day)
+function ensureBusinessSalesRows(rows = [], businessData = []) {
+  try {
+    if (!Array.isArray(businessData) || businessData.length === 0) return rows;
+
+    const getDateKey = (value) => {
+      if (!value) return null;
+      try {
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) {
+          return d.toISOString().split('T')[0];
+        }
+      } catch (_) {}
+      if (typeof value === 'string') {
+        if (value.includes('T')) return value.split('T')[0];
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+      }
+      return null;
+    };
+
+    const datesWithKeywordData = new Set(
+      rows
+        .map(row => getDateKey(row.date || row.report_date))
+        .filter(Boolean)
+    );
+
+    const enrichedRows = [...rows];
+
+    businessData.forEach(bizRow => {
+      const dateKey = getDateKey(bizRow.date);
+      const totalSales = parseFloat(bizRow.ordered_product_sales || 0);
+      if (!dateKey || totalSales <= 0) return;
+
+      if (!datesWithKeywordData.has(dateKey)) {
+        enrichedRows.push({
+          searchTerm: 'Business Total',
+          keywords: 'business_fallback',
+          campaignName: 'Business Data',
+          spend: 0,
+          sales: 0,
+          totalSales: totalSales,
+          clicks: 0,
+          impressions: 0,
+          date: bizRow.date
+        });
+        datesWithKeywordData.add(dateKey);
+      }
+    });
+
+    return enrichedRows;
+  } catch (e) {
+    console.warn('ensureBusinessSalesRows error:', e);
+    return rows;
+  }
+}
+
 // --------------------
 // API Endpoints
 // --------------------
@@ -1166,7 +1222,8 @@ app.get('/api/analytics', async (req, res) => {
     const processingStartTime = Date.now();
     console.log(`⏱️ Starting data transformation...`);
     
-    const rows = transformKeywordDataForFrontend(keywordData, finalBusinessDataForFrontend);
+    let rows = transformKeywordDataForFrontend(keywordData, finalBusinessDataForFrontend);
+    rows = ensureBusinessSalesRows(rows, finalBusinessDataForFrontend);
     
     // ⏱️ DATA PROCESSING END
     const processingDuration = Date.now() - processingStartTime;

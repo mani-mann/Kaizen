@@ -37,6 +37,7 @@ class AmazonDashboard {
         
         // Cache configuration
         this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL
+        this.cacheVersion = 'analytics_v2'; // bump to invalidate stale cached data
         
         // Remove mock data - we'll get real data from database
         this.init();
@@ -62,6 +63,10 @@ class AmazonDashboard {
             if (!cached) return null;
             
             const parsed = JSON.parse(cached);
+            if (parsed.version !== this.cacheVersion) {
+                localStorage.removeItem(cacheKey);
+                return null;
+            }
             const now = Date.now();
             const nextNoon = this.getNextNoon();
             const lastNoon = nextNoon - (24 * 60 * 60 * 1000); // 24 hours before next noon
@@ -90,6 +95,7 @@ class AmazonDashboard {
     setCachedData(cacheKey, data) {
         try {
             const cacheEntry = {
+                version: this.cacheVersion,
                 data: data,
                 timestamp: Date.now()
             };
