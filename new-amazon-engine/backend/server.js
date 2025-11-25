@@ -1082,7 +1082,11 @@ app.get('/api/analytics', async (req, res) => {
       `;
 
       const bizAggSql = `
-        SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
+        SELECT 
+          COALESCE(SUM(CAST(sessions AS INTEGER)), 0)               AS total_sessions,
+          COALESCE(SUM(CAST(page_views AS INTEGER)), 0)             AS total_page_views,
+          COALESCE(SUM(CAST(units_ordered AS INTEGER)), 0)          AS total_units_ordered,
+          COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0)  AS total_sales
         FROM amazon_sales_traffic
         WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
           AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
@@ -1094,15 +1098,38 @@ app.get('/api/analytics', async (req, res) => {
       ]);
 
       const ad = adRes.rows?.[0] || {};
-      const totalSales = parseFloat(bizRes.rows?.[0]?.total || 0);
+      const biz = bizRes.rows?.[0] || {};
+      const totalSales = parseFloat(biz.total_sales || 0);
       const adSpend = parseFloat(ad.ad_spend || 0);
       const adSales = parseFloat(ad.ad_sales || 0);
       const clicks = parseInt(ad.clicks || 0);
+      const totalSessions = parseInt(biz.total_sessions || 0);
+      const totalPageViews = parseInt(biz.total_page_views || 0);
+      const totalUnitsOrdered = parseInt(biz.total_units_ordered || 0);
 
       const avgCpc = clicks > 0 ? adSpend / clicks : 0;
       const acos = adSales > 0 ? (adSpend / adSales) * 100 : 0;
       const roas = adSpend > 0 ? adSales / adSpend : 0;
       const tacos = totalSales > 0 ? (adSpend / totalSales) * 100 : 0;
+      const conversionRate = totalSessions > 0 ? (totalUnitsOrdered / totalSessions) * 100 : 0;
+
+      // Compute average sessions per day based on requested date window
+      let avgSessionsPerDay = 0;
+      try {
+        const s = new Date(startDate);
+        const e = new Date(endBound);
+        if (!isNaN(s) && !isNaN(e) && e >= s) {
+          s.setHours(0,0,0,0);
+          e.setHours(23,59,59,999);
+          const diffMs = e.getTime() - s.getTime();
+          const dayCount = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+          if (dayCount > 0) {
+            avgSessionsPerDay = totalSessions > 0 ? totalSessions / dayCount : 0;
+          }
+        }
+      } catch (_) {
+        // leave avgSessionsPerDay = 0 on error
+      }
 
       const dbQueryDuration = Date.now() - dbQueryStartTime;
       console.log(`⏱️ KPI-only DB aggregates completed in: ${dbQueryDuration}ms`);
@@ -1117,7 +1144,13 @@ app.get('/api/analytics', async (req, res) => {
           tacos,
           roas,
           adClicks: clicks,
-          avgCpc
+          avgCpc,
+          // Business KPIs for keyword dashboard
+          sessions: totalSessions,
+          pageViews: totalPageViews,
+          unitsOrdered: totalUnitsOrdered,
+          avgSessionsPerDay,
+          conversionRate
         },
         dataRange: await getGlobalDateRange(),
         totalRows: parseInt(ad.total_rows || 0)
@@ -1214,6 +1247,23 @@ app.get('/api/analytics', async (req, res) => {
         // Override KPI totalSales and recompute dependent metrics
         kpis.totalSales = strictTotal;
         kpis.tacos = strictTotal > 0 ? (kpis.adSpend / strictTotal) * 100 : 0;
+
+        // Also compute average sessions per day for the selected window
+        try {
+          const startD = new Date(startDate);
+          const endD = new Date(endBound);
+          if (!isNaN(startD) && !isNaN(endD) && endD >= startD) {
+            startD.setHours(0, 0, 0, 0);
+            endD.setHours(23, 59, 59, 999);
+            const diffMs = endD.getTime() - startD.getTime();
+            const dayCount = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+            if (dayCount > 0) {
+              kpis.avgSessionsPerDay = kpis.sessions > 0 ? kpis.sessions / dayCount : 0;
+            }
+          }
+        } catch (e) {
+          console.log('⚠️ Avg sessions/day calculation failed:', e?.message || e);
+        }
       }
     } catch (strictErr) {
       console.log('⚠️ SQL strict total sales fallback failed:', strictErr.message);

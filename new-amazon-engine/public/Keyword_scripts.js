@@ -7,6 +7,9 @@
         noops.forEach(fn => { try { console[fn] = () => {}; } catch(_) {} });
     }
 })();
+
+const GLOBAL_DATE_RANGE_STORAGE_KEY = 'global_date_range';
+const GLOBAL_DATE_RANGE_WINDOW_PREFIX = '__GLOBAL_DATE_RANGE__=';
 class AmazonDashboard {
     constructor() {
         this.chart = null;
@@ -27,17 +30,27 @@ class AmazonDashboard {
         this.currentTab = 'keywords'; // Default to keywords tab
         this.rowsPerPage = Number(localStorage.getItem('kw_rows_per_page') || 25); // Default 25, persisted
         this.activeFilters = { campaign: '', keyword: '', campaigns: [], keywords: [] };
+        this.hasManualDateSelection = false;
         
         // Mobile navigation state for daily view
         this.mobileWeekIndex = 0;
         this.mobileWeekPeriods = [];
         
         // Selected metrics for chart (persist across period changes)
-        this.selectedMetrics = ['totalSales', 'adSales', 'adSpend', 'acos', 'tcos'];
+        // Show spend/sales by default; percentages and business metrics are opt-in
+        this.selectedMetrics = ['totalSales', 'adSales', 'adSpend'];
         
         // Cache configuration
         this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL
         this.cacheVersion = 'analytics_v2'; // bump to invalidate stale cached data
+        
+        // Reuse/sync the same date range across pages
+        const hasQueryRange = this.applyDateRangeFromQuery();
+        if (!hasQueryRange) {
+            this.applyGlobalDateRangeFromStorage();
+        }
+        this.updateNavLinksWithDateRange();
+        this.syncUrlDateParams();
         
         // Remove mock data - we'll get real data from database
         this.init();
@@ -159,6 +172,108 @@ class AmazonDashboard {
         } catch (e) {
             console.warn('Error clearing expired cache:', e);
         }
+    }
+
+    applyDateRangeFromQuery() {
+        const queryRange = this.getDateRangeFromQuery();
+        if (!queryRange) return false;
+        this.dateRange = queryRange;
+        this.hasManualDateSelection = true;
+        this.persistGlobalDateRange();
+        return true;
+    }
+
+    getDateRangeFromQuery() {
+        try {
+            if (typeof window === 'undefined') return null;
+            const params = new URLSearchParams(window.location.search);
+            const start = params.get('start');
+            const end = params.get('end');
+            if (!start || !end) return null;
+            const startDate = new Date(start);
+            const endDate = new Date(end);
+            if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null;
+            startDate.setHours(0,0,0,0);
+            endDate.setHours(23,59,59,999);
+            return {
+                start: startDate,
+                end: endDate,
+                startStr: this.toInputDate(startDate),
+                endStr: this.toInputDate(endDate)
+            };
+        } catch (_) {
+            return null;
+        }
+    }
+
+    applyGlobalDateRangeFromStorage() {
+        const stored = this.loadGlobalDateRangeFromStorage();
+        if (!stored || !stored.manualSelection) return;
+        this.hasManualDateSelection = true;
+        this.dateRange = stored;
+    }
+
+    loadGlobalDateRangeFromStorage() {
+        try {
+            if (typeof window === 'undefined' || !window.localStorage) return null;
+        } catch (_) {
+            return null;
+        }
+
+        try {
+            const raw = this.getGlobalDateRangeRawValue();
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            const normalizeDate = (value) => {
+                if (value === null || value === undefined) return null;
+                if (typeof value === 'number' && Number.isFinite(value)) {
+                    const d = new Date(value);
+                    return Number.isNaN(d.getTime()) ? null : d;
+                }
+                if (typeof value === 'string' && value) {
+                    const d = new Date(value);
+                    return Number.isNaN(d.getTime()) ? null : d;
+                }
+                return null;
+            };
+
+            const startCandidate = normalizeDate(parsed.startMs ?? parsed.start ?? parsed.startStr);
+            const endCandidate = normalizeDate(parsed.endMs ?? parsed.end ?? parsed.endStr);
+            if (!startCandidate || !endCandidate) return null;
+            startCandidate.setHours(0, 0, 0, 0);
+            endCandidate.setHours(23, 59, 59, 999);
+            return {
+                start: startCandidate,
+                end: endCandidate,
+                startStr: parsed.startStr || this.toInputDate(startCandidate),
+                endStr: parsed.endStr || this.toInputDate(endCandidate),
+                manualSelection: !!parsed.manualSelection
+            };
+        } catch (err) {
+            console.warn('Global date range load failed:', err);
+            return null;
+        }
+    }
+
+    persistGlobalDateRange() {
+        if (!this.hasManualDateSelection) return;
+        if (!this.dateRange || !this.dateRange.start || !this.dateRange.end) return;
+        const start = new Date(this.dateRange.start);
+        const end = new Date(this.dateRange.end);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+
+        const payload = {
+            startMs: start.getTime(),
+            endMs: end.getTime(),
+            startStr: this.dateRange.startStr || this.toInputDate(start),
+            endStr: this.dateRange.endStr || this.toInputDate(end),
+            savedAt: Date.now(),
+            manualSelection: true
+        };
+
+        this.persistGlobalDateRangeRaw(payload);
+        this.updateNavLinksWithDateRange();
+        this.syncUrlDateParams();
     }
     getApiBase() {
         try {
@@ -542,7 +657,117 @@ class AmazonDashboard {
             endStr: endDateStr
         };
         this.updateDateDisplay();
+        this.hasManualDateSelection = true;
+        this.persistGlobalDateRange();
         await this.refreshForCurrentRange();
+    }
+
+    getGlobalDateRangeRawValue() {
+        const sources = [
+            () => {
+                try {
+                    return (typeof window !== 'undefined' && window.localStorage)
+                        ? localStorage.getItem(GLOBAL_DATE_RANGE_STORAGE_KEY)
+                        : null;
+                } catch (_) {
+                    return null;
+                }
+            },
+            () => {
+                try {
+                    return (typeof window !== 'undefined' && window.sessionStorage)
+                        ? sessionStorage.getItem(GLOBAL_DATE_RANGE_STORAGE_KEY)
+                        : null;
+                } catch (_) {
+                    return null;
+                }
+            },
+            () => {
+                try {
+                    if (typeof window === 'undefined' || typeof window.name !== 'string') return null;
+                    if (!window.name.startsWith(GLOBAL_DATE_RANGE_WINDOW_PREFIX)) return null;
+                    return window.name.slice(GLOBAL_DATE_RANGE_WINDOW_PREFIX.length);
+                } catch (_) {
+                    return null;
+                }
+            }
+        ];
+
+        for (const getter of sources) {
+            const raw = getter();
+            if (raw && raw !== 'undefined') return raw;
+        }
+        return null;
+    }
+
+    persistGlobalDateRangeRaw(payload) {
+        const json = JSON.stringify(payload);
+        try {
+            if (typeof window !== 'undefined' && window.localStorage) {
+                localStorage.setItem(GLOBAL_DATE_RANGE_STORAGE_KEY, json);
+            }
+        } catch (err) {
+            console.warn('Global date range localStorage save failed:', err);
+        }
+        try {
+            if (typeof window !== 'undefined' && window.sessionStorage) {
+                sessionStorage.setItem(GLOBAL_DATE_RANGE_STORAGE_KEY, json);
+            }
+        } catch (err) {
+            console.warn('Global date range sessionStorage save failed:', err);
+        }
+        try {
+            if (typeof window !== 'undefined') {
+                window.name = `${GLOBAL_DATE_RANGE_WINDOW_PREFIX}${json}`;
+            }
+        } catch (err) {
+            console.warn('Global date range window.name save failed:', err);
+        }
+    }
+
+    syncUrlDateParams() {
+        if (!this.hasManualDateSelection) return;
+        try {
+            if (typeof window === 'undefined' || !window.history || !window.history.replaceState) return;
+            if (!this.dateRange || !this.dateRange.start || !this.dateRange.end) return;
+            const start = this.dateRange.startStr || this.toInputDate(new Date(this.dateRange.start));
+            const end = this.dateRange.endStr || this.toInputDate(new Date(this.dateRange.end));
+            const url = new URL(window.location.href);
+            url.searchParams.set('start', start);
+            url.searchParams.set('end', end);
+            const newUrl = url.pathname + url.search;
+            window.history.replaceState({}, '', newUrl);
+        } catch (_) {
+            // ignore
+        }
+    }
+
+    updateNavLinksWithDateRange() {
+        if (!this.hasManualDateSelection) return;
+        if (!this.dateRange || !this.dateRange.start || !this.dateRange.end) return;
+        const start = this.dateRange.startStr || this.toInputDate(new Date(this.dateRange.start));
+        const end = this.dateRange.endStr || this.toInputDate(new Date(this.dateRange.end));
+        const links = typeof document !== 'undefined' ? document.querySelectorAll('.nav-item[href]') : [];
+        links.forEach(link => {
+            const href = link.getAttribute('href');
+            if (!href || href.startsWith('#') || link.hasAttribute('data-section')) return;
+            try {
+                // Use current location (including /pages/) as base so relative paths stay under the correct directory
+                const base = (typeof window !== 'undefined' && window.location && window.location.href)
+                    ? window.location.href
+                    : '';
+                const url = new URL(href, base);
+                url.searchParams.set('start', start);
+                url.searchParams.set('end', end);
+                let relative = url.href;
+                if (typeof window !== 'undefined' && url.origin === window.location.origin) {
+                    relative = url.pathname + url.search;
+                }
+                link.setAttribute('href', relative);
+            } catch (_) {
+                // ignore malformed URLs
+            }
+        });
     }
 
     // Quick presets (Today, Yesterday, Last 7 days, etc.)
@@ -617,6 +842,8 @@ class AmazonDashboard {
         const endStr = this.toInputDate(end);
         this.dateRange = { start, end, startStr, endStr };
         this.updateDateDisplay();
+        this.hasManualDateSelection = true;
+        this.persistGlobalDateRange();
         await this.refreshForCurrentRange();
     }
 
@@ -659,6 +886,8 @@ class AmazonDashboard {
             endStr: endDateStr
         };
         this.updateDateDisplay();
+        this.hasManualDateSelection = true;
+        this.persistGlobalDateRange();
         await this.refreshForCurrentRange();
         if (dropdown) dropdown.style.display = 'none';
     }
@@ -1957,9 +2186,9 @@ class AmazonDashboard {
                 return chartData;
             }
             
-            // Create a map of date -> totalSales from business data
-            // CRITICAL: Aggregate by date properly - each date should have its own total
-            const businessSalesByDate = new Map();
+            // Create a map of date -> aggregated BUSINESS metrics from business data
+            // Each date will have: { totalSales, sessions, pageViews, unitsOrdered }
+            const businessMetricsByDate = new Map();
             businessData.data.forEach(bizRow => {
                 const bizDate = bizRow.date;
                 if (!bizDate) return;
@@ -1996,24 +2225,39 @@ class AmazonDashboard {
                     }
                 }
                 
-                // Extract totalSales from business data (ordered_product_sales is the field name)
+                // Extract metrics from business data
                 const totalSales = parseFloat(bizRow.ordered_product_sales || bizRow.totalSales || bizRow.sales || 0);
-                if (totalSales > 0) {
-                    // Sum up totalSales for the same date (multiple products per date)
-                    // Each date gets its own aggregated total
-                    if (businessSalesByDate.has(dateStr)) {
-                        businessSalesByDate.set(dateStr, businessSalesByDate.get(dateStr) + totalSales);
-                    } else {
-                        businessSalesByDate.set(dateStr, totalSales);
-                    }
+                const sessions = parseInt(bizRow.sessions || 0);
+                const pageViews = parseInt(bizRow.page_views || bizRow.pageViews || 0);
+                const unitsOrdered = parseInt(bizRow.units_ordered || bizRow.unitsOrdered || 0);
+
+                if (!businessMetricsByDate.has(dateStr)) {
+                    businessMetricsByDate.set(dateStr, {
+                        totalSales: 0,
+                        sessions: 0,
+                        pageViews: 0,
+                        unitsOrdered: 0
+                    });
                 }
+
+                const agg = businessMetricsByDate.get(dateStr);
+                agg.totalSales += isNaN(totalSales) ? 0 : totalSales;
+                agg.sessions += isNaN(sessions) ? 0 : sessions;
+                agg.pageViews += isNaN(pageViews) ? 0 : pageViews;
+                agg.unitsOrdered += isNaN(unitsOrdered) ? 0 : unitsOrdered;
             });
             
-            // Debug: Log business sales by date to verify each date has different values
-            console.log('🔍 Business sales by date:', Array.from(businessSalesByDate.entries()).map(([date, sales]) => ({
-                date,
-                totalSales: sales
-            })));
+            // Debug: Log business metrics by date to verify values
+            console.log(
+                '🔍 Business metrics by date:',
+                Array.from(businessMetricsByDate.entries()).map(([date, m]) => ({
+                    date,
+                    totalSales: m.totalSales,
+                    sessions: m.sessions,
+                    pageViews: m.pageViews,
+                    unitsOrdered: m.unitsOrdered
+                }))
+            );
             
             // Step 1: Enrich existing chart data entries (replace 0 totalSales with business data)
             const enrichedData = chartData && chartData.length > 0
@@ -2032,17 +2276,23 @@ class AmazonDashboard {
                         chartDateStr = `${y}-${m}-${d}`;
                     }
                     
-                    // Only enrich if totalSales is 0 and we have business data for this specific date
-                    if ((item.totalSales === 0 || item.totalSales === null || isNaN(item.totalSales)) && businessSalesByDate.has(chartDateStr)) {
-                        const businessTotalSales = businessSalesByDate.get(chartDateStr);
-                        if (businessTotalSales > 0) {
-                            return {
-                                ...item,
-                                date: chartDateStr,
-                                totalSales: businessTotalSales
-                            };
-                        }
+                    // Enrich with business metrics for this specific date if available
+                    if (businessMetricsByDate.has(chartDateStr)) {
+                        const metrics = businessMetricsByDate.get(chartDateStr);
+                        return {
+                            ...item,
+                            date: chartDateStr,
+                            // Keep ad metrics from keyword data, but use business totals for business KPIs
+                            totalSales:
+                                (item.totalSales && !isNaN(item.totalSales) && item.totalSales > 0)
+                                    ? item.totalSales
+                                    : metrics.totalSales,
+                            sessions: metrics.sessions,
+                            pageViews: metrics.pageViews,
+                            unitsOrdered: metrics.unitsOrdered
+                        };
                     }
+                    // No business metrics for this date; just normalize date string
                     return {
                         ...item,
                         date: chartDateStr
@@ -2051,24 +2301,31 @@ class AmazonDashboard {
                 : [];
             
             // Step 2: Add missing dates that have business data but no keyword data (like Nov 2, 3)
-            businessSalesByDate.forEach((businessTotalSales, dateStr) => {
+            businessMetricsByDate.forEach((metrics, dateStr) => {
                 // Only add if:
                 // 1. Date is within the selected range
                 // 2. Date doesn't already exist in chartData
-                // 3. Business total sales > 0
-                if (dateStr >= minDate && dateStr <= maxDate && 
-                    !chartDataByDate.has(dateStr) && 
-                    businessTotalSales > 0) {
+                // 3. At least one of the business metrics is > 0
+                const hasAnyMetric =
+                    (metrics.totalSales || 0) > 0 ||
+                    (metrics.sessions || 0) > 0 ||
+                    (metrics.pageViews || 0) > 0 ||
+                    (metrics.unitsOrdered || 0) > 0;
+
+                if (dateStr >= minDate &&
+                    dateStr <= maxDate &&
+                    !chartDataByDate.has(dateStr) &&
+                    hasAnyMetric) {
                     enrichedData.push({
                         date: dateStr,
                         adSpend: 0,
                         adSales: 0,
-                        totalSales: businessTotalSales, // Use business total sales (same as KPIs use)
+                        totalSales: metrics.totalSales, // Use business total sales (same as KPIs use)
                         clicks: 0,
                         impressions: 0,
-                        sessions: 0,
-                        pageViews: 0,
-                        unitsOrdered: 0
+                        sessions: metrics.sessions,
+                        pageViews: metrics.pageViews,
+                        unitsOrdered: metrics.unitsOrdered
                     });
                 }
             });
@@ -2626,10 +2883,12 @@ class AmazonDashboard {
             }
             if (typeof value === 'number') {
                 const lower = label.toLowerCase();
-                if (lower.includes('click')) el.textContent = value.toLocaleString('en-IN');
+                if (lower.includes('click') || lower.includes('session') || lower.includes('page') || lower.includes('unit')) {
+                    el.textContent = value.toLocaleString('en-IN');
+                }
                 else if (lower.includes('cpc')) el.textContent = `₹${value.toFixed(2)}`;
                 else if (lower.includes('sales') || lower.includes('spend')) el.textContent = `₹${value.toLocaleString('en-IN')}`;
-                else if (lower.includes('acos') || lower.includes('tcos')) el.textContent = `${value.toFixed(2)}%`;
+                else if (lower.includes('acos') || lower.includes('tcos') || lower.includes('conversion')) el.textContent = `${value.toFixed(2)}%`;
                 else if (lower.includes('roas')) el.textContent = value.toFixed(2);
                 else el.textContent = String(value);
                 
@@ -2647,6 +2906,12 @@ class AmazonDashboard {
         setValue('ROAS', this.kpis.roas || 0);
         setValue('AD CLICKS', this.kpis.adClicks || 0);
         setValue('AVG. CPC', this.kpis.avgCpc || 0);
+        // Business KPIs from analytics
+        setValue('TOTAL SESSIONS', this.kpis.sessions || 0);
+        setValue('PAGE VIEWS', this.kpis.pageViews || 0);
+        setValue('UNITS ORDERED', this.kpis.unitsOrdered || 0);
+        setValue('AVG SESSIONS/DAY', this.kpis.avgSessionsPerDay || 0);
+        setValue('CONVERSION RATE', this.kpis.conversionRate || 0);
     }
 
     async updateKPITrends(currentKpis) {
@@ -3281,31 +3546,64 @@ class AmazonDashboard {
                 label: 'Total Sales',
                 borderColor: '#28a745',
                 backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                yAxisID: 'y'
+                yAxisID: 'y',
+                valueType: 'currency'
             },
             adSales: {
                 label: 'Ad Sales',
                 borderColor: '#ffc107',
                 backgroundColor: 'rgba(255, 193, 7, 0.1)',
-                yAxisID: 'y'
+                yAxisID: 'y',
+                valueType: 'currency'
             },
             adSpend: {
                 label: 'Ad Spend',
                 borderColor: '#007bff',
                 backgroundColor: 'rgba(0, 123, 255, 0.1)',
-                yAxisID: 'y'
+                yAxisID: 'y',
+                valueType: 'currency'
             },
             acos: {
                 label: 'ACOS (%)',
                 borderColor: '#dc3545',
                 backgroundColor: 'rgba(220, 53, 69, 0.1)',
-                yAxisID: 'y1'
+                yAxisID: 'y1',
+                valueType: 'percent'
             },
             tcos: {
                 label: 'TCOS (%)',
                 borderColor: '#6f42c1',
                 backgroundColor: 'rgba(111, 66, 193, 0.1)',
-                yAxisID: 'y1'
+                yAxisID: 'y1',
+                valueType: 'percent'
+            },
+            sessions: {
+                label: 'Total Sessions',
+                borderColor: '#17a2b8',
+                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                yAxisID: 'y',
+                valueType: 'count'
+            },
+            pageViews: {
+                label: 'Page Views',
+                borderColor: '#20c997',
+                backgroundColor: 'rgba(32, 201, 151, 0.1)',
+                yAxisID: 'y',
+                valueType: 'count'
+            },
+            unitsOrdered: {
+                label: 'Units Ordered',
+                borderColor: '#6610f2',
+                backgroundColor: 'rgba(102, 16, 242, 0.1)',
+                yAxisID: 'y',
+                valueType: 'count'
+            },
+            conversionRate: {
+                label: 'Conversion Rate (%)',
+                borderColor: '#e83e8c',
+                backgroundColor: 'rgba(232, 62, 140, 0.1)',
+                yAxisID: 'y1',
+                valueType: 'percent'
             }
         };
 
@@ -3337,7 +3635,8 @@ class AmazonDashboard {
                     borderJoinStyle: 'round',
                     borderCapStyle: 'round'
                 }
-            }
+            },
+            valueType: config.valueType || 'currency'
         };
     }
     
@@ -3371,11 +3670,15 @@ class AmazonDashboard {
             adSales: chartData.adSales,
             adSpend: chartData.adSpend,
             acos: chartData.acos,
-            tcos: chartData.tacos
+            tcos: chartData.tacos,
+            sessions: chartData.sessions,
+            pageViews: chartData.pageViews,
+            unitsOrdered: chartData.unitsOrdered,
+            conversionRate: chartData.conversionRate
         };
 
         // Always include all metrics, but set hidden state based on selectedMetrics
-        const allMetrics = ['totalSales', 'adSales', 'adSpend', 'acos', 'tcos'];
+        const allMetrics = ['totalSales', 'adSales', 'adSpend', 'acos', 'tcos', 'sessions', 'pageViews', 'unitsOrdered', 'conversionRate'];
         allMetrics.forEach(metric => {
             const data = metricDataMap[metric];
             if (data) {
@@ -3441,7 +3744,11 @@ class AmazonDashboard {
                                 'Ad Sales': 'adSales', 
                                 'Ad Spend': 'adSpend',
                                 'ACOS (%)': 'acos',
-                                'TCOS (%)': 'tcos'
+                                'TCOS (%)': 'tcos',
+                                'Total Sessions': 'sessions',
+                                'Page Views': 'pageViews',
+                                'Units Ordered': 'unitsOrdered',
+                                'Conversion Rate (%)': 'conversionRate'
                             };
                             
                             const metricKey = metricMap[metricName];
@@ -3481,8 +3788,11 @@ class AmazonDashboard {
                                 if (label) {
                                     label += ': ';
                                 }
-                                if (context.dataset.yAxisID === 'y1') {
+                                const vt = context.dataset.valueType || 'currency';
+                                if (vt === 'percent') {
                                     label += context.parsed.y.toFixed(1) + '%';
+                                } else if (vt === 'count') {
+                                    label += context.parsed.y.toLocaleString('en-IN');
                                 } else {
                                     label += '₹' + context.parsed.y.toLocaleString('en-IN');
                                 }
@@ -3549,7 +3859,7 @@ class AmazonDashboard {
         
         // Use chart data with same date range as KPIs for consistency
         if (!this.chartData || this.chartData.length === 0) {
-            return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
+            return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [], sessions: [], pageViews: [], unitsOrdered: [], conversionRate: [] };
         }
         
         // For monthly, use all data; for daily/weekly, use selected date range
@@ -3558,7 +3868,7 @@ class AmazonDashboard {
             // Monthly shows ALL data from beginning
             const allDates = this.chartData.map(item => new Date(item.date)).filter(date => !isNaN(date.getTime()));
             if (allDates.length === 0) {
-                return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
+                return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [], sessions: [], pageViews: [], unitsOrdered: [], conversionRate: [] };
             }
             start = new Date(Math.min(...allDates));
             end = new Date(Math.max(...allDates));
@@ -3574,6 +3884,10 @@ class AmazonDashboard {
         const totalSales = [];
         const acos = [];
         const tacos = [];
+        const sessions = [];
+        const pageViews = [];
+        const unitsOrdered = [];
+        const conversionRate = [];
 
         // Group data by period - use chart data with same date range as KPIs
         const dataByPeriod = {};
@@ -3707,6 +4021,10 @@ class AmazonDashboard {
                     adSales: 0,
                     totalSales: 0,
                     clicks: 0,
+                    // Business metrics aggregated per period
+                    sessions: 0,
+                    pageViews: 0,
+                    unitsOrdered: 0,
                     datesProcessed: new Set() // Track which dates we've processed for totalSales
                 };
             }
@@ -3717,10 +4035,16 @@ class AmazonDashboard {
             const adSpendValue = parseFloat(item.adSpend || item.spend || item.cost || 0);
             const adSalesValue = parseFloat(item.adSales || item.sales || item.sales_1d || 0);
             const clicksValue = parseInt(item.clicks || 0);
+            const sessionsValue = parseInt(item.sessions || 0);
+            const pageViewsValue = parseInt(item.pageViews || 0);
+            const unitsOrderedValue = parseInt(item.unitsOrdered || 0);
             
             dataByPeriod[periodKey].adSpend += adSpendValue;
             dataByPeriod[periodKey].adSales += adSalesValue;
             dataByPeriod[periodKey].clicks += clicksValue;
+            dataByPeriod[periodKey].sessions += isNaN(sessionsValue) ? 0 : sessionsValue;
+            dataByPeriod[periodKey].pageViews += isNaN(pageViewsValue) ? 0 : pageViewsValue;
+            dataByPeriod[periodKey].unitsOrdered += isNaN(unitsOrderedValue) ? 0 : unitsOrderedValue;
             
             // For totalSales, only add once per unique date to avoid duplication
             const dateKey = item.date; // Use the exact date as key
@@ -3784,7 +4108,7 @@ class AmazonDashboard {
 
         // If no real data available, return empty datasets (no random/sample data)
         if (Object.keys(dataByPeriod).length === 0) {
-            return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [] };
+            return { labels: [], adSpend: [], adSales: [], totalSales: [], acos: [], tacos: [], sessions: [], pageViews: [], unitsOrdered: [], conversionRate: [] };
         } else {
             // Generate labels and populate data from real data
             // For weekly data, we need to ensure the labels match the keys in dataByPeriod
@@ -3821,17 +4145,22 @@ class AmazonDashboard {
                 // Now add data for each week (use 0 if no data)
                 weekKeysInRange.forEach(weekKey => {
                     labels.push(weekKey);
-                    const periodData = dataByPeriod[weekKey] || { adSpend: 0, adSales: 0, totalSales: 0, clicks: 0 };
+                    const periodData = dataByPeriod[weekKey] || { adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, sessions: 0, pageViews: 0, unitsOrdered: 0 };
                     
                     adSpend.push(periodData.adSpend || 0);
                     adSales.push(periodData.adSales || 0);
                     totalSales.push(periodData.totalSales || 0);
+                    sessions.push(periodData.sessions || 0);
+                    pageViews.push(periodData.pageViews || 0);
+                    unitsOrdered.push(periodData.unitsOrdered || 0);
                     
                     const acosVal = periodData.adSales > 0 ? (periodData.adSpend / periodData.adSales) * 100 : 0;
                     const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
+                    const convVal = periodData.sessions > 0 ? (periodData.unitsOrdered / periodData.sessions) * 100 : 0;
                     
                     acos.push(Math.min(100, acosVal));
                     tacos.push(Math.min(50, tacosVal));
+                    conversionRate.push(convVal);
                 });
             } else if (period === 'quarterly') {
                 // Rolling last 3 months split into 3 simple monthly buckets
@@ -3852,9 +4181,9 @@ class AmazonDashboard {
                 const makeLabel = (a, b) => `${a.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${b.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 
                 const buckets = [
-                    { label: makeLabel(month1Start, month1End), start: month1Start, end: month1End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, dates: new Set() },
-                    { label: makeLabel(month2Start, month2End), start: month2Start, end: month2End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, dates: new Set() },
-                    { label: makeLabel(month3Start, month3End), start: month3Start, end: month3End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, dates: new Set() },
+                    { label: makeLabel(month1Start, month1End), start: month1Start, end: month1End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, sessions: 0, pageViews: 0, unitsOrdered: 0, dates: new Set() },
+                    { label: makeLabel(month2Start, month2End), start: month2Start, end: month2End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, sessions: 0, pageViews: 0, unitsOrdered: 0, dates: new Set() },
+                    { label: makeLabel(month3Start, month3End), start: month3Start, end: month3End, adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, sessions: 0, pageViews: 0, unitsOrdered: 0, dates: new Set() },
                 ];
 
                 // Aggregate from keyword rows, but fall back to business totals where keywords are missing
@@ -3881,6 +4210,9 @@ class AmazonDashboard {
                             b.adSpend += (item.spend || 0);
                             b.adSales += (item.sales || 0);
                             b.clicks += (item.clicks || 0);
+                            b.sessions += Number(item.sessions || 0);
+                            b.pageViews += Number(item.pageViews || 0);
+                            b.unitsOrdered += Number(item.unitsOrdered || 0);
                             const dk = item.date;
                             if (!b.dates.has(dk)) {
                                 b.totalSales += Number(item.totalSales || 0);
@@ -3903,8 +4235,13 @@ class AmazonDashboard {
                         totalSales.push(b.totalSales);
                         const acosVal = b.adSales > 0 ? (b.adSpend / b.adSales) * 100 : 0;
                         const tacosVal = b.totalSales > 0 ? (b.adSpend / b.totalSales) * 100 : 0;
+                        const convVal = b.sessions > 0 ? (b.unitsOrdered / b.sessions) * 100 : 0;
                         acos.push(Math.min(100, acosVal));
                         tacos.push(Math.min(50, tacosVal));
+                        sessions.push(b.sessions || 0);
+                        pageViews.push(b.pageViews || 0);
+                        unitsOrdered.push(b.unitsOrdered || 0);
+                        conversionRate.push(convVal);
                     }
                 });
             } else {
@@ -3913,7 +4250,7 @@ class AmazonDashboard {
                 while (cursor <= end) {
                     const periodKey = this.formatLabel(cursor, period);
                     
-                    const periodData = dataByPeriod[periodKey] || { adSpend: 0, adSales: 0, totalSales: 0, clicks: 0 };
+                    const periodData = dataByPeriod[periodKey] || { adSpend: 0, adSales: 0, totalSales: 0, clicks: 0, sessions: 0, pageViews: 0, unitsOrdered: 0 };
                     
                     // For daily period: Show ALL dates (even with 0 data) to have continuous chart
                     // For monthly period: Only show months with data
@@ -3924,12 +4261,17 @@ class AmazonDashboard {
                         adSpend.push(periodData.adSpend || 0);
                         adSales.push(periodData.adSales || 0);
                         totalSales.push(periodData.totalSales || 0);
+                        sessions.push(periodData.sessions || 0);
+                        pageViews.push(periodData.pageViews || 0);
+                        unitsOrdered.push(periodData.unitsOrdered || 0);
                         
                         const acosVal = periodData.adSales > 0 ? (periodData.adSpend / periodData.adSales) * 100 : 0;
                         const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
+                        const convVal = periodData.sessions > 0 ? (periodData.unitsOrdered / periodData.sessions) * 100 : 0;
                         
                         acos.push(Math.min(100, acosVal));
                         tacos.push(Math.min(50, tacosVal));
+                        conversionRate.push(convVal);
                     } else {
                         // For monthly: Only include periods that have actual data (not all zeros)
                         if (periodData.adSpend > 0 || periodData.adSales > 0 || periodData.totalSales > 0) {
@@ -3938,12 +4280,17 @@ class AmazonDashboard {
                             adSpend.push(periodData.adSpend);
                             adSales.push(periodData.adSales);
                             totalSales.push(periodData.totalSales);
+                            sessions.push(periodData.sessions || 0);
+                            pageViews.push(periodData.pageViews || 0);
+                            unitsOrdered.push(periodData.unitsOrdered || 0);
                             
                             const acosVal = periodData.adSales > 0 ? (periodData.adSpend / periodData.adSales) * 100 : 0;
                             const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
+                            const convVal = periodData.sessions > 0 ? (periodData.unitsOrdered / periodData.sessions) * 100 : 0;
                             
                             acos.push(Math.min(100, acosVal));
                             tacos.push(Math.min(50, tacosVal));
+                            conversionRate.push(convVal);
                         }
                     }
 
@@ -3961,7 +4308,7 @@ class AmazonDashboard {
             // Debug logging removed for performance
         }
 
-        const result = { labels, adSpend, adSales, totalSales, acos, tacos };
+        const result = { labels, adSpend, adSales, totalSales, acos, tacos, sessions, pageViews, unitsOrdered, conversionRate };
         
         // Simple post-processing: remove latest consecutive zero values from all arrays
         let lastNonZeroIndex = -1;
@@ -3979,6 +4326,10 @@ class AmazonDashboard {
             result.totalSales = result.totalSales.slice(0, lastNonZeroIndex + 1);
             result.acos = result.acos.slice(0, lastNonZeroIndex + 1);
             result.tacos = result.tacos.slice(0, lastNonZeroIndex + 1);
+            if (result.sessions.length) result.sessions = result.sessions.slice(0, lastNonZeroIndex + 1);
+            if (result.pageViews.length) result.pageViews = result.pageViews.slice(0, lastNonZeroIndex + 1);
+            if (result.unitsOrdered.length) result.unitsOrdered = result.unitsOrdered.slice(0, lastNonZeroIndex + 1);
+            if (result.conversionRate.length) result.conversionRate = result.conversionRate.slice(0, lastNonZeroIndex + 1);
         }
         
         return result;

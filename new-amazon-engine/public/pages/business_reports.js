@@ -7,6 +7,9 @@
     }
 })();
 
+const GLOBAL_DATE_RANGE_STORAGE_KEY = 'global_date_range';
+const GLOBAL_DATE_RANGE_WINDOW_PREFIX = '__GLOBAL_DATE_RANGE__=';
+
 class BusinessReportsDashboard {
 constructor() {
     this.state = {
@@ -28,6 +31,8 @@ constructor() {
         tempRangeEnd: null,
         calendarMonth: new Date()
     };
+    
+    this.hasManualDateSelection = false;
     
     this.availableDateRange = null;
     this.availableDates = [];
@@ -298,6 +303,271 @@ getDefaultDateRange() {
     };
 }
 
+applyGlobalDateRangeFromStorage() {
+    const stored = this.loadGlobalDateRangeFromStorage();
+    if (!stored || !stored.manualSelection) return false;
+    this.hasManualDateSelection = true;
+    this.state.dateRange = stored;
+    return true;
+}
+
+loadGlobalDateRangeFromStorage() {
+    try {
+        if (typeof window === 'undefined') return null;
+    } catch (_) {
+        return null;
+    }
+
+    try {
+        const raw = this.getGlobalDateRangeRawValue();
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const normalizeDate = (value) => {
+            if (value === null || value === undefined) return null;
+            if (typeof value === 'number' && Number.isFinite(value)) {
+                const d = new Date(value);
+                return Number.isNaN(d.getTime()) ? null : d;
+            }
+            if (typeof value === 'string' && value) {
+                const d = new Date(value);
+                return Number.isNaN(d.getTime()) ? null : d;
+            }
+            return null;
+        };
+
+        const startCandidate = normalizeDate(parsed.startMs ?? parsed.start ?? parsed.startStr);
+        const endCandidate = normalizeDate(parsed.endMs ?? parsed.end ?? parsed.endStr);
+        if (!startCandidate || !endCandidate) return null;
+        startCandidate.setHours(0, 0, 0, 0);
+        endCandidate.setHours(23, 59, 59, 999);
+        return {
+            start: startCandidate,
+            end: endCandidate,
+            startStr: parsed.startStr || this.formatDate(startCandidate),
+            endStr: parsed.endStr || this.formatDate(endCandidate),
+            manualSelection: !!parsed.manualSelection
+        };
+    } catch (err) {
+        console.warn('Global date range load failed (business):', err);
+        return null;
+    }
+}
+
+applyDateRangeFromQuery() {
+    const range = this.getDateRangeFromQuery();
+    if (!range) return false;
+    this.state.dateRange = range;
+    this.hasManualDateSelection = true;
+    this.persistGlobalDateRangeFromRange(range);
+    return true;
+}
+
+getDateRangeFromQuery() {
+    try {
+        if (typeof window === 'undefined') return null;
+        const search = this.getRawSearchString();
+        if (!search) return null;
+        const { start, end } = this.extractStartEndFromSearch(search);
+        if (!start || !end) return null;
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null;
+        startDate.setHours(0,0,0,0);
+        endDate.setHours(23,59,59,999);
+        return {
+            start: startDate,
+            end: endDate,
+            startStr: this.formatDate(startDate),
+            endStr: this.formatDate(endDate)
+        };
+    } catch (_) {
+        return null;
+    }
+}
+
+getRawSearchString() {
+    try {
+        if (typeof window === 'undefined') return '';
+        if (window.location.search && window.location.search !== '?') {
+            return window.location.search;
+        }
+        const href = window.location.href || '';
+        const idx = href.indexOf('?');
+        if (idx === -1) return '';
+        return '?' + href.slice(idx + 1).split('#')[0];
+    } catch (_) {
+        return '';
+    }
+}
+
+extractStartEndFromSearch(search) {
+    const result = { start: null, end: null };
+    try {
+        const params = new URLSearchParams(search);
+        result.start = params.get('start');
+        result.end = params.get('end');
+    } catch (_) {
+        // ignore and fall back
+    }
+
+    if (result.start && result.end) return result;
+
+    try {
+        const trimmed = search.startsWith('?') ? search.slice(1) : search;
+        trimmed.split('&').forEach(pair => {
+            const [rawKey, rawVal] = pair.split('=');
+            const key = decodeURIComponent(rawKey || '');
+            const value = decodeURIComponent(rawVal || '');
+            if (key === 'start' && !result.start) result.start = value;
+            if (key === 'end' && !result.end) result.end = value;
+        });
+    } catch (_) {
+        // ignore
+    }
+    return result;
+}
+
+persistGlobalDateRangeFromRange(range) {
+    if (!this.hasManualDateSelection) return;
+    if (!range || !range.start || !range.end) return;
+    const start = new Date(range.start);
+    const end = new Date(range.end);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    const payload = {
+        startMs: start.getTime(),
+        endMs: end.getTime(),
+        startStr: range.startStr || this.formatDate(start),
+        endStr: range.endStr || this.formatDate(end),
+        savedAt: Date.now(),
+        manualSelection: true
+    };
+    this.persistGlobalDateRangeRaw(payload);
+    this.updateNavLinksWithDateRange();
+    this.syncUrlDateParams();
+}
+
+syncUrlDateParams() {
+    if (!this.hasManualDateSelection) return;
+    try {
+        if (typeof window === 'undefined' || !window.history || !window.history.replaceState) return;
+        if (!this.state?.dateRange?.start || !this.state?.dateRange?.end) return;
+        const start = this.state.dateRange.startStr || this.formatDate(new Date(this.state.dateRange.start));
+        const end = this.state.dateRange.endStr || this.formatDate(new Date(this.state.dateRange.end));
+        const url = new URL(window.location.href);
+        url.searchParams.set('start', start);
+        url.searchParams.set('end', end);
+        const newUrl = url.pathname + url.search;
+        window.history.replaceState({}, '', newUrl);
+    } catch (_) {
+        // ignore
+    }
+}
+
+updateNavLinksWithDateRange() {
+    if (!this.hasManualDateSelection) return;
+    if (!this.state?.dateRange?.start || !this.state?.dateRange?.end) return;
+    const start = this.state.dateRange.startStr || this.formatDate(new Date(this.state.dateRange.start));
+    const end = this.state.dateRange.endStr || this.formatDate(new Date(this.state.dateRange.end));
+    const links = typeof document !== 'undefined' ? document.querySelectorAll('.nav-item[href]') : [];
+    links.forEach(link => {
+        const href = link.getAttribute('href');
+        if (!href || href.startsWith('#') || link.hasAttribute('data-section')) return;
+        try {
+            // Use full current URL as base so relative links stay inside /pages/ when already there
+            const base = (typeof window !== 'undefined' && window.location && window.location.href)
+                ? window.location.href
+                : '';
+            const url = new URL(href, base);
+            url.searchParams.set('start', start);
+            url.searchParams.set('end', end);
+            let relative = url.href;
+            if (typeof window !== 'undefined' && url.origin === window.location.origin) {
+                relative = url.pathname + url.search;
+            }
+            link.setAttribute('href', relative);
+        } catch (_) {
+            // ignore bad URLs
+        }
+    });
+}
+
+getGlobalDateRangeRawValue() {
+    const sources = [
+        () => {
+            try {
+                return (typeof window !== 'undefined' && window.localStorage)
+                    ? localStorage.getItem(GLOBAL_DATE_RANGE_STORAGE_KEY)
+                    : null;
+            } catch (_) {
+                return null;
+            }
+        },
+        () => {
+            try {
+                return (typeof window !== 'undefined' && window.sessionStorage)
+                    ? sessionStorage.getItem(GLOBAL_DATE_RANGE_STORAGE_KEY)
+                    : null;
+            } catch (_) {
+                return null;
+            }
+        },
+        () => {
+            try {
+                if (typeof window === 'undefined' || typeof window.name !== 'string') return null;
+                if (!window.name.startsWith(GLOBAL_DATE_RANGE_WINDOW_PREFIX)) return null;
+                return window.name.slice(GLOBAL_DATE_RANGE_WINDOW_PREFIX.length);
+            } catch (_) {
+                return null;
+            }
+        }
+    ];
+
+    for (const getter of sources) {
+        const raw = getter();
+        if (raw && raw !== 'undefined') return raw;
+    }
+    return null;
+}
+
+persistGlobalDateRangeRaw(payload) {
+    const json = JSON.stringify(payload);
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            localStorage.setItem(GLOBAL_DATE_RANGE_STORAGE_KEY, json);
+        }
+    } catch (err) {
+        console.warn('Global date range localStorage save failed (business):', err);
+    }
+    try {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+            sessionStorage.setItem(GLOBAL_DATE_RANGE_STORAGE_KEY, json);
+        }
+    } catch (err) {
+        console.warn('Global date range sessionStorage save failed (business):', err);
+    }
+    try {
+        if (typeof window !== 'undefined') {
+            window.name = `${GLOBAL_DATE_RANGE_WINDOW_PREFIX}${json}`;
+        }
+    } catch (err) {
+        console.warn('Global date range window.name save failed (business):', err);
+    }
+}
+
+persistGlobalDateRange() {
+    if (!this.hasManualDateSelection) return;
+    if (!this.state?.dateRange?.start || !this.state?.dateRange?.end) return;
+    const payload = {
+        startMs: this.state.dateRange.start.getTime(),
+        endMs: this.state.dateRange.end.getTime(),
+        startStr: this.state.dateRange.startStr || this.formatDate(this.state.dateRange.start),
+        endStr: this.state.dateRange.endStr || this.formatDate(this.state.dateRange.end),
+        savedAt: Date.now(),
+        manualSelection: true
+    };
+    this.persistGlobalDateRangeRaw(payload);
+}
+
 async init() {
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => this.initializeComponents());
@@ -322,9 +592,22 @@ async initializeComponents() {
     // Ensure chart is ready for data
     console.log('📊 Chart initialized, ready for data');
     
-    // Use default range (last 30 days) for better performance
-    // User can select "Lifetime" from the preset dropdown if they want all data
-    this.state.dateRange = this.getDefaultDateRange();
+    let rangeApplied = false;
+    const queryApplied = this.applyDateRangeFromQuery();
+    if (queryApplied) {
+        rangeApplied = true;
+    } else {
+        const storedApplied = this.applyGlobalDateRangeFromStorage();
+        if (storedApplied) {
+            rangeApplied = true;
+        }
+    }
+    if (!rangeApplied) {
+        this.state.dateRange = this.getDefaultDateRange();
+        this.hasManualDateSelection = false;
+    }
+    this.updateNavLinksWithDateRange();
+    this.syncUrlDateParams();
     this.updateDateDisplay();
     
     // Skip the problematic date range fetch for now - load data directly
@@ -971,6 +1254,7 @@ async loadData() {
 
 // ---------- Preset ranges ----------
 async applyPreset(key) {
+    this.hasManualDateSelection = true;
     const now = new Date();
     const apiBase = this.getApiBase();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -1111,6 +1395,7 @@ async applyPreset(key) {
         startStr: newStartStr,
         endStr: newEndStr
     };
+    this.persistGlobalDateRange();
     
     // CRITICAL: Update calendar to reflect the preset selection
     // Set calendar temp range to match the preset
@@ -3030,7 +3315,9 @@ async confirmDateRange() {
         return;
     }
     
+    this.hasManualDateSelection = true;
     this.updateDateDisplay();
+    this.persistGlobalDateRange();
     await this.loadData();
 }
 
