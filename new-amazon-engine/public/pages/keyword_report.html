@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Report - Amazon Analytics</title>
+    
+    <!-- Resource Hints for Performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Google Fonts - Optimized with font-display swap -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Google Material Icons - Optimized with font-display swap -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons&display=swap" rel="stylesheet">
+    
+    <!-- Shared Keyword UI Styles -->
+    <link rel="stylesheet" href="../keywordStyle.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="master_report.css">
+    
+    <!-- Inline favicon to avoid 404 requests -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231d5a55'/%3E%3Ctext x='50%' y='52%' dominant-baseline='middle' text-anchor='middle' font-size='36' font-family='Inter,Arial' fill='%2380d5be'%3EA%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Hover trigger area for sidebar -->
+        <div class="sidebar-trigger"></div>
+        
+        <!-- Mobile Menu Button -->
+        <button class="mobile-menu-btn" id="mobileMenuBtn">
+            <span class="material-icons">menu</span>
+        </button>
+
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">A</div>
+                <div class="brand-text">
+                    <div class="brand-title">Amazon</div>
+                    <div class="brand-subtitle">Analytics</div>
+                </div>
+            </div>
+            
+            <nav class="navigation">
+                <a href="../index.html" class="nav-item">
+                    <span class="material-icons">search</span>
+                    <span>AD Reports</span>
+                </a>
+                <a href="business_reports.html" class="nav-item">
+                    <span class="material-icons">bar_chart</span>
+                    <span>Business Reports</span>
+                </a>
+                <a href="trend_reports.html" class="nav-item">
+                    <span class="material-icons">trending_up</span>
+                    <span>Trend Reports</span>
+                </a>
+                <a href="master_report.html" class="nav-item active">
+                    <span class="material-icons">inventory_2</span>
+                    <span>Master Report</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="page-header">
+                <div class="header-content">
+                    <h1 class="page-title">Master Report</h1>
+                    <p class="page-description">Consolidated view of your Cerebro exports and competitor analysis</p>
+                </div>
+                <div class="header-status">
+                    <div class="live-indicator">
+                        <div class="live-dot"></div>
+                        <span>Live Data</span>
+                    </div>
+                    <div class="last-update">Last updated: <span id="lastUpdateTime">Loading...</span></div>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Controls Section -->
+                <section class="controls-section">
+                    <div class="controls-header">
+                        <div class="controls-title">
+                            <h2>Product Overview</h2>
+                            <p class="product-count">Total Products: <span id="totalProductCount">37</span></p>
+                        </div>
+                        <div class="controls-actions">
+                            <button class="control-btn secondary" id="refreshBtn">
+                                <span class="material-icons">refresh</span>
+                                Refresh Data
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="controls-row">
+                        <!-- Search Box -->
+                        <div class="search-container">
+                            <div class="search-input-wrapper">
+                                <span class="material-icons search-icon">search</span>
+                                <input type="text" id="searchInput" class="search-input" placeholder="Search by SKU, Product Title, or Parent ASIN...">
+                                <button class="search-clear" id="searchClear" style="display: none;">
+                                    <span class="material-icons">close</span>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- ASIN Filter -->
+                        <div class="filter-container">
+                            <select id="asinFilter" class="filter-select">
+                                <option value="">All ASINs</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Competitor Filter -->
+                        <div class="filter-container">
+                            <label class="filter-toggle">
+                                <input type="checkbox" id="competitorToggle">
+                                <span class="filter-toggle-text">Show only products with competitors</span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Main Content Section -->
+                <section class="main-section">
+                    <div class="table-container">
+                        <!-- Loading State -->
+                        <div id="loadingState" class="loading-state">
+                            <div class="loading-spinner">
+                                <span class="material-icons rotating">refresh</span>
+                            </div>
+                            <p>Loading master report data...</p>
+                        </div>
+                        
+                        <!-- Error State -->
+                        <div id="errorState" class="error-state" style="display: none;">
+                            <div class="error-icon">
+                                <span class="material-icons">error_outline</span>
+                            </div>
+                            <h3>Failed to load data</h3>
+                            <p>Unable to load master report data. Please try refreshing the page.</p>
+                            <button class="control-btn primary" onclick="masterReport.loadData()">
+                                <span class="material-icons">refresh</span>
+                                Retry
+                            </button>
+                        </div>
+                        
+                        <!-- Empty State -->
+                        <div id="emptyState" class="empty-state" style="display: none;">
+                            <div class="empty-icon">
+                                <span class="material-icons">search_off</span>
+                            </div>
+                            <h3>No products found</h3>
+                            <p>Try adjusting your search or filter criteria.</p>
+                        </div>
+                        
+                        <!-- Desktop Table -->
+                        <div id="desktopTable" class="desktop-table" style="display: none;">
+                            <table class="keyword-table">
+                                <thead>
+                                    <tr>
+                                        <th class="col-image">Image</th>
+                                        <th class="col-sku sortable" data-sort="sku">
+                                            <span>SKU</span>
+                                            <span class="material-icons sort-icon">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="col-title sortable" data-sort="productTitle">
+                                            <span>Product Title</span>
+                                            <span class="material-icons sort-icon">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="col-asin sortable" data-sort="parentAsin">
+                                            <span>Parent ASIN</span>
+                                            <span class="material-icons sort-icon">keyboard_arrow_down</span>
+                                        </th>
+                                        <th class="col-competitors">Competitor ASINs</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tableBody">
+                                    <!-- Table rows will be populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Mobile Cards -->
+                        <div id="mobileCards" class="mobile-cards" style="display: none;">
+                            <!-- Mobile cards will be populated by JavaScript -->
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Detail Drawer -->
+    <div id="detailDrawer" class="detail-drawer">
+        <div class="drawer-overlay" id="drawerOverlay"></div>
+        <div class="drawer-content">
+            <div class="drawer-header">
+                <h3 id="drawerTitle">Product Details</h3>
+                <button class="drawer-close" id="drawerClose">
+                    <span class="material-icons">close</span>
+                </button>
+            </div>
+            <div class="drawer-body">
+                <div class="product-image-section">
+                    <img id="drawerImage" class="product-image-large" alt="Product Image">
+                </div>
+                <div class="product-info-section">
+                    <div class="info-row">
+                        <label>SKU:</label>
+                        <span id="drawerSku" class="info-value"></span>
+                    </div>
+                    <div class="info-row">
+                        <label>Parent ASIN:</label>
+                        <span id="drawerAsin" class="info-value asin-link"></span>
+                    </div>
+                    <div class="info-row">
+                        <label>Product Title:</label>
+                        <span id="drawerProductTitle" class="info-value"></span>
+                    </div>
+                </div>
+                <div class="competitors-section">
+                    <h4>Competitor ASINs</h4>
+                    <div id="drawerCompetitors" class="competitor-chips">
+                        <!-- Competitor chips will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Preview Modal -->
+    <div id="imageModal" class="image-modal">
+        <div class="modal-overlay" id="imageModalOverlay"></div>
+        <div class="modal-content">
+            <button class="modal-close" id="imageModalClose">
+                <span class="material-icons">close</span>
+            </button>
+            <img id="modalImage" class="modal-image" alt="Product Image">
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="master_report.js"></script>
+</body>
+</html>

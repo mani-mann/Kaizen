@@ -10,6 +10,50 @@
 const GLOBAL_DATE_RANGE_STORAGE_KEY = 'global_date_range';
 const GLOBAL_DATE_RANGE_WINDOW_PREFIX = '__GLOBAL_DATE_RANGE__=';
 
+// Ensure Business Reports URL always reflects the global date range (from the keyword page)
+// so the calendar and KPIs stay in sync with the global selection.
+(function syncBusinessUrlWithGlobalDate() {
+    try {
+        if (typeof window === 'undefined') return;
+        const path = window.location.pathname || '';
+        if (!path.endsWith('/pages/business_reports.html') && !path.endsWith('business_reports.html')) return;
+
+        // If start/end are already in the URL, respect them
+        const currentUrl = new URL(window.location.href);
+        const hasStart = currentUrl.searchParams.get('start');
+        const hasEnd = currentUrl.searchParams.get('end');
+        if (hasStart && hasEnd) return;
+
+        // Otherwise, try to read the global date range from storage (same key used on keyword page)
+        let raw = null;
+        try {
+            raw = window.localStorage?.getItem(GLOBAL_DATE_RANGE_STORAGE_KEY) ||
+                  window.sessionStorage?.getItem(GLOBAL_DATE_RANGE_STORAGE_KEY) ||
+                  (typeof window.name === 'string' && window.name.startsWith(GLOBAL_DATE_RANGE_WINDOW_PREFIX)
+                      ? window.name.slice(GLOBAL_DATE_RANGE_WINDOW_PREFIX.length)
+                      : null);
+        } catch (_) {
+            raw = null;
+        }
+        if (!raw || raw === 'undefined') return;
+
+        const parsed = JSON.parse(raw);
+        const startStr = parsed.startStr;
+        const endStr = parsed.endStr;
+        if (!startStr || !endStr) return;
+
+        currentUrl.searchParams.set('start', startStr);
+        currentUrl.searchParams.set('end', endStr);
+
+        const newUrl = currentUrl.pathname + currentUrl.search + currentUrl.hash;
+        if (newUrl !== window.location.pathname + window.location.search + window.location.hash) {
+            window.location.replace(newUrl);
+        }
+    } catch (_) {
+        // Fail silently – page will just fall back to its own default range
+    }
+})();
+
 class BusinessReportsDashboard {
 constructor() {
     this.state = {

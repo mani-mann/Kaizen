@@ -2405,6 +2405,66 @@ class AmazonDashboard {
         }
     }
 
+    // Helper: fetch aggregated BUSINESS KPIs for the current range
+    async fetchBusinessKpis(start, end) {
+        try {
+            const startStr = this.toInputDate(start instanceof Date ? start : new Date(start));
+            const endStr = this.toInputDate(end instanceof Date ? end : new Date(end));
+            const apiBase = this.getApiBase();
+            const url = `${apiBase}/api/business-data?start=${startStr}&end=${endStr}&includeAll=true&t=${Date.now()}`;
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            if (!res.ok) {
+                return null;
+            }
+
+            const payload = await res.json();
+
+            // If backend already returns KPIs, prefer those
+            if (payload && payload.kpis) {
+                const k = payload.kpis;
+                return {
+                    sessions: Number(k.sessions || 0),
+                    pageViews: Number(k.pageViews || k.page_views || 0),
+                    unitsOrdered: Number(k.unitsOrdered || k.units_ordered || 0),
+                    avgSessionsPerDay: Number(k.avgSessionsPerDay || 0),
+                    conversionRate: Number(k.conversionRate || 0)
+                };
+            }
+
+            // Fallback: aggregate from row-level data
+            const rows = Array.isArray(payload?.data) ? payload.data : [];
+            if (!rows.length) return null;
+
+            let sessions = 0;
+            let pageViews = 0;
+            let unitsOrdered = 0;
+            const daySet = new Set();
+
+            rows.forEach(row => {
+                sessions += Number(row.sessions || 0) || 0;
+                pageViews += Number(row.page_views || row.pageViews || 0) || 0;
+                unitsOrdered += Number(row.units_ordered || row.unitsOrdered || 0) || 0;
+                if (row.date) {
+                    const d = new Date(row.date);
+                    if (!isNaN(d.getTime())) {
+                        const y = d.getFullYear();
+                        const m = String(d.getMonth() + 1).padStart(2, '0');
+                        const dd = String(d.getDate()).padStart(2, '0');
+                        daySet.add(`${y}-${m}-${dd}`);
+                    }
+                }
+            });
+
+            const days = daySet.size || 1;
+            const avgSessionsPerDay = days ? sessions / days : 0;
+            const conversionRate = sessions > 0 ? (unitsOrdered / sessions) * 100 : 0;
+
+            return { sessions, pageViews, unitsOrdered, avgSessionsPerDay, conversionRate };
+        } catch (_) {
+            return null;
+        }
+    }
+
     // Helper: Load ALL data for table (fetches all pages, no limit)
     async loadAllTableData(start, end) {
         try {
@@ -2754,6 +2814,27 @@ class AmazonDashboard {
             const kpiPayload = await this.fetchAnalytics(start, end, { kpisOnly: true });
             if (kpiPayload && kpiPayload.kpis) {
                 this.kpis = kpiPayload.kpis;
+
+                // Try to enrich business KPIs (sessions, page views, units, etc.) from /api/business-data
+                const businessKpis = await this.fetchBusinessKpis(start, end);
+                if (businessKpis) {
+                    const merged = { ...this.kpis };
+                    const applyIfMissing = (key) => {
+                        const current = merged[key];
+                        const incoming = businessKpis[key];
+                        if ((current === null || current === undefined || current === 0) &&
+                            typeof incoming === 'number' && !Number.isNaN(incoming)) {
+                            merged[key] = incoming;
+                        }
+                    };
+                    applyIfMissing('sessions');
+                    applyIfMissing('pageViews');
+                    applyIfMissing('unitsOrdered');
+                    applyIfMissing('avgSessionsPerDay');
+                    applyIfMissing('conversionRate');
+                    this.kpis = merged;
+                }
+
                 this.updateKPIs();
                 await this.updateKPITrends(this.kpis);
             }
