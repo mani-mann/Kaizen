@@ -4239,7 +4239,8 @@ class AmazonDashboard {
                     const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
                     const convVal = periodData.sessions > 0 ? (periodData.unitsOrdered / periodData.sessions) * 100 : 0;
                     
-                    acos.push(Math.min(100, acosVal));
+                    // Let ACOS reflect the true calculated percentage (can go above 100%)
+                    acos.push(acosVal);
                     tacos.push(Math.min(50, tacosVal));
                     conversionRate.push(convVal);
                 });
@@ -4317,7 +4318,8 @@ class AmazonDashboard {
                         const acosVal = b.adSales > 0 ? (b.adSpend / b.adSales) * 100 : 0;
                         const tacosVal = b.totalSales > 0 ? (b.adSpend / b.totalSales) * 100 : 0;
                         const convVal = b.sessions > 0 ? (b.unitsOrdered / b.sessions) * 100 : 0;
-                        acos.push(Math.min(100, acosVal));
+                        // Let ACOS reflect the true calculated percentage (can go above 100%)
+                        acos.push(acosVal);
                         tacos.push(Math.min(50, tacosVal));
                         sessions.push(b.sessions || 0);
                         pageViews.push(b.pageViews || 0);
@@ -4350,7 +4352,8 @@ class AmazonDashboard {
                         const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
                         const convVal = periodData.sessions > 0 ? (periodData.unitsOrdered / periodData.sessions) * 100 : 0;
                         
-                        acos.push(Math.min(100, acosVal));
+                        // Let ACOS reflect the true calculated percentage (can go above 100%)
+                        acos.push(acosVal);
                         tacos.push(Math.min(50, tacosVal));
                         conversionRate.push(convVal);
                     } else {
@@ -4369,7 +4372,8 @@ class AmazonDashboard {
                             const tacosVal = periodData.totalSales > 0 ? (periodData.adSpend / periodData.totalSales) * 100 : 0;
                             const convVal = periodData.sessions > 0 ? (periodData.unitsOrdered / periodData.sessions) * 100 : 0;
                             
-                            acos.push(Math.min(100, acosVal));
+                            // Let ACOS reflect the true calculated percentage (can go above 100%)
+                            acos.push(acosVal);
                             tacos.push(Math.min(50, tacosVal));
                             conversionRate.push(convVal);
                         }
