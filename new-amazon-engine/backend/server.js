@@ -962,7 +962,24 @@ app.get('/api/business-data', async (req, res) => {
       if (r.date) acc.dates.add(String(r.date).slice(0,10));
       return acc;
     }, { sessions: 0, pageViews: 0, units: 0, sales: 0, dates: new Set() });
-    const dayCount = sums.dates.size;
+    // Active days = distinct dates that actually have data
+    const activeDayCount = sums.dates.size;
+    // Calendar days in selected range (inclusive)
+    let calendarDayCount = activeDayCount;
+    try {
+      const startD = new Date(start);
+      const endD = new Date(end);
+      if (!isNaN(startD) && !isNaN(endD) && endD >= startD) {
+        startD.setHours(0, 0, 0, 0);
+        endD.setHours(23, 59, 59, 999);
+        const diffMs = endD.getTime() - startD.getTime();
+        calendarDayCount = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+      }
+    } catch (_) {
+      // keep fallback calendarDayCount = activeDayCount
+    }
+    // Use the smaller of active vs calendar days to avoid impossible values
+    const dayCount = Math.min(activeDayCount || 0, calendarDayCount || 0) || 0;
     const kpis = {
       totalSessions: sums.sessions,
       totalPageViews: sums.pageViews,
@@ -1086,7 +1103,8 @@ app.get('/api/analytics', async (req, res) => {
           COALESCE(SUM(CAST(sessions AS INTEGER)), 0)               AS total_sessions,
           COALESCE(SUM(CAST(page_views AS INTEGER)), 0)             AS total_page_views,
           COALESCE(SUM(CAST(units_ordered AS INTEGER)), 0)          AS total_units_ordered,
-          COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0)  AS total_sales
+          COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0)  AS total_sales,
+          COALESCE(COUNT(DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date), 0) AS active_days
         FROM amazon_sales_traffic
         WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
           AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
@@ -1113,19 +1131,12 @@ app.get('/api/analytics', async (req, res) => {
       const tacos = totalSales > 0 ? (adSpend / totalSales) * 100 : 0;
       const conversionRate = totalSessions > 0 ? (totalUnitsOrdered / totalSessions) * 100 : 0;
 
-      // Compute average sessions per day based on requested date window
+      // Compute average sessions per day based on actual days that have business data
       let avgSessionsPerDay = 0;
       try {
-        const s = new Date(startDate);
-        const e = new Date(endBound);
-        if (!isNaN(s) && !isNaN(e) && e >= s) {
-          s.setHours(0,0,0,0);
-          e.setHours(23,59,59,999);
-          const diffMs = e.getTime() - s.getTime();
-          const dayCount = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
-          if (dayCount > 0) {
-            avgSessionsPerDay = totalSessions > 0 ? totalSessions / dayCount : 0;
-          }
+        const activeDays = parseInt(biz.active_days || 0, 10);
+        if (activeDays > 0) {
+          avgSessionsPerDay = totalSessions > 0 ? totalSessions / activeDays : 0;
         }
       } catch (_) {
         // leave avgSessionsPerDay = 0 on error
@@ -1248,17 +1259,22 @@ app.get('/api/analytics', async (req, res) => {
         kpis.totalSales = strictTotal;
         kpis.tacos = strictTotal > 0 ? (kpis.adSpend / strictTotal) * 100 : 0;
 
-        // Also compute average sessions per day for the selected window
+        // Also compute average sessions per day for the selected window,
+        // but ONLY as a fallback when we don't already have a value
+        // based on actual active days from business data.
         try {
-          const startD = new Date(startDate);
-          const endD = new Date(endBound);
-          if (!isNaN(startD) && !isNaN(endD) && endD >= startD) {
-            startD.setHours(0, 0, 0, 0);
-            endD.setHours(23, 59, 59, 999);
-            const diffMs = endD.getTime() - startD.getTime();
-            const dayCount = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
-            if (dayCount > 0) {
-              kpis.avgSessionsPerDay = kpis.sessions > 0 ? kpis.sessions / dayCount : 0;
+          const existingAvg = Number(kpis.avgSessionsPerDay || 0);
+          if (!Number.isFinite(existingAvg) || existingAvg === 0) {
+            const startD = new Date(startDate);
+            const endD = new Date(endBound);
+            if (!isNaN(startD) && !isNaN(endD) && endD >= startD) {
+              startD.setHours(0, 0, 0, 0);
+              endD.setHours(23, 59, 59, 999);
+              const diffMs = endD.getTime() - startD.getTime();
+              const dayCount = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+              if (dayCount > 0) {
+                kpis.avgSessionsPerDay = kpis.sessions > 0 ? kpis.sessions / dayCount : 0;
+              }
             }
           }
         } catch (e) {

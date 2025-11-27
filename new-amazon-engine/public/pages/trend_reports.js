@@ -48,6 +48,10 @@ class TrendReports {
         this.debounceTimer = null;
         this.isLoadingData = false;
         this.hasManualDateSelection = false;
+        // Uploaded name filters (used on Search Terms tab)
+        this.uploadedProductNames = [];
+        this.uploadedProductNameSet = new Set();
+        this.selectedUploadedPatterns = new Set();
         
         this.init();
     }
@@ -160,8 +164,10 @@ class TrendReports {
         // Search functionality removed - using name filter only
 
         // Name filter functionality (multi-select)
-        // Name filter functionality (multi-select)
         this.setupNameFilter();
+
+        // Uploaded-names filter dropdown (used on Search Terms tab after upload)
+        this.setupUploadedFilter();
         
         // Campaign filter functionality (multi-select) - only for search-terms tab
         this.setupCampaignFilter();
@@ -202,6 +208,52 @@ class TrendReports {
         document.getElementById('exportCSV').addEventListener('click', () => {
             this.exportData('csv');
         });
+
+        // Upload names (Search Terms tab)
+        const uploadBtn = document.getElementById('uploadProductsBtn');
+        const uploadModal = document.getElementById('uploadProductsModal');
+        const uploadClose = document.getElementById('uploadProductsClose');
+        const uploadCancel = document.getElementById('uploadProductsCancel');
+        const uploadApply = document.getElementById('uploadProductsApply');
+        if (uploadBtn && uploadModal && uploadClose && uploadCancel && uploadApply) {
+            const openUploadModal = async () => {
+                // Always work on Search Terms tab for uploads
+                if (this.currentCategory !== 'search-terms') {
+                    try {
+                        await this.switchCategory('search-terms');
+                    } catch (_) {
+                        // If switching fails, don't open modal
+                        return;
+                    }
+                }
+                uploadModal.style.display = 'flex';
+                const textarea = document.getElementById('uploadProductsTextarea');
+                if (textarea) {
+                    textarea.value = this.uploadedProductNames.join('\n');
+                    textarea.focus();
+                }
+            };
+            const closeUploadModal = () => {
+                uploadModal.style.display = 'none';
+            };
+            uploadBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                openUploadModal();
+            });
+            uploadClose.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeUploadModal();
+            });
+            uploadCancel.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeUploadModal();
+            });
+            uploadApply.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.applyUploadedProductNames();
+                closeUploadModal();
+            });
+        }
 
         // Mobile fullscreen rotate button (mirror keyword page)
         const fsBtn = document.getElementById('trendChartRotateFullscreen');
@@ -792,6 +844,9 @@ class TrendReports {
         
         const campaignInputEl = document.getElementById('campaignFilterInput');
         if (campaignInputEl) campaignInputEl.value = '';
+
+        // Update Upload button state when switching tabs
+        this.updateUploadButtonState();
         
         // Restore per-category metric selections or set defaults
         let saved = this.selectedMetricsByCategory[this.currentCategory] || [];
@@ -803,7 +858,8 @@ class TrendReports {
             } else if (this.currentCategory === 'campaigns') {
                 saved = ['spend'];
             } else if (this.currentCategory === 'search-terms') {
-                saved = ['sessions'];
+                // Default to Ad Spend on Search Terms tab
+                saved = ['spend'];
             }
             // Save the default selection
             this.selectedMetricsByCategory[this.currentCategory] = [...saved];
@@ -854,8 +910,8 @@ class TrendReports {
                 } else if (this.currentCategory === 'campaigns') {
                     this.selectedMetrics = ['spend'];
                 } else if (this.currentCategory === 'search-terms') {
-                    // Use clicks for search-terms by default (sessions/pageviews not provided here)
-                    this.selectedMetrics = ['clicks'];
+                    // Default to Ad Spend on Search Terms tab
+                    this.selectedMetrics = ['spend'];
                 }
                 
                 // Save the selection for this category
@@ -883,6 +939,10 @@ class TrendReports {
             await this.fetchDataFromDatabase();
             this.updateNameFilter();
             if (this.currentCategory === 'search-terms') {
+                // On Search Terms tab, auto-apply uploaded filter (if any)
+                if (this.uploadedProductNames.length > 0) {
+                    this.applyUploadedProductFilter();
+                }
                 this.updateCampaignFilter();
             }
             this.updateChart();
@@ -1198,6 +1258,122 @@ class TrendReports {
             
         } catch (error) {
             throw error; // Re-throw to trigger fallback
+        }
+    }
+
+    /**
+     * Read uploaded product names from the textarea in the upload modal,
+     * store them, and apply the filter on the Products tab.
+     */
+    applyUploadedProductNames() {
+        try {
+            const textarea = document.getElementById('uploadProductsTextarea');
+            if (!textarea) return;
+            const raw = textarea.value || '';
+            const lines = raw
+                .split(/\r?\n/)
+                .map(l => l.trim())
+                .filter(l => l.length > 0);
+            this.uploadedProductNames = lines;
+            this.uploadedProductNameSet = new Set(lines.map(l => l.toLowerCase()));
+            // By default, all uploaded patterns are selected
+            this.selectedUploadedPatterns = new Set(lines.map(l => l.toLowerCase()));
+
+            // Update visual state of Upload button (green when data is active)
+            this.updateUploadButtonState();
+
+            if (this.currentCategory === 'search-terms') {
+                this.applyUploadedProductFilter();
+            }
+        } catch (_) {
+            // Silent fail – upload is an optional UX enhancement
+        }
+    }
+
+    /**
+     * Apply uploaded product filter:
+     *  - Only used on Search Terms tab
+     *  - Fuzzy-matches each uploaded name against search-term displayName/name
+     *  - Selects all matching search terms via existing name multi-select system
+     */
+    applyUploadedProductFilter() {
+        if (this.currentCategory !== 'search-terms') return;
+        if (!this.selectedUploadedPatterns || this.selectedUploadedPatterns.size === 0) {
+            // No uploaded patterns selected -> clear name selection for this category
+            this.selectedNames.clear();
+            this.selectedNamesByCategory['search-terms'] = new Set();
+            this.updateNameFilter();
+            this.currentPage = 1;
+            this.updateChart();
+            this.renderTable();
+            return;
+        }
+
+        const patterns = Array.from(this.selectedUploadedPatterns);
+        const matches = new Set();
+
+        (this.currentData || []).forEach(item => {
+            if (item.category !== 'search-terms') return;
+            const displayName = (item.displayName || '').toString();
+            const rawName = (item.name || '').toString();
+            const lowerDisplay = displayName.toLowerCase();
+            const lowerRaw = rawName.toLowerCase();
+            for (const p of patterns) {
+                if (!p) continue;
+                if (lowerDisplay.includes(p) || lowerRaw.includes(p)) {
+                    // Prefer displayName (SKU) when present; otherwise fall back to raw name
+                    const key = displayName || rawName;
+                    if (key) {
+                        matches.add(key);
+                    }
+                    break;
+                }
+            }
+        });
+
+        // Update selectedNames only for Search Terms, leave other categories intact
+        this.selectedNames.clear();
+        this.selectedNamesByCategory['search-terms'] = new Set();
+        matches.forEach(n => {
+            this.selectedNames.add(n);
+            this.selectedNamesByCategory['search-terms'].add(n);
+        });
+
+        // Refresh name filter dropdown + chart/table
+        this.updateNameFilter();
+        this.currentPage = 1;
+        this.updateChart();
+        this.renderTable();
+    }
+
+    /**
+     * Toggle Upload button style to indicate whether an uploaded filter
+     * is currently active (only on Products tab).
+     */
+    updateUploadButtonState() {
+        const uploadBtn = document.getElementById('uploadProductsBtn');
+        const uploadedFilterContainer = document.getElementById('uploadedProductsFilterContainer');
+        if (!uploadBtn) return;
+
+        const hasUpload =
+            this.currentCategory === 'search-terms' &&
+            Array.isArray(this.uploadedProductNames) &&
+            this.uploadedProductNames.length > 0;
+
+        if (hasUpload) {
+            uploadBtn.classList.add('upload-active');
+            if (uploadedFilterContainer) {
+                uploadedFilterContainer.style.display = 'flex';
+                // Ensure placeholder reflects full selection when upload just happened
+                if (this.updateUploadedFilterPlaceholder) {
+                    this.updateUploadedFilterPlaceholder();
+                }
+            }
+        } else {
+            uploadBtn.classList.remove('upload-active');
+            if (uploadedFilterContainer) {
+                uploadedFilterContainer.style.display = 'none';
+            }
         }
     }
 
@@ -1680,26 +1856,10 @@ class TrendReports {
             });
         }
         
-        // If filter is applied, use ALL data for that filter (ignore date range)
-        // Only apply date range if NO filter is selected
-        const hasFilterApplied = (this.selectedNames && this.selectedNames.size > 0) || this.selectedName || (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0);
-        
-        // Debug: Log filter status for chart
-        console.log('🔍 Chart Filter Priority Debug:', {
-            selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
-            selectedName: this.selectedName,
-            hasFilterApplied: hasFilterApplied,
-            dateRange: this.currentDateRange,
-            dataLengthBefore: data.length
-        });
-        
-        if (!hasFilterApplied) {
-            // Apply date range filter only when no filter is applied
-            data = this.filterDataByDateRange(data);
-            console.log('📅 Chart: Date range applied, data length after:', data.length);
-        } else {
-            console.log('🎯 Chart: Filter applied, ignoring date range, data length:', data.length);
-        }
+        // Always respect the selected date range for the chart, even when
+        // name/campaign filters are applied, so chart + table stay in sync.
+        data = this.filterDataByDateRange(data);
+        console.log('📅 Chart: Date range applied, data length after:', data.length);
 
         // Campaigns: avoid double-counting in the chart when DAILY TOTAL rows
         // are present (backend provides both individuals and totals). If totals
@@ -1746,7 +1906,11 @@ class TrendReports {
                 totalsByDate[key].sessions += Number(item.sessions || 0);
                 totalsByDate[key].pageviews += Number(item.pageviews || 0);
                 totalsByDate[key].orders += Number(item.orders || 0);
-                totalsByDate[key].totalSales += Number(item.totalSales || 0);
+                // For Total Sales, use the maximum per date (business total),
+                // not the sum across all rows, to avoid multiplying account sales
+                const dayTotalSales = Number(item.totalSales || 0);
+                const existingTotal = Number(totalsByDate[key].totalSales || 0);
+                totalsByDate[key].totalSales = Math.max(existingTotal, dayTotalSales);
             });
             
             // Replace data with recomputed totals
@@ -1780,57 +1944,58 @@ class TrendReports {
             });
         }
         
-        // Search-terms: handle DAILY TOTAL vs individual data logic (same as campaigns)
+        // Search-terms: ALWAYS recompute DAILY TOTAL rows from individual data
+        // so the chart uses the same Ad metrics as the table (spend, sales, clicks, etc.).
         if (this.currentCategory === 'search-terms') {
-            const hasDailyTotal = data.some(r => String(r.name || '').includes('📊'));
-            const hasSelectedSearchTerms = this.selectedNames && this.selectedNames.size > 0;
-            
-            console.log('🔍 Search-terms Chart Logic:', {
-                hasDailyTotal,
-                hasSelectedSearchTerms,
-                selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
-                dataLength: data.length
-            });
-            
-            // Only use DAILY TOTAL rows if no specific search terms are selected
-            if (hasDailyTotal && !hasSelectedSearchTerms) {
-                data = data.filter(r => String(r.name || '').includes('📊'));
-                console.log('📊 Using DAILY TOTAL rows for search-terms chart');
-            } else if (hasSelectedSearchTerms) {
-                // Remove DAILY TOTAL rows when specific search terms are selected
-                data = data.filter(r => !String(r.name || '').includes('📊'));
-                console.log('🎯 Using individual search term data for selected terms');
-            }
-        }
-        
-        // If we're on search-terms and user selected specific names,
-        // recompute DAILY TOTAL for the filtered subset so chart reflects selection.
-        if (this.currentCategory === 'search-terms' && this.selectedNames && this.selectedNames.size > 0) {
             const totalsByDate = {};
-            // Build totals from only non-total rows (selected names already applied above)
+            const uploadFilterActive =
+                Array.isArray(this.uploadedProductNames) &&
+                this.uploadedProductNames.length > 0 &&
+                this.selectedUploadedPatterns &&
+                this.selectedUploadedPatterns.size > 0;
+
             data.forEach(item => {
                 const nm = String(item.name || '');
-                if (nm.includes('📊')) return; // skip existing totals to avoid double-counting
+                if (nm.includes('📊')) return; // skip any existing helper total rows
                 const key = this.normalizeDateKey(item.date);
                 if (!totalsByDate[key]) {
-                    totalsByDate[key] = { spend: 0, sales: 0, clicks: 0, sessions: 0, pageviews: 0, orders: 0, totalSales: 0 };
+                    totalsByDate[key] = {
+                        spend: 0,
+                        sales: 0,
+                        clicks: 0,
+                        sessions: 0,
+                        pageviews: 0,
+                        orders: 0,
+                        totalSalesBusiness: 0,
+                        totalSalesSubset: 0
+                    };
                 }
-                totalsByDate[key].spend += Number(item.spend || 0);
-                totalsByDate[key].sales += Number(item.sales || 0);
-                totalsByDate[key].clicks += Number(item.clicks || 0);
-                totalsByDate[key].sessions += Number(item.sessions || 0);
-                totalsByDate[key].pageviews += Number(item.pageviews || 0);
-                totalsByDate[key].orders += Number(item.orders || 0);
-                totalsByDate[key].totalSales += Number(item.totalSales || 0);
+                const bucket = totalsByDate[key];
+                bucket.spend += Number(item.spend || 0);
+                bucket.sales += Number(item.sales || 0);
+                bucket.clicks += Number(item.clicks || 0);
+                bucket.sessions += Number(item.sessions || 0);
+                bucket.pageviews += Number(item.pageviews || 0);
+                bucket.orders += Number(item.orders || 0);
+
+                // Business-level Total Sales (overall account): same value repeated on each row.
+                // Use the maximum per date to avoid multiplying by number of terms.
+                const dayTotalSales = Number(item.totalSales || 0);
+                const existingBiz = Number(bucket.totalSalesBusiness || 0);
+                bucket.totalSalesBusiness = Math.max(existingBiz, dayTotalSales);
+
+                // Subset Total Sales: when an upload filter is active, treat this as
+                // the sum of ad Sales for the selected terms.
+                bucket.totalSalesSubset += Number(item.sales || 0);
             });
-            
-            // Replace data with recomputed totals
+
             data = [];
             Object.entries(totalsByDate).forEach(([key, t]) => {
                 const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
                 const roas = t.spend > 0 ? t.sales / t.spend : 0;
                 const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
-                const tcos = t.totalSales > 0 ? (t.spend / t.totalSales) * 100 : 0;
+                const totalSalesForMetric = uploadFilterActive ? t.totalSalesSubset : t.totalSalesBusiness;
+                const tcos = totalSalesForMetric > 0 ? (t.spend / totalSalesForMetric) * 100 : 0;
                 const ctr = t.clicks > 0 && t.sessions > 0 ? (t.clicks / t.sessions) * 100 : 0;
                 data.push({
                     date: key,
@@ -1843,13 +2008,12 @@ class TrendReports {
                     sessions: t.sessions,
                     pageviews: t.pageviews,
                     orders: t.orders,
-                    totalSales: t.totalSales,
+                    totalSales: totalSalesForMetric,
                     cpc, roas, acos, tcos, ctr
                 });
             });
-            
-            console.log('🎯 Search-terms Chart: Recomputed totals for selected search terms:', {
-                selectedNames: Array.from(this.selectedNames),
+
+            console.log('🎯 Search-terms Chart: Recomputed DAILY TOTAL rows for chart:', {
                 totalDates: Object.keys(totalsByDate).length,
                 sampleData: data.slice(0, 3)
             });
@@ -2102,9 +2266,16 @@ class TrendReports {
             if (['spend','sales','clicks','orders','pageviews'].includes(metric)) {
                 return group.values.reduce((sum, val) => sum + (Number(val)||0), 0);
             }
-            // For account-level daily totals injected per row (totalSales, sessions in campaigns/search-terms),
-            // multiple rows share the same value. Use the maximum to avoid multiplying by number of rows.
-            if (metric === 'totalSales' || (metric === 'sessions' && this.currentCategory !== 'products')) {
+            // For Total Sales:
+            // - Products: safe to SUM across rows (each row is per-ASIN/product)
+            // - Campaigns/Search-terms: chart data has ONE DAILY TOTAL row per bucket,
+            //   already holding the correct total (overall or subset), so also SUM.
+            if (metric === 'totalSales') {
+                return group.values.reduce((sum, val) => sum + (Number(val)||0), 0);
+            }
+            // For sessions in campaigns/search-terms, multiple rows may share the same
+            // business sessions value; use MAX to avoid multiplying account sessions.
+            if (metric === 'sessions' && this.currentCategory !== 'products') {
                 return group.values.length ? Math.max(...group.values.map(v => Number(v)||0)) : 0;
             }
             if (metric === 'roas') {
@@ -2115,26 +2286,112 @@ class TrendReports {
             return group.count > 0 ? (group.values.reduce((sum, val) => sum + (Number(val)||0), 0) / group.count) : 0;
         });
         
-        // Remove only the latest consecutive zero values (data not updated yet)
-        let filteredLabels = labels;
-        let filteredValues = values;
-        
-        // Find the last non-zero value index
-        let lastNonZeroIndex = -1;
-        for (let i = values.length - 1; i >= 0; i--) {
-            if (values[i] > 0) {
-                lastNonZeroIndex = i;
-                break;
+        // IMPORTANT: Do NOT trim trailing zeros; user wants the chart to
+        // show the full selected date range even when the latest days are 0.
+        // `labels` already covers the entire daily range (or all buckets), so
+        // we return them as-is.
+        return { labels, values };
+    }
+
+    /**
+     * Setup the uploaded-names filter dropdown (top-right, next to date range).
+     * This lets the user pick one or multiple uploaded names to drive the filter.
+     * Only meaningful on the Search Terms tab.
+     */
+    setupUploadedFilter() {
+        const container = document.getElementById('uploadedProductsFilterContainer');
+        const input = document.getElementById('uploadedProductsFilterInput');
+        const dropdown = document.getElementById('uploadedProductsFilterDropdown');
+
+        if (!container || !input || !dropdown) return;
+
+        // Helper to keep placeholder in sync with selection count
+        const updatePlaceholder = () => {
+            if (!input) return;
+            // Derive count from currently checked boxes so UI state is always truth
+            const count = dropdown.querySelectorAll('input[type="checkbox"]:checked').length;
+            if (count > 0) {
+                input.placeholder = `${count} uploaded selected`;
+            } else {
+                input.placeholder = 'Uploaded products...';
             }
-        }
-        
-        // If we found a non-zero value, trim everything after it
-        if (lastNonZeroIndex >= 0) {
-            filteredLabels = labels.slice(0, lastNonZeroIndex + 1);
-            filteredValues = values.slice(0, lastNonZeroIndex + 1);
-        }
-        
-        return { labels: filteredLabels, values: filteredValues };
+        };
+
+        // Helper to render options based on current uploaded names + search term
+        const renderOptions = (searchTerm = '') => {
+            const term = (searchTerm || '').toLowerCase();
+            dropdown.innerHTML = '';
+
+            const names = this.uploadedProductNames || [];
+            const filtered = names.filter(n => !term || n.toLowerCase().includes(term));
+
+            if (filtered.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'filter-option';
+                empty.textContent = 'No uploaded names';
+                dropdown.appendChild(empty);
+                return;
+            }
+
+            filtered.forEach(name => {
+                const lower = name.toLowerCase();
+                const option = document.createElement('div');
+                option.className = 'filter-option';
+                option.innerHTML = `
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" ${this.selectedUploadedPatterns.has(lower) ? 'checked' : ''} />
+                        <span>${name}</span>
+                    </label>
+                `;
+
+                // Use mousedown so we don't lose focus before click fires
+                option.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const checkbox = option.querySelector('input[type="checkbox"]');
+                    const nowChecked = !checkbox.checked;
+                    checkbox.checked = nowChecked;
+                    if (nowChecked) {
+                        this.selectedUploadedPatterns.add(lower);
+                    } else {
+                        this.selectedUploadedPatterns.delete(lower);
+                    }
+                    // Apply filter based on updated selection
+                    this.applyUploadedProductFilter();
+                    updatePlaceholder();
+                });
+
+                dropdown.appendChild(option);
+            });
+        };
+
+        // Store helper so we can reuse it if needed
+        this.renderUploadedFilterOptions = renderOptions.bind(this);
+        this.updateUploadedFilterPlaceholder = updatePlaceholder.bind(this);
+
+        input.addEventListener('focus', () => {
+            if (this.currentCategory !== 'search-terms') return;
+            dropdown.style.display = 'block';
+            container.classList.add('dropdown-open');
+            this.renderUploadedFilterOptions(input.value.trim());
+            updatePlaceholder();
+        });
+
+        input.addEventListener('input', (e) => {
+            if (this.currentCategory !== 'search-terms') return;
+            dropdown.style.display = 'block';
+            container.classList.add('dropdown-open');
+            this.renderUploadedFilterOptions(e.target.value.trim());
+            updatePlaceholder();
+        });
+
+        // Close when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!container.contains(e.target)) {
+                dropdown.style.display = 'none';
+                container.classList.remove('dropdown-open');
+            }
+        });
     }
 
     setupMultiSelectDropdown() {

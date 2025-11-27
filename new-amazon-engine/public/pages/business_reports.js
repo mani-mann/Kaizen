@@ -133,7 +133,7 @@ constructor() {
     ]);
     
     // Cache configuration
-    this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL
+    this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL (kept for compatibility)
     // Map short internal parent codes to canonical live ASINs so both combine
     this.aliasParentToRealAsin = new Map([
         ['B001','B0DNKGMNTP'],
@@ -188,102 +188,25 @@ getNextNoon() {
 }
 
 getCachedData(cacheKey) {
-    try {
-        const cached = localStorage.getItem(cacheKey);
-        if (!cached) return null;
-        
-        const parsed = JSON.parse(cached);
-        const now = Date.now();
-        const nextNoon = this.getNextNoon();
-        const lastNoon = nextNoon - (24 * 60 * 60 * 1000); // 24 hours before next noon
-        
-        // Check if cache was created after last noon (still valid today)
-        // If it's past 12 PM and cache was created before today's noon, clear it
-        if (parsed.timestamp <= lastNoon) {
-            localStorage.removeItem(cacheKey);
-            console.log('🔄 Cache expired (past 12 PM), cleared:', cacheKey);
-            return null;
-        }
-        
-        // Also check 1 hour TTL as fallback
-        if (now - parsed.timestamp > this.CACHE_TTL) {
-            localStorage.removeItem(cacheKey);
-            return null;
-        }
-        
-        return parsed;
-    } catch (e) {
-        console.warn('Cache read error:', e);
-        return null;
-    }
+    const payload = (typeof BrowserCache !== 'undefined')
+        ? BrowserCache.get('biz', [cacheKey])
+        : null;
+    if (!payload) return null;
+    return {
+        data: payload,
+        timestamp: Date.now()
+    };
 }
 
 setCachedData(cacheKey, data) {
-    try {
-        const cacheEntry = {
-            data: data,
-            timestamp: Date.now()
-        };
-        localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-        const nextRefresh = new Date(this.getNextNoon());
-        console.log(`💾 Cached data for key: ${cacheKey}. Next refresh: ${nextRefresh.toLocaleString()}`);
-    } catch (e) {
-        console.warn('Cache write error:', e);
-        // If storage is full, try to clear old cache entries
-        try {
-            const keys = Object.keys(localStorage);
-            const cacheKeys = keys.filter(k => k.startsWith('business_data_') || k.startsWith('analytics_data_'));
-            if (cacheKeys.length > 10) {
-                // Remove oldest 5 entries
-                const entries = cacheKeys.map(k => ({
-                    key: k,
-                    timestamp: JSON.parse(localStorage.getItem(k))?.timestamp || 0
-                })).sort((a, b) => a.timestamp - b.timestamp);
-                
-                entries.slice(0, 5).forEach(e => localStorage.removeItem(e.key));
-                console.log('🧹 Cleared old cache entries');
-                
-                // Retry saving
-                localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-            }
-        } catch (e2) {
-            console.warn('Cache cleanup failed:', e2);
-        }
+    if (typeof BrowserCache !== 'undefined') {
+        BrowserCache.set('biz', [cacheKey], data, this.CACHE_TTL);
     }
 }
 
 clearExpiredCache() {
-    try {
-        const keys = Object.keys(localStorage);
-        const cacheKeys = keys.filter(k => k.startsWith('business_data_') || k.startsWith('analytics_data_'));
-        const nextNoon = this.getNextNoon();
-        const lastNoon = nextNoon - (24 * 60 * 60 * 1000);
-        let clearedCount = 0;
-        
-        cacheKeys.forEach(key => {
-            try {
-                const cached = localStorage.getItem(key);
-                if (cached) {
-                    const parsed = JSON.parse(cached);
-                    // Only clear if cache was created before last noon (expired at 12 PM)
-                    // Don't clear if it's still valid (created after last noon)
-                    if (parsed.timestamp && parsed.timestamp <= lastNoon) {
-                        localStorage.removeItem(key);
-                        clearedCount++;
-                    }
-                }
-            } catch (e) {
-                // Invalid cache entry, remove it
-                localStorage.removeItem(key);
-                clearedCount++;
-            }
-        });
-        
-        if (clearedCount > 0) {
-            console.log(`🔄 Cleared ${clearedCount} expired cache entries (past 12 PM refresh)`);
-        }
-    } catch (e) {
-        console.warn('Error clearing expired cache:', e);
+    if (typeof BrowserCache !== 'undefined') {
+        BrowserCache.clearExpired('biz');
     }
 }
 
@@ -1098,53 +1021,11 @@ async loadData() {
         console.log('🔍 Data length:', data.data?.length || 0);
         console.log('🔍 KPIs:', data.kpis);
         
-        // Handle data display - show data for available dates, skip empty dates
+        // Handle data display - if no data for the selected range, show zeros instead of
+        // silently falling back to some other range. This keeps the UI honest: when you
+        // pick "today" (and today's data hasn't arrived yet), you should see 0s.
         if (!data.data || data.data.length === 0) {
-            console.log('⚠️ No data found for selected date range, trying to get any available data');
-            // Try to get data from the backend's available date range
-            try {
-                // Get the actual available date range from the backend
-                const availableDatesResponse = await fetch(`${apiBase}/api/business-available-dates`);
-                if (availableDatesResponse.ok) {
-                    const availableDates = await availableDatesResponse.json();
-                    if (availableDates.dates && availableDates.dates.length > 0) {
-                        // Use the most recent available dates
-                        const sortedDates = availableDates.dates.sort();
-                        const latestDate = sortedDates[sortedDates.length - 1];
-                        const earliestDate = sortedDates[0];
-                        
-                        // Create a range around the latest available data
-                        const fallbackEnd = new Date(latestDate);
-                        const fallbackStart = new Date(Math.max(
-                            new Date(earliestDate).getTime(),
-                            new Date(latestDate).getTime() - (29 * 24 * 60 * 60 * 1000) // 30 days before latest
-                        ));
-                        
-                        const fallbackUrl = `${apiBase}/api/business-data?start=${this.formatDate(fallbackStart)}&end=${this.formatDate(fallbackEnd)}&includeAll=true&t=${Date.now()}`;
-                        console.log('🔍 Trying fallback to available data range:', fallbackUrl);
-                        
-                        const fallbackResponse = await fetch(fallbackUrl);
-                        if (fallbackResponse.ok) {
-                            const fallbackData = await fallbackResponse.json();
-                            if (fallbackData.data && fallbackData.data.length > 0) {
-                                console.log('✅ Found data in available range, using that instead');
-                                // Transform data and fill missing dates with zero values
-                                let fallbackTransformed = this.transformData(fallbackData.data || []);
-                                fallbackTransformed = this.fillMissingDates(fallbackTransformed);
-                                this.state.businessData = fallbackTransformed;
-                                this.state.filteredData = this.aggregateBySku(this.state.businessData);
-                                this.updateKPIs(fallbackData.kpis || {});
-                                this.showNotification(`Showing available data from ${this.formatDate(fallbackStart)} to ${this.formatDate(fallbackEnd)} (no data in selected range)`, 'info');
-                                this.renderTable();
-                                this.updateResultsCount();
-                                return;
-                            }
-                        }
-                    }
-                }
-            } catch (fallbackError) {
-                console.log('🔍 Fallback also failed:', fallbackError.message);
-            }
+            console.log('⚠️ No data found for selected date range; showing zero KPIs and empty table for this range only.');
             
             this.state.businessData = [];
             this.state.filteredData = [];
@@ -1337,14 +1218,12 @@ async applyPreset(key) {
     let end = latestAvailableDate; // Use latest available date instead of today
     switch (key) {
         case 'yesterday':
-            // Yesterday relative to latest available date
-            start = new Date(latestAvailableDate); 
-            start.setDate(start.getDate()-1);
-            start.setHours(0,0,0,0);
-            end = new Date(start); 
-            end.setHours(23,59,59,999);
-            // Don't go beyond latest available date
-            if (end > latestAvailableDate) end = latestAvailableDate;
+            // "Yesterday" should mean the latest day that actually has data (DB max date)
+            // so we use latestAvailableDate itself as the single-day range.
+            start = new Date(latestAvailableDate);
+            start.setHours(0, 0, 0, 0);
+            end = new Date(latestAvailableDate);
+            end.setHours(23, 59, 59, 999);
             break;
         case 'last7':
             start = new Date(latestAvailableDate); 
@@ -1733,86 +1612,34 @@ computeKPIsFromRows(rows) {
         }).filter(d => d !== null && d !== 'Unknown');
         const uniqueDatesFromData = new Set(dateStrings).size;
         
-        // CRITICAL: Always use the selected date range (calendar days) for Avg Sessions/Day calculation
-        // This ensures correct calculation for single dates and filtered data
-        let totalCalendarDays = 0;
-        let startDate = null;
-        let endDate = null;
-        
-        // Parse date range with proper handling for YYYY-MM-DD format
-        if (this.state.dateRange) {
-            // Priority 1: Use Date objects if available
-            if (this.state.dateRange.start && this.state.dateRange.end) {
-                startDate = new Date(this.state.dateRange.start);
-                endDate = new Date(this.state.dateRange.end);
-            }
-            // Priority 2: Use string dates (YYYY-MM-DD format)
-            else if (this.state.dateRange.startStr && this.state.dateRange.endStr) {
-                // Parse YYYY-MM-DD strings in local timezone to avoid UTC conversion issues
-                const startParts = this.state.dateRange.startStr.split('-');
-                const endParts = this.state.dateRange.endStr.split('-');
-                if (startParts.length === 3 && endParts.length === 3) {
-                    startDate = new Date(parseInt(startParts[0]), parseInt(startParts[1]) - 1, parseInt(startParts[2]));
-                    endDate = new Date(parseInt(endParts[0]), parseInt(endParts[1]) - 1, parseInt(endParts[2]));
-                } else {
-                    // Fallback to Date constructor
-                    startDate = new Date(this.state.dateRange.startStr);
-                    endDate = new Date(this.state.dateRange.endStr);
+        // For Avg Sessions/Day we want to ignore days that have no data (e.g. "today" when
+        // today's business file hasn't landed yet). We start from the number of unique
+        // business days that actually have rows, but we ALSO cap this at the number of
+        // calendar days in the selected range so it can never exceed the range length.
+        let totalCalendarDays = uniqueDatesFromData;
+        try {
+            if (this.state?.dateRange?.start && this.state?.dateRange?.end) {
+                const startD = new Date(this.state.dateRange.start);
+                const endD = new Date(this.state.dateRange.end);
+                if (!isNaN(startD) && !isNaN(endD) && endD >= startD) {
+                    startD.setHours(0, 0, 0, 0);
+                    endD.setHours(23, 59, 59, 999);
+                    const diffMs = endD.getTime() - startD.getTime();
+                    const calendarDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+                    if (calendarDays > 0 && totalCalendarDays > calendarDays) {
+                        totalCalendarDays = calendarDays;
+                    }
                 }
             }
+        } catch (_) {
+            // If anything goes wrong, keep totalCalendarDays as uniqueDatesFromData
         }
-        
-        // Calculate total calendar days from date range
-        if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-            // CRITICAL: Check if single date is selected (startStr === endStr)
-            // Also check by comparing date strings directly to ensure accurate detection
-            const startStrCheck = this.state.dateRange?.startStr || '';
-            const endStrCheck = this.state.dateRange?.endStr || '';
-            const isSingleDate = startStrCheck && endStrCheck && startStrCheck === endStrCheck;
-            
-            // Additional check: compare date objects (normalized to dates only, ignoring time)
-            const startDateOnly = new Date(startDate);
-            startDateOnly.setHours(0, 0, 0, 0);
-            const endDateOnly = new Date(endDate);
-            endDateOnly.setHours(0, 0, 0, 0);
-            const isSameDate = startDateOnly.getTime() === endDateOnly.getTime();
-            
-            // Use either check - if strings match OR dates are the same, it's a single date
-            if (isSingleDate || isSameDate) {
-                // Single date selection: always use 1 day
-                totalCalendarDays = 1;
-                console.log(`📅 Avg Sessions/Day calculation: Single date selected, using 1 calendar day`);
-                console.log(`   Start: ${startStrCheck}, End: ${endStrCheck}, Same date: ${isSameDate}`);
-            } else {
-                // Normalize to start of day (00:00:00) and end of day (23:59:59)
-                startDate.setHours(0, 0, 0, 0);
-                endDate.setHours(23, 59, 59, 999);
-                
-                // Calculate difference in days for date range
-                const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
-                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                
-                // Always add 1 to include both start and end days
-                // Date range: diffDays = N, totalCalendarDays = N + 1
-                totalCalendarDays = diffDays + 1;
-                
-                console.log(`📅 Avg Sessions/Day calculation: Using ${totalCalendarDays} calendar days (${this.formatDate(startDate)} to ${this.formatDate(endDate)})`);
-            }
-        } else if (uniqueDatesFromData > 0) {
-            // Fallback: use unique dates from data ONLY if date range is not available
-            // This should rarely happen, but provides a safety net
-            totalCalendarDays = uniqueDatesFromData;
-            console.warn(`⚠️ Avg Sessions/Day calculation: Date range not available, using ${uniqueDatesFromData} unique dates from data`);
-        } else {
-            // No date range and no data - cannot calculate
-            totalCalendarDays = 0;
-            console.warn(`⚠️ Avg Sessions/Day calculation: No date range or data available, using 0`);
+        if (totalCalendarDays === 0) {
+            console.warn(`⚠️ Avg Sessions/Day calculation: No business days with data in range, using 0`);
         }
-        
-        // Calculate average sessions per day
-        // Always divide by calendar days in the selected range, not by unique dates in data
-        // NOTE: For single day selection, avgSessionsPerDay will equal totalSessions (e.g., 349/1 = 349)
-        // This is mathematically correct - the average for one day IS the total for that day
+
+        // Calculate average sessions per day based on active business days,
+        // never using more days than exist in the selected calendar range.
         const avgSessionsPerDay = totalCalendarDays > 0 ? totals.totalSessions / totalCalendarDays : 0;
         const conversionRate = totals.totalSessions > 0 ? (totals.totalUnitsOrdered / totals.totalSessions) * 100 : 0;
         

@@ -391,6 +391,99 @@ body {
     display: block;
 }
 
+/* Simple modal for uploading product names (Trend Reports Products tab only) */
+.tr-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: var(--z-modal-backdrop);
+}
+
+.tr-modal {
+    width: 520px;
+    max-width: 90vw;
+    background: var(--bg-primary);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    padding: var(--spacing-lg);
+    position: relative;
+    z-index: var(--z-modal);
+}
+
+.tr-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-md);
+}
+
+.tr-modal-header h3 {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+}
+
+.tr-modal-close {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+}
+
+.tr-modal-close:hover {
+    background: var(--bg-tertiary);
+}
+
+.tr-modal-body {
+    margin-bottom: var(--spacing-lg);
+}
+
+.tr-modal-help {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.tr-modal-textarea {
+    width: 100%;
+    min-height: 160px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-primary);
+    padding: var(--spacing-sm);
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    resize: vertical;
+}
+
+.tr-modal-textarea:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px var(--border-focus);
+}
+
+.tr-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+}
+
+.action-btn.primary {
+    background: var(--orange);
+    color: #fff;
+}
+
+.action-btn.primary:hover {
+    background: var(--orange-dark);
+}
+
 /* Dashboard Header */
 .dashboard-header {
     display: flex;
@@ -418,6 +511,11 @@ body {
     display: flex;
     align-items: center;
     gap: var(--spacing-lg);
+}
+
+.uploaded-products-filter {
+    display: flex;
+    align-items: center;
 }
 
 /* Time Period Selector */
@@ -572,6 +670,13 @@ body {
 /* Metric Categories */
 .metric-categories {
     margin-bottom: var(--spacing-2xl);
+}
+
+.metric-categories-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--spacing-lg);
 }
 
 .category-tabs {
@@ -940,6 +1045,19 @@ body {
     font-weight: 500;
     cursor: pointer;
     transition: all var(--transition-normal);
+}
+
+/* State when upload filter is active (data uploaded & applied) */
+.action-btn.upload-active {
+    background: var(--success);
+    border-color: var(--success);
+    color: #fff;
+}
+
+.action-btn.upload-active:hover {
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+    color: #fff;
 }
 
 .action-btn:hover {

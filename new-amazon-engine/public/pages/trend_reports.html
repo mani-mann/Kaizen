@@ -84,52 +84,69 @@
                 <section id="overview" class="content-section active">
                     
                     <!-- Dashboard Header with Controls -->
-                    <div class="dashboard-header">
-                        <div class="dashboard-title">
-                            <h2>Trend Analysis Dashboard</h2>
-                            <p>Track performance trends across different time periods and metrics</p>
-                        </div>
-                        <div class="dashboard-controls">
-                            <!-- Date Range Picker -->
-                            <div class="dashboard-date-picker">
-                                <div class="date-filter" id="dateFilter">
-                                    <span class="material-icons">calendar_today</span>
-                                    <span id="dateRangeDisplay">—</span>
-                                    <button class="preset-toggle" id="presetToggle" title="Quick ranges">Filter ▾</button>
-                                    <div class="preset-dropdown" id="presetDropdown" style="display:none">
-                                        <button data-preset="yesterday">Yesterday</button>
-                                        <button data-preset="last7">Last 7 days</button>
-                                        <button data-preset="thisWeek">This week (Mon–Sun)</button>
-                                        <button data-preset="lastWeek">Last week (Mon–Sun)</button>
-                                        <button data-preset="last30">Last 30 days</button>
-                                        <button data-preset="thisMonth">This month</button>
-                                        <button data-preset="lastMonth">Last month</button>
-                                        <button data-preset="ytd">Year to date</button>
-                                        <button data-preset="lifetime">Lifetime</button>
-                                    </div>
-                                    <div class="date-picker-dropdown" id="datePickerDropdown">
-                                        <!-- Calendar content will be populated by JavaScript -->
+                        <div class="dashboard-header">
+                            <div class="dashboard-title">
+                                <h2>Trend Analysis Dashboard</h2>
+                                <p>Track performance trends across different time periods and metrics</p>
+                            </div>
+                            <div class="dashboard-controls">
+                                <!-- Date Range Picker -->
+                                <div class="dashboard-date-picker">
+                                    <div class="date-filter" id="dateFilter">
+                                        <span class="material-icons">calendar_today</span>
+                                        <span id="dateRangeDisplay">—</span>
+                                        <button class="preset-toggle" id="presetToggle" title="Quick ranges">Filter ▾</button>
+                                        <div class="preset-dropdown" id="presetDropdown" style="display:none">
+                                            <button data-preset="yesterday">Yesterday</button>
+                                            <button data-preset="last7">Last 7 days</button>
+                                            <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                            <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                            <button data-preset="last30">Last 30 days</button>
+                                            <button data-preset="thisMonth">This month</button>
+                                            <button data-preset="lastMonth">Last month</button>
+                                            <button data-preset="ytd">Year to date</button>
+                                            <button data-preset="lifetime">Lifetime</button>
+                                        </div>
+                                        <div class="date-picker-dropdown" id="datePickerDropdown">
+                                            <!-- Calendar content will be populated by JavaScript -->
+                                        </div>
                                     </div>
                                 </div>
+                                <!-- Upload button (used for Search Terms uploads) -->
+                                <button class="action-btn" id="uploadProductsBtn">
+                                    <span class="material-icons">upload_file</span>
+                                    <span>Upload</span>
+                                </button>
                             </div>
                         </div>
-                    </div>
 
                     <!-- Metric Category Tabs -->
                     <div class="metric-categories">
-                        <div class="category-tabs">
-                            <button class="category-tab active" data-category="products">
-                                <span class="material-icons">inventory_2</span>
-                                <span>Products</span>
-                            </button>
-                            <button class="category-tab" data-category="campaigns">
-                                <span class="material-icons">campaign</span>
-                                <span>Campaigns</span>
-                            </button>
-                            <button class="category-tab" data-category="search-terms">
-                                <span class="material-icons">search</span>
-                                <span>Search Terms</span>
-                            </button>
+                        <div class="metric-categories-header">
+                            <div class="category-tabs">
+                                <button class="category-tab active" data-category="products">
+                                    <span class="material-icons">inventory_2</span>
+                                    <span>Products</span>
+                                </button>
+                                <button class="category-tab" data-category="campaigns">
+                                    <span class="material-icons">campaign</span>
+                                    <span>Campaigns</span>
+                                </button>
+                                <button class="category-tab" data-category="search-terms">
+                                    <span class="material-icons">search</span>
+                                    <span>Search Terms</span>
+                                </button>
+                            </div>
+                            <!-- Uploaded names filter (shown after upload, Search Terms tab) -->
+                            <div class="uploaded-products-filter" id="uploadedProductsFilterContainer" style="display: none;">
+                                <div class="name-filter">
+                                    <span class="material-icons">local_offer</span>
+                                    <div class="searchable-dropdown">
+                                        <input type="text" id="uploadedProductsFilterInput" class="filter-input" placeholder="Uploaded products..." autocomplete="off">
+                                        <div class="filter-dropdown" id="uploadedProductsFilterDropdown" style="display: none;"></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -327,10 +344,44 @@
         </main>
     </div>
     
+    <!-- Upload Product Names Modal (used only on Products tab) -->
+    <div id="uploadProductsModal" class="tr-modal-backdrop" style="display: none;">
+        <div class="tr-modal">
+            <div class="tr-modal-header">
+                <h3>Upload Product Names</h3>
+                <button type="button" class="tr-modal-close" id="uploadProductsClose">
+                    <span class="material-icons">close</span>
+                </button>
+            </div>
+            <div class="tr-modal-body">
+                <p class="tr-modal-help">
+                    Paste one product name per line. We will match these against your <strong>Products</strong> trend data
+                    (by product name / SKU) and let you filter history for one or multiple uploaded products.
+                </p>
+                <textarea id="uploadProductsTextarea" class="tr-modal-textarea" rows="8" placeholder="Example:
+Periodic table 3D
+Naruto trading cards game
+Pokemon cards pack
+Playing cards for kids 6 to 12
+Naruto cards"></textarea>
+            </div>
+            <div class="tr-modal-footer">
+                <button type="button" class="action-btn" id="uploadProductsCancel">Cancel</button>
+                <button type="button" class="action-btn primary" id="uploadProductsApply">
+                    <span class="material-icons">check</span>
+                    <span>Apply Filter</span>
+                </button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Performance Optimization Utilities -->
     <script src="../performance-monitor.js"></script>
     <script src="../virtual-scroll.js"></script>
     <script src="../lazy-chart-loader.js"></script>
+    
+    <!-- Shared browser cache helper (must load before page scripts) -->
+    <script src="../browser_cache.js"></script>
     
     <!-- Load Chart.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>

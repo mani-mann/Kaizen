@@ -41,8 +41,9 @@ class AmazonDashboard {
         this.selectedMetrics = ['totalSales', 'adSales', 'adSpend'];
         
         // Cache configuration
-        this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL
-        this.cacheVersion = 'analytics_v2'; // bump to invalidate stale cached data
+        this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL (kept for compatibility)
+        // Bump cacheVersion whenever KPI logic changes so old cached values are ignored
+        this.cacheVersion = 'analytics_v3';
         
         // Reuse/sync the same date range across pages
         const hasQueryRange = this.applyDateRangeFromQuery();
@@ -56,121 +57,30 @@ class AmazonDashboard {
         this.init();
     }
     
-    // Cache helper methods
-    getNextNoon() {
-        const now = new Date();
-        const noon = new Date(now);
-        noon.setHours(12, 0, 0, 0);
-        
-        // If it's past noon today, set for tomorrow
-        if (now > noon) {
-            noon.setDate(noon.getDate() + 1);
-        }
-        
-        return noon.getTime();
-    }
-    
     getCachedData(cacheKey) {
-        try {
-            const cached = localStorage.getItem(cacheKey);
-            if (!cached) return null;
-            
-            const parsed = JSON.parse(cached);
-            if (parsed.version !== this.cacheVersion) {
-                localStorage.removeItem(cacheKey);
-                return null;
-            }
-            const now = Date.now();
-            const nextNoon = this.getNextNoon();
-            const lastNoon = nextNoon - (24 * 60 * 60 * 1000); // 24 hours before next noon
-            
-            // Check if cache was created after last noon (still valid today)
-            // If it's past 12 PM and cache was created before today's noon, clear it
-            if (parsed.timestamp <= lastNoon) {
-                localStorage.removeItem(cacheKey);
-                console.log('🔄 Cache expired (past 12 PM), cleared:', cacheKey);
-                return null;
-            }
-            
-            // Also check 1 hour TTL as fallback
-            if (now - parsed.timestamp > this.CACHE_TTL) {
-                localStorage.removeItem(cacheKey);
-                return null;
-            }
-            
-            return parsed;
-        } catch (e) {
-            console.warn('Cache read error:', e);
-            return null;
-        }
+        // Delegate to shared BrowserCache, but preserve the original
+        // return format ({ version, data, timestamp, ttlMs }).
+        const payload = (typeof BrowserCache !== 'undefined')
+            ? BrowserCache.get('kw', [cacheKey])
+            : null;
+        if (!payload) return null;
+        // Wrap in an object that looks like the old structure
+        return {
+            version: this.cacheVersion,
+            data: payload,
+            timestamp: Date.now()
+        };
     }
     
     setCachedData(cacheKey, data) {
-        try {
-            const cacheEntry = {
-                version: this.cacheVersion,
-                data: data,
-                timestamp: Date.now()
-            };
-            localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-            const nextRefresh = new Date(this.getNextNoon());
-            console.log(`💾 Cached data for key: ${cacheKey}. Next refresh: ${nextRefresh.toLocaleString()}`);
-        } catch (e) {
-            console.warn('Cache write error:', e);
-            // If storage is full, try to clear old cache entries
-            try {
-                const keys = Object.keys(localStorage);
-                const cacheKeys = keys.filter(k => k.startsWith('business_data_') || k.startsWith('analytics_data_'));
-                if (cacheKeys.length > 10) {
-                    // Remove oldest 5 entries
-                    const entries = cacheKeys.map(k => ({
-                        key: k,
-                        timestamp: JSON.parse(localStorage.getItem(k))?.timestamp || 0
-                    })).sort((a, b) => a.timestamp - b.timestamp);
-                    
-                    entries.slice(0, 5).forEach(e => localStorage.removeItem(e.key));
-                    console.log('🧹 Cleared old cache entries');
-                    
-                    // Retry saving
-                    localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
-                }
-            } catch (e2) {
-                console.warn('Cache cleanup failed:', e2);
-            }
+        if (typeof BrowserCache !== 'undefined') {
+            BrowserCache.set('kw', [cacheKey], data, this.CACHE_TTL);
         }
     }
     
     clearExpiredCache() {
-        try {
-            const keys = Object.keys(localStorage);
-            const cacheKeys = keys.filter(k => k.startsWith('business_data_') || k.startsWith('analytics_data_'));
-            const nextNoon = this.getNextNoon();
-            const lastNoon = nextNoon - (24 * 60 * 60 * 1000);
-            let clearedCount = 0;
-            
-            cacheKeys.forEach(key => {
-                try {
-                    const cached = localStorage.getItem(key);
-                    if (cached) {
-                        const parsed = JSON.parse(cached);
-                        // Clear if cache was created before last noon (expired at 12 PM)
-                        if (parsed.timestamp <= lastNoon) {
-                            localStorage.removeItem(key);
-                            clearedCount++;
-                        }
-                    }
-                } catch (e) {
-                    // Invalid cache entry, remove it
-                    localStorage.removeItem(key);
-                    clearedCount++;
-                }
-            });
-            
-            if (clearedCount > 0) {
-                console.log(`🔄 Cleared ${clearedCount} expired cache entries (past 12 PM refresh)`);
-            }
-        } catch (e) {
-            console.warn('Error clearing expired cache:', e);
+        if (typeof BrowserCache !== 'undefined') {
+            BrowserCache.clearExpired('kw');
         }
     }
 
