@@ -978,8 +978,11 @@ app.get('/api/business-data', async (req, res) => {
     } catch (_) {
       // keep fallback calendarDayCount = activeDayCount
     }
-    // Use the smaller of active vs calendar days to avoid impossible values
-    const dayCount = Math.min(activeDayCount || 0, calendarDayCount || 0) || 0;
+    // For avgSessionsPerDay we want the TRUE calendar average over the selected
+    // date range (e.g. selecting 30 days divides by 30 even if only 3 days have data).
+    // Prefer the calendar day count when available; fall back to active days only
+    // if we couldn't compute a valid calendar range.
+    const dayCount = (calendarDayCount || activeDayCount || 0);
     const kpis = {
       totalSessions: sums.sessions,
       totalPageViews: sums.pageViews,

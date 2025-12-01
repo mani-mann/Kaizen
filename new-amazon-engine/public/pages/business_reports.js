@@ -1612,10 +1612,13 @@ computeKPIsFromRows(rows) {
         }).filter(d => d !== null && d !== 'Unknown');
         const uniqueDatesFromData = new Set(dateStrings).size;
         
-        // For Avg Sessions/Day we want to ignore days that have no data (e.g. "today" when
-        // today's business file hasn't landed yet). We start from the number of unique
-        // business days that actually have rows, but we ALSO cap this at the number of
-        // calendar days in the selected range so it can never exceed the range length.
+        // For Avg Sessions/Day we now want to use the FULL calendar range that the
+        // user selected in the date picker. For example, if the user selects 30 days
+        // and we only have data for 3 of those days, the denominator should still be 30
+        // (so we get a true calendar average, not "active days" only).
+        //
+        // If for some reason the date range is missing/invalid, we fall back to the
+        // number of unique dates that actually have data.
         let totalCalendarDays = uniqueDatesFromData;
         try {
             if (this.state?.dateRange?.start && this.state?.dateRange?.end) {
@@ -1626,7 +1629,8 @@ computeKPIsFromRows(rows) {
                     endD.setHours(23, 59, 59, 999);
                     const diffMs = endD.getTime() - startD.getTime();
                     const calendarDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
-                    if (calendarDays > 0 && totalCalendarDays > calendarDays) {
+                    if (calendarDays > 0) {
+                        // Use calendar day count as the denominator for avg sessions/day
                         totalCalendarDays = calendarDays;
                     }
                 }
@@ -3680,7 +3684,11 @@ generateChartDataFromKPIsWithTimeSeries(period = 'daily') {
     
     sourceRows.forEach(row => {
         const date = new Date(row.date);
-        const dateStr = date.toISOString().split('T')[0];
+        // Use local calendar date (no UTC shift) to avoid off‑by‑one issues
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        const dateStr = `${y}-${m}-${d}`;
         
         if (!dataByDate.has(dateStr)) {
             dataByDate.set(dateStr, {
@@ -3713,8 +3721,52 @@ generateChartDataFromKPIsWithTimeSeries(period = 'daily') {
         }
     });
     
-    // Sort dates and create labels based on period
-    const sortedDates = Array.from(dataByDate.keys()).sort();
+    // Sort dates and create labels based on period.
+    // IMPORTANT: we want the chart to show EVERY calendar day in the
+    // selected range – even if there were no sales (or even no rows)
+    // for that day. In those cases we still want Sessions/Page Views
+    // to appear as 0 instead of the day disappearing from the chart.
+    let sortedDates = Array.from(dataByDate.keys()).sort();
+
+    try {
+        if (this.state?.dateRange?.start && this.state?.dateRange?.end) {
+            const start = new Date(this.state.dateRange.start);
+            const end = new Date(this.state.dateRange.end);
+            if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end >= start) {
+                start.setHours(0, 0, 0, 0);
+                end.setHours(23, 59, 59, 999);
+
+                const fullDates = [];
+                const current = new Date(start);
+                while (current <= end) {
+                    const y = current.getFullYear();
+                    const m = String(current.getMonth() + 1).padStart(2, '0');
+                    const d = String(current.getDate()).padStart(2, '0');
+                    const key = `${y}-${m}-${d}`;
+                    fullDates.push(key);
+
+                    // If this date had no rows at all (for the selected
+                    // product(s)), make sure it exists in the map with
+                    // zero values so Sessions/Page Views show as 0.
+                    if (!dataByDate.has(key)) {
+                        dataByDate.set(key, {
+                            sessions: 0,
+                            pageViews: 0,
+                            unitsOrdered: 0,
+                            sales: 0
+                        });
+                    }
+
+                    current.setDate(current.getDate() + 1);
+                }
+
+                sortedDates = fullDates;
+            }
+        }
+    } catch (_) {
+        // If anything goes wrong, fall back to using only dates that had data
+        sortedDates = Array.from(dataByDate.keys()).sort();
+    }
     
     // Generate labels and data based on period
     let labels = [];
@@ -3864,8 +3916,11 @@ generateChartDataFromKPIsWithTimeSeries(period = 'daily') {
         allMatch: sessionsMatch && pageViewsMatch && unitsMatch && salesMatch
     });
     
-    // CRITICAL: If totals don't match, log the discrepancy and force sync
-    if (!sessionsMatch || !pageViewsMatch || !unitsMatch || !salesMatch) {
+        // CRITICAL: If totals don't match, log the discrepancy and force sync.
+        // IMPORTANT: We only ever scale *Sales (₹)* to match KPI cards so that
+        // we never end up with fractional "count" metrics (Sessions, Page Views,
+        // Units Ordered). Count metrics should always remain whole numbers.
+        if (!sessionsMatch || !pageViewsMatch || !unitsMatch || !salesMatch) {
         console.error('🚨 CHART TOTALS DO NOT MATCH KPI CARDS!', {
             chartTotals,
             kpiTotals,
@@ -3887,6 +3942,12 @@ generateChartDataFromKPIsWithTimeSeries(period = 'daily') {
         if (datasets.length > 0) {
             datasets.forEach(dataset => {
                 if (dataset.data.length > 0) {
+                    // Never scale count metrics – only scale revenue line.
+                    if (dataset.label !== 'Sales (₹)') {
+                        console.log(`📊 Skipping scaling for count metric "${dataset.label}" (kept as whole-number data)`);
+                        return;
+                    }
+
                     const currentTotal = dataset.data.reduce((sum, val) => sum + val, 0);
                     
                     // Map dataset labels to correct KPI totals
@@ -4059,8 +4120,49 @@ generateChartData(period) {
         dayData.sales += row.sales || 0;
     });
     
-    // Sort dates
-    const sortedDates = Array.from(dataByDate.keys()).sort();
+    // Sort dates.
+    // IMPORTANT: For filtered product views we still want to show
+    // *every* calendar day in the selected range, even when the
+    // selected product had no sales that day. Those days should
+    // appear with Sessions/Page Views = 0 instead of disappearing.
+    let sortedDates = Array.from(dataByDate.keys()).sort();
+
+    try {
+        if (this.state?.dateRange?.start && this.state?.dateRange?.end) {
+            const start = new Date(this.state.dateRange.start);
+            const end = new Date(this.state.dateRange.end);
+            if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end >= start) {
+                start.setHours(0, 0, 0, 0);
+                end.setHours(23, 59, 59, 999);
+
+                const fullDates = [];
+                const current = new Date(start);
+                while (current <= end) {
+                    const y = current.getFullYear();
+                    const m = String(current.getMonth() + 1).padStart(2, '0');
+                    const d = String(current.getDate()).padStart(2, '0');
+                    const key = `${y}-${m}-${d}`;
+                    fullDates.push(key);
+
+                    if (!dataByDate.has(key)) {
+                        dataByDate.set(key, {
+                            sessions: 0,
+                            pageViews: 0,
+                            unitsOrdered: 0,
+                            sales: 0
+                        });
+                    }
+
+                    current.setDate(current.getDate() + 1);
+                }
+
+                sortedDates = fullDates;
+            }
+        }
+    } catch (_) {
+        // On any error, gracefully fall back to "dates that had data"
+        sortedDates = Array.from(dataByDate.keys()).sort();
+    }
     
     // Generate labels and data based on period
     let labels = [];
