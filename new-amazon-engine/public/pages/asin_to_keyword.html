@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASIN to Keyword - Amazon India Analytics</title>
+
+    <!-- Resource Hints for Performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Google Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons&display=swap" rel="stylesheet">
+
+    <!-- Shared Keyword UI Styles -->
+    <link rel="stylesheet" href="../keywordStyle.css">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="asin_to_keyword.css">
+
+    <!-- SheetJS for Excel export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <!-- Inline favicon -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231d5a55'/%3E%3Ctext x='50%25' y='52%25' dominant-baseline='middle' text-anchor='middle' font-size='36' font-family='Inter,Arial' fill='%2380d5be'%3EA%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Hover trigger area for sidebar -->
+        <div class="sidebar-trigger"></div>
+
+        <!-- Mobile Menu Button -->
+        <button class="mobile-menu-btn" id="mobileMenuBtn">
+            <span class="material-icons">menu</span>
+        </button>
+
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">A</div>
+                <div class="brand-text">
+                    <div class="brand-title">Amazon</div>
+                    <div class="brand-subtitle">India Analytics</div>
+                </div>
+            </div>
+
+            <nav class="navigation">
+                <a href="../index.html" class="nav-item">
+                    <span class="material-icons">search</span>
+                    <span>AD Reports</span>
+                </a>
+                <a href="business_reports.html" class="nav-item">
+                    <span class="material-icons">bar_chart</span>
+                    <span>Business Reports</span>
+                </a>
+                <a href="trend_reports.html" class="nav-item">
+                    <span class="material-icons">trending_up</span>
+                    <span>Trend Reports</span>
+                </a>
+                <a href="master_report.html" class="nav-item">
+                    <span class="material-icons">inventory_2</span>
+                    <span>Master Report</span>
+                </a>
+                <a href="asin_to_keyword.html" class="nav-item active">
+                    <span class="material-icons">key</span>
+                    <span>ASIN to Keyword</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="page-header">
+                <div class="header-content">
+                    <h1 class="page-title">ASIN to Keyword</h1>
+                    <p class="page-description">Extract keywords from Amazon India ASINs using Helium 10 Cerebro</p>
+                </div>
+                <div class="header-status">
+                    <div class="session-indicator" id="sessionIndicator">
+                        <div class="session-dot disconnected"></div>
+                        <span>Checking...</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Session Status Section (Auto - No Manual Input) -->
+                <section class="status-section" id="statusSection">
+                    <div class="status-card loading" id="sessionStatusCard">
+                        <div class="status-content">
+                            <span class="material-icons status-icon" id="statusIcon">sync</span>
+                            <div class="status-text">
+                                <h3 id="statusTitle">Connecting...</h3>
+                                <p id="statusMessage">Initializing Helium 10 connection</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Upload Section -->
+                <section class="upload-section" id="uploadSection">
+                    <div class="upload-card">
+                        <div class="upload-header">
+                            <span class="material-icons">upload_file</span>
+                            <h2>Upload ASINs</h2>
+                        </div>
+                        <p class="upload-description">
+                            Upload an Excel file with Amazon India ASINs in the first column (no header required).
+                            Each row should contain one ASIN.
+                        </p>
+                        <div class="upload-zone" id="uploadZone">
+                            <span class="material-icons upload-icon">cloud_upload</span>
+                            <p>Drag & drop your Excel file here</p>
+                            <p class="upload-hint">or click to browse</p>
+                            <input type="file" id="fileInput" accept=".xlsx,.xls" hidden>
+                        </div>
+                        <div class="upload-info" id="uploadInfo" style="display: none;">
+                            <span class="material-icons">description</span>
+                            <span id="fileName"></span>
+                            <span id="asinCount"></span>
+                            <button class="btn-icon" id="clearFileBtn">
+                                <span class="material-icons">close</span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Processing Section -->
+                <section class="processing-section" id="processingSection" style="display: none;">
+                    <div class="processing-header">
+                        <div class="processing-title">
+                            <span class="material-icons">sync</span>
+                            <h2>Processing ASINs</h2>
+                        </div>
+                        <div class="processing-controls">
+                            <button class="btn-primary" id="startProcessingBtn">
+                                <span class="material-icons">play_arrow</span>
+                                Start Processing
+                            </button>
+                            <button class="btn-secondary" id="downloadAllBtn" disabled>
+                                <span class="material-icons">download</span>
+                                Download All
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                        </div>
+                        <div class="progress-stats">
+                            <span id="progressText">0 / 0 ASINs processed</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                    </div>
+
+                    <!-- ASIN List Table -->
+                    <div class="table-section">
+                        <div class="table-wrapper">
+                            <table class="data-table" id="asinTable">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 50px;">#</th>
+                                        <th style="width: 150px;">ASIN</th>
+                                        <th>Product Title</th>
+                                        <th style="width: 120px;">Keywords</th>
+                                        <th style="width: 200px;">Status</th>
+                                        <th style="width: 120px;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="asinTableBody">
+                                    <!-- Rows will be populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Navigation Active State Script -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const currentPage = window.location.pathname.split('/').pop() || 'index.html';
+            const navItems = document.querySelectorAll('.nav-item');
+
+            navItems.forEach(item => {
+                const href = item.getAttribute('href');
+                if (href === currentPage || href.includes(currentPage)) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        });
+    </script>
+
+    <!-- Mobile Menu Toggle -->
+    <script>
+        document.getElementById('mobileMenuBtn').addEventListener('click', function() {
+            document.getElementById('sidebar').classList.toggle('open');
+        });
+    </script>
+
+    <!-- Main JavaScript -->
+    <script src="asin_to_keyword.js"></script>
+</body>
+</html>

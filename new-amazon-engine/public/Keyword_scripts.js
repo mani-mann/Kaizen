@@ -196,8 +196,18 @@ class AmazonDashboard {
                 return `${protocol}//${host}`;
             }
             
+            // If on Cloud Run (run.app domain), use relative URLs (same origin)
+            if (host.includes('run.app') || host.includes('cloudrun')) {
+                return '';
+            }
+            
             // If on port 5000 (backend serving frontend), use relative URLs
             if (port === '5000' || (host === 'localhost' && port === '')) {
+                return '';
+            }
+            
+            // If on Cloud Run or production (no port), use relative URLs
+            if (port === '' || host.includes('.run.app') || host.includes('cloud.google.com')) {
                 return '';
             }
             

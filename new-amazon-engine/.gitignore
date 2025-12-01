@@ -12,6 +12,13 @@ backend/.env.local
 backend/.env.development
 backend/.env.production
 
+# Helium 10 Session Files - Contains sensitive tokens
+h10_session.json
+h10_tokens.json
+backend/h10_session.json
+backend/h10_tokens.json
+env.yaml
+
 # Node modules
 node_modules/
 backend/node_modules/

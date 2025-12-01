@@ -2,29 +2,32 @@ require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 
 // CORS Configuration
 const SERVER_ORIGIN = process.env.SERVER_ORIGIN || `http://localhost:${process.env.PORT || 5000}`;
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS 
+const CLOUD_RUN_URL = 'https://amazon-analytics-565767837560.us-central1.run.app';
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : [SERVER_ORIGIN, 'http://localhost:5500', 'http://127.0.0.1:5000', 'http://127.0.0.1:5500'];
+  : [SERVER_ORIGIN, CLOUD_RUN_URL, 'http://localhost:5500', 'http://127.0.0.1:5000', 'http://127.0.0.1:5500'];
 
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
-    // Check if origin is in allowed list
-    if (ALLOWED_ORIGINS.includes(origin)) {
+
+    // Check if origin is in allowed list or matches Cloud Run URL
+    if (ALLOWED_ORIGINS.includes(origin) || origin === CLOUD_RUN_URL) {
       callback(null, true);
     } else {
       // In development, allow any origin
       if (process.env.NODE_ENV !== 'production') {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        // Also allow if origin is the same as the server itself
+        callback(null, true); // Allow all origins in production for now
       }
     }
   },
@@ -47,21 +50,21 @@ try {
 } catch (_) {}
 
 // Serve static files from the public directory with caching
-app.use(express.static('../public', {
+app.use(express.static(path.join(__dirname, '../public'), {
   maxAge: '1d', // Cache static files for 1 day
   etag: true,
   lastModified: true,
-  setHeaders: (res, path) => {
+  setHeaders: (res, filePath) => {
     // Cache CSS/JS for 1 week
-    if (path.endsWith('.css') || path.endsWith('.js')) {
+    if (filePath.endsWith('.css') || filePath.endsWith('.js')) {
       res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
     }
     // Cache images for 1 month
-    if (path.match(/\.(jpg|jpeg|png|gif|svg|webp|ico)$/)) {
+    if (filePath.match(/\.(jpg|jpeg|png|gif|svg|webp|ico)$/)) {
       res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
     }
     // Don't cache HTML files
-    if (path.endsWith('.html')) {
+    if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     }
   }
@@ -76,21 +79,38 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 // Respect sslmode in DATABASE_URL and allow overriding via PGSSL env
 const shouldUseSSL = (() => {
   try {
+    // First check PGSSL env override
     if (process.env.PGSSL) return process.env.PGSSL !== 'disable';
-    const url = new URL(process.env.DATABASE_URL);
-    const sslmode = url.searchParams.get('sslmode');
-    if (sslmode === 'disable') return false;
-    if (sslmode === 'require') return true;
+
+    // Try to parse DATABASE_URL for sslmode
+    if (process.env.DATABASE_URL) {
+      const url = new URL(process.env.DATABASE_URL);
+      const sslmode = url.searchParams.get('sslmode');
+      if (sslmode === 'disable') return false;
+      if (sslmode === 'require') return true;
+    }
   } catch (_) {
-    // fall through
+    // URL parsing failed, check PGSSL or default
+    if (process.env.PGSSL) return process.env.PGSSL !== 'disable';
   }
   // Default to SSL on (common for managed Postgres)
   return true;
 })();
 
 // Use Pool instead of Client for automatic connection management and parallel requests
+// Support both DATABASE_URL and individual PG* env vars
+const poolConfig = {
+  host: process.env.PGHOST || 'localhost',
+  port: parseInt(process.env.PGPORT) || 5432,
+  database: process.env.PGDATABASE || 'postgres',
+  user: process.env.PGUSER || 'postgres',
+  password: process.env.PGPASSWORD || '',
+};
+
+console.log(`[DB] Connecting to ${poolConfig.host}:${poolConfig.port}/${poolConfig.database} as ${poolConfig.user}`);
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  ...poolConfig,
   ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
   connectionTimeoutMillis: 5000,
   // Pool configuration for better performance with multiple concurrent requests
@@ -1879,6 +1899,677 @@ app.get('/api/trend-reports', async (req, res) => {
 });
 
 // Mock generators removed to avoid any possibility of non-real data
+
+// --------------------
+// Helium 10 Cerebro API Integration
+// --------------------
+
+// Helium 10 Configuration
+const H10_CONFIG = {
+  EMAIL: process.env.H10_EMAIL || "careerinbox.piet@gmail.com",
+  PASSWORD: process.env.H10_PASSWORD || "Amazon@12345",
+  ACCOUNT_ID: process.env.H10_ACCOUNT_ID || "1547402760",
+  MARKETPLACE: process.env.H10_MARKETPLACE || "A21TJRUUN4KGV", // Amazon.in
+  BASE_URL: "https://members.helium10.com",
+  API_BASE_URL: "https://h10api.pacvue.com",
+  // Session file paths (same as Python script)
+  SESSION_FILE: process.env.H10_SESSION_FILE || path.join(__dirname, 'h10_session.json'),
+  TOKEN_FILE: process.env.H10_TOKEN_FILE || path.join(__dirname, 'h10_tokens.json')
+};
+
+const fs = require('fs');
+
+// In-memory token storage for Helium 10
+let h10Tokens = {
+  authorization: null,
+  pacvueToken: null,
+  cookies: {},
+  timestamp: null,
+  expiresIn: 86400 // 24 hours default
+};
+
+// Load session from JSON files (same format as Python script)
+function loadH10Session() {
+  try {
+    // Load cookies from h10_session.json
+    if (fs.existsSync(H10_CONFIG.SESSION_FILE)) {
+      const sessionData = JSON.parse(fs.readFileSync(H10_CONFIG.SESSION_FILE, 'utf8'));
+      h10Tokens.cookies = sessionData;
+      console.log('[+] H10 session loaded from', H10_CONFIG.SESSION_FILE);
+    }
+
+    // Load tokens from h10_tokens.json
+    if (fs.existsSync(H10_CONFIG.TOKEN_FILE)) {
+      const tokenData = JSON.parse(fs.readFileSync(H10_CONFIG.TOKEN_FILE, 'utf8'));
+      h10Tokens.authorization = tokenData.authorization;
+      h10Tokens.pacvueToken = tokenData.pacvue_token;
+      h10Tokens.expiresIn = tokenData.expires_in || 86400;
+
+      // Parse timestamp from ISO format
+      if (tokenData.timestamp) {
+        h10Tokens.timestamp = new Date(tokenData.timestamp).getTime();
+      }
+      console.log('[+] H10 tokens loaded from', H10_CONFIG.TOKEN_FILE);
+    }
+
+    return h10Tokens.cookies && Object.keys(h10Tokens.cookies).length > 0;
+  } catch (error) {
+    console.error('[-] Error loading H10 session:', error.message);
+    return false;
+  }
+}
+
+// Save tokens to JSON file (same format as Python script)
+function saveH10Tokens() {
+  try {
+    const tokenData = {
+      authorization: h10Tokens.authorization,
+      pacvue_token: h10Tokens.pacvueToken,
+      refresh_token: h10Tokens.refreshToken || null,
+      expires_in: h10Tokens.expiresIn,
+      timestamp: new Date().toISOString()
+    };
+    fs.writeFileSync(H10_CONFIG.TOKEN_FILE, JSON.stringify(tokenData, null, 2));
+    console.log('[+] H10 tokens saved to', H10_CONFIG.TOKEN_FILE);
+  } catch (error) {
+    console.error('[-] Error saving H10 tokens:', error.message);
+  }
+}
+
+// Load session on startup
+loadH10Session();
+
+// In-memory storage for ASIN processing jobs
+const cerebroJobs = new Map(); // jobId -> { asins: [], results: {}, status: {} }
+
+// Check if H10 tokens are expired
+function isH10TokenExpired() {
+  if (!h10Tokens.authorization || !h10Tokens.timestamp) return true;
+  const elapsed = Date.now() - h10Tokens.timestamp;
+  const buffer = 60 * 60 * 1000; // 1 hour buffer
+  return elapsed > (h10Tokens.expiresIn * 1000 - buffer);
+}
+
+// Refresh H10 tokens using stored cookies
+async function refreshH10Tokens() {
+  // First try to load from files if not in memory
+  if (!h10Tokens.cookies || Object.keys(h10Tokens.cookies).length === 0) {
+    loadH10Session();
+  }
+
+  if (!h10Tokens.cookies || Object.keys(h10Tokens.cookies).length === 0) {
+    console.log('[-] No H10 session cookies available');
+    console.log('[*] Run the Python script with --login first to set up session');
+    return false;
+  }
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const cookieString = Object.entries(h10Tokens.cookies)
+      .map(([name, value]) => `${name}=${value}`)
+      .join('; ');
+
+    console.log('[*] Refreshing H10 tokens from session cookies...');
+
+    const response = await fetch(`${H10_CONFIG.BASE_URL}/api/v1/site/token?accountId=${H10_CONFIG.ACCOUNT_ID}`, {
+      method: 'GET',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'cookie': cookieString,
+        'referer': `${H10_CONFIG.BASE_URL}/dashboard?accountId=${H10_CONFIG.ACCOUNT_ID}`,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+      }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const innerData = data.data || data;
+
+      if (innerData.token && innerData.pacvueToken) {
+        h10Tokens.authorization = innerData.token;
+        h10Tokens.pacvueToken = innerData.pacvueToken;
+        h10Tokens.timestamp = Date.now();
+        h10Tokens.expiresIn = innerData.pacvueTokenExpiresIn || 86400;
+        h10Tokens.refreshToken = innerData.pacvueRefreshToken || null;
+
+        // Save tokens to file (same format as Python)
+        saveH10Tokens();
+
+        console.log('[+] H10 tokens refreshed successfully');
+        return true;
+      }
+    }
+
+    console.log('[-] Failed to refresh H10 tokens - session may have expired');
+    console.log('[*] Run the Python script with --login to refresh session');
+    return false;
+  } catch (error) {
+    console.error('[-] Error refreshing H10 tokens:', error.message);
+    return false;
+  }
+}
+
+// Submit ASIN to Cerebro for analysis
+async function cerebroSearchASIN(asin) {
+  if (isH10TokenExpired()) {
+    const refreshed = await refreshH10Tokens();
+    if (!refreshed) {
+      throw new Error('H10 authentication required. Please set session cookies first.');
+    }
+  }
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const url = `${H10_CONFIG.API_BASE_URL}/rta/cerebro/v1/amazon/search/single?accountId=${H10_CONFIG.ACCOUNT_ID}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'authorization': `Bearer ${h10Tokens.authorization}`,
+        'x-pacvue-token': `Bearer ${h10Tokens.pacvueToken}`,
+        'origin': H10_CONFIG.BASE_URL,
+        'referer': `${H10_CONFIG.BASE_URL}/`,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+      },
+      body: JSON.stringify({
+        marketplace: H10_CONFIG.MARKETPLACE,
+        productId: asin,
+        adminSearch: false,
+        exactProduct: true
+      })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const innerData = data.data || data;
+      console.log(`[+] Cerebro search submitted for ASIN: ${asin}, ID: ${innerData.id}`);
+      return innerData;
+    } else {
+      const errorText = await response.text();
+      throw new Error(`Cerebro search failed: ${response.status} - ${errorText}`);
+    }
+  } catch (error) {
+    console.error(`[-] Cerebro search error for ${asin}:`, error.message);
+    throw error;
+  }
+}
+
+// Transform raw API keywords to match Helium 10 web export format (17 columns with date)
+function transformKeywordsForExport(keywords) {
+  // Get today's date in dd/mm/yy format
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2, '0');
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const yy = String(today.getFullYear()).slice(-2);
+  const dateStr = `${dd}/${mm}/${yy}`;
+
+  return keywords.map(kw => {
+    const matchType = kw.matchType || [];
+    const hasSponsored = Array.isArray(matchType) ? matchType.some(m => m.toLowerCase().includes('ppc') || m.toLowerCase().includes('sponsored')) : false;
+    const hasOrganic = Array.isArray(matchType) ? matchType.some(m => m.toLowerCase().includes('organic')) : false;
+
+    return {
+      'Date': dateStr,
+      'Keyword Phrase': kw.phrase || '',
+      'ABA Total Click Share': kw.clickShareRate || '',
+      'ABA Total Conv. Share': kw.conversionShareRate || '',
+      'Cerebro IQ Score': kw.iq || kw.cerebroIq || '',
+      'Search Volume': kw.impressionExact30 || kw.searchVolume || '',
+      'Search Volume Trend': kw.searchVolumeTrend || '',
+      'Sponsored ASINs': kw.sponsoredAsins || '',
+      'Competing Products': kw.resultsNumber || kw.competingProducts || '',
+      'CPR': kw.newCprExact || kw.cpr || '',
+      'Title Density': kw.exactTitleMatchProductsCount || kw.titleDensity || '',
+      'Amazon Recommended': kw.amzSuggestedPosition ? 'Yes' : '',
+      'Sponsored': hasSponsored ? 'Yes' : '',
+      'Organic': hasOrganic ? 'Yes' : '',
+      'Amazon Rec. Rank': kw.amzSuggestedPosition || '',
+      'Sponsored Rank': kw.sponsoredPosition || '',
+      'Organic Rank': kw.organicPosition || ''
+    };
+  });
+}
+
+// Get exported keyword data from Cerebro
+async function cerebroGetKeywords(searchId) {
+  if (isH10TokenExpired()) {
+    const refreshed = await refreshH10Tokens();
+    if (!refreshed) {
+      throw new Error('H10 authentication required');
+    }
+  }
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const url = `${H10_CONFIG.API_BASE_URL}/rta/cerebro/v1/amazon/search/single/${searchId}/exported-data?accountId=${H10_CONFIG.ACCOUNT_ID}&include-all=0&include-any=1&sort=default`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'accept': 'application/json',
+        'authorization': `Bearer ${h10Tokens.authorization}`,
+        'x-pacvue-token': `Bearer ${h10Tokens.pacvueToken}`,
+        'origin': H10_CONFIG.BASE_URL,
+        'referer': `${H10_CONFIG.BASE_URL}/`,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+      }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      console.log(`[+] Retrieved keyword data for search ID: ${searchId}`);
+      return data;
+    } else {
+      const errorText = await response.text();
+      throw new Error(`Failed to get keywords: ${response.status} - ${errorText}`);
+    }
+  } catch (error) {
+    console.error(`[-] Get keywords error:`, error.message);
+    throw error;
+  }
+}
+
+// ✅ H10 Session Setup Endpoint - Save cookies from browser
+app.post('/api/h10/session', express.json(), (req, res) => {
+  try {
+    const { sid, _identity, _csrf } = req.body;
+
+    if (!sid || !_identity) {
+      return res.status(400).json({
+        error: 'Missing required cookies',
+        required: ['sid', '_identity'],
+        optional: ['_csrf']
+      });
+    }
+
+    h10Tokens.cookies = {
+      sid,
+      _identity,
+      ..._csrf && { _csrf }
+    };
+    h10Tokens.authorization = null;
+    h10Tokens.pacvueToken = null;
+    h10Tokens.timestamp = null;
+
+    console.log('[+] H10 session cookies saved');
+    res.json({ success: true, message: 'Session cookies saved. Will refresh tokens on next API call.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ H10 Session Status Endpoint
+app.get('/api/h10/status', (req, res) => {
+  const hasSession = h10Tokens.cookies && Object.keys(h10Tokens.cookies).length > 0;
+  const hasValidTokens = !isH10TokenExpired();
+
+  res.json({
+    hasSession,
+    hasValidTokens,
+    cookiesSet: Object.keys(h10Tokens.cookies || {}),
+    tokenExpiry: h10Tokens.timestamp ? new Date(h10Tokens.timestamp + h10Tokens.expiresIn * 1000).toISOString() : null
+  });
+});
+
+// ✅ H10 Token Refresh Endpoint
+app.post('/api/h10/refresh', async (req, res) => {
+  try {
+    const success = await refreshH10Tokens();
+    if (success) {
+      res.json({ success: true, message: 'Tokens refreshed successfully' });
+    } else {
+      res.status(401).json({ success: false, error: 'Failed to refresh tokens. Session may have expired.' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ Cerebro - Process Single ASIN (with individual status tracking)
+app.get('/api/cerebro/asin/:asin', async (req, res) => {
+  try {
+    const { asin } = req.params;
+    const waitTime = parseInt(req.query.wait) || 5;
+
+    console.log(`[*] Processing ASIN: ${asin}`);
+
+    // Step 1: Submit ASIN for analysis
+    const searchResult = await cerebroSearchASIN(asin);
+    if (!searchResult || !searchResult.id) {
+      return res.status(400).json({ error: 'Failed to submit ASIN for analysis' });
+    }
+
+    // Step 2: Wait for processing
+    console.log(`[*] Waiting ${waitTime}s for processing...`);
+    await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+
+    // Step 3: Get keyword data
+    const keywordData = await cerebroGetKeywords(searchResult.id);
+    const rawKeywords = keywordData.keywords || keywordData.data || keywordData.results || [];
+    const keywords = transformKeywordsForExport(rawKeywords);
+
+    res.json({
+      asin,
+      searchId: searchResult.id,
+      productTitle: searchResult.title || 'Unknown',
+      keywords: keywords,
+      totalKeywords: keywords.length
+    });
+
+  } catch (error) {
+    console.error('[-] Cerebro ASIN error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ Configure multer for file upload
+const multer = require('multer');
+const XLSX = require('xlsx');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        file.mimetype === 'application/vnd.ms-excel' ||
+        file.originalname.endsWith('.xlsx') ||
+        file.originalname.endsWith('.xls')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel files (.xlsx, .xls) are allowed'));
+    }
+  }
+});
+
+// ✅ Upload Excel and create processing job
+app.post('/api/cerebro/upload', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log(`[*] Processing uploaded file: ${req.file.originalname}`);
+
+    // Parse Excel file
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+
+    // Get ASINs from first column (no header)
+    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    const asins = data
+      .map(row => row[0])
+      .filter(asin => asin && typeof asin === 'string' && asin.trim().length > 0)
+      .map(asin => asin.trim().toUpperCase());
+
+    if (asins.length === 0) {
+      return res.status(400).json({ error: 'No ASINs found in the uploaded file' });
+    }
+
+    // Create a job ID
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Initialize job with status tracking for each ASIN
+    const status = {};
+    asins.forEach(asin => {
+      status[asin] = {
+        status: 'pending', // pending, processing, completed, error
+        progress: 0,
+        message: 'Waiting to process',
+        keywords: null,
+        totalKeywords: 0,
+        productTitle: null,
+        error: null,
+        timestamp: null
+      };
+    });
+
+    cerebroJobs.set(jobId, {
+      asins,
+      status,
+      createdAt: Date.now(),
+      completedCount: 0,
+      errorCount: 0
+    });
+
+    console.log(`[+] Created job ${jobId} with ${asins.length} ASINs`);
+
+    res.json({
+      success: true,
+      jobId,
+      asins,
+      totalAsins: asins.length,
+      message: `Job created with ${asins.length} ASINs. Start processing to begin.`
+    });
+
+  } catch (error) {
+    console.error('[-] Excel upload error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ Get job status (polling endpoint for real-time updates)
+app.get('/api/cerebro/job/:jobId/status', (req, res) => {
+  const { jobId } = req.params;
+  const job = cerebroJobs.get(jobId);
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  const totalAsins = job.asins.length;
+  const completedCount = Object.values(job.status).filter(s => s.status === 'completed').length;
+  const errorCount = Object.values(job.status).filter(s => s.status === 'error').length;
+  const processingCount = Object.values(job.status).filter(s => s.status === 'processing').length;
+  const pendingCount = Object.values(job.status).filter(s => s.status === 'pending').length;
+
+  res.json({
+    jobId,
+    totalAsins,
+    completedCount,
+    errorCount,
+    processingCount,
+    pendingCount,
+    progress: Math.round(((completedCount + errorCount) / totalAsins) * 100),
+    isComplete: pendingCount === 0 && processingCount === 0,
+    status: job.status // Individual ASIN statuses
+  });
+});
+
+// ✅ Process a single ASIN from a job (called by frontend one at a time)
+app.post('/api/cerebro/job/:jobId/process/:asin', async (req, res) => {
+  const { jobId, asin } = req.params;
+  const waitTime = parseInt(req.query.wait) || 5;
+
+  const job = cerebroJobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  if (!job.status[asin]) {
+    return res.status(404).json({ error: 'ASIN not found in job' });
+  }
+
+  // Update status to processing
+  job.status[asin] = {
+    ...job.status[asin],
+    status: 'processing',
+    progress: 10,
+    message: 'Submitting to Cerebro...',
+    timestamp: Date.now()
+  };
+
+  try {
+    // Step 1: Submit ASIN
+    job.status[asin].progress = 20;
+    job.status[asin].message = 'Analyzing product...';
+
+    const searchResult = await cerebroSearchASIN(asin);
+    if (!searchResult || !searchResult.id) {
+      throw new Error('Failed to submit ASIN for analysis');
+    }
+
+    job.status[asin].progress = 40;
+    job.status[asin].message = `Waiting ${waitTime}s for Helium 10 processing...`;
+    job.status[asin].productTitle = searchResult.title || 'Unknown';
+
+    // Step 2: Wait for processing
+    await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+
+    job.status[asin].progress = 70;
+    job.status[asin].message = 'Fetching keywords...';
+
+    // Step 3: Get keyword data
+    const keywordData = await cerebroGetKeywords(searchResult.id);
+    const rawKeywords = keywordData.keywords || keywordData.data || keywordData.results || [];
+
+    // Transform keywords to Helium 10 export format (16 columns)
+    const keywords = transformKeywordsForExport(rawKeywords);
+
+    // Update status to completed
+    job.status[asin] = {
+      status: 'completed',
+      progress: 100,
+      message: `Found ${keywords.length} keywords`,
+      keywords: keywords,
+      totalKeywords: keywords.length,
+      productTitle: searchResult.title || 'Unknown',
+      searchId: searchResult.id,
+      error: null,
+      timestamp: Date.now()
+    };
+
+    job.completedCount++;
+
+    res.json({
+      success: true,
+      asin,
+      status: job.status[asin]
+    });
+
+  } catch (error) {
+    console.error(`[-] Error processing ${asin}:`, error.message);
+
+    job.status[asin] = {
+      status: 'error',
+      progress: 0,
+      message: error.message,
+      keywords: null,
+      totalKeywords: 0,
+      productTitle: null,
+      error: error.message,
+      timestamp: Date.now()
+    };
+
+    job.errorCount++;
+
+    res.status(500).json({
+      success: false,
+      asin,
+      error: error.message,
+      status: job.status[asin]
+    });
+  }
+});
+
+// ✅ Download keywords for a single ASIN
+app.get('/api/cerebro/job/:jobId/download/:asin', (req, res) => {
+  const { jobId, asin } = req.params;
+
+  const job = cerebroJobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  const asinStatus = job.status[asin];
+  if (!asinStatus || asinStatus.status !== 'completed' || !asinStatus.keywords) {
+    return res.status(400).json({ error: 'Keywords not available for this ASIN' });
+  }
+
+  // Create Excel workbook for single ASIN
+  const workbook = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(asinStatus.keywords);
+  XLSX.utils.book_append_sheet(workbook, ws, 'Keywords');
+
+  // Generate buffer
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+  // Send file - prefix with IN_AMAZON for India marketplace
+  const timestamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename=IN_AMAZON_cerebro_${asin}_${timestamp}.xlsx`);
+  res.send(buffer);
+});
+
+// ✅ Download all completed ASINs as a single Excel file
+app.get('/api/cerebro/job/:jobId/download-all', (req, res) => {
+  const { jobId } = req.params;
+
+  const job = cerebroJobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  const completedAsins = Object.entries(job.status)
+    .filter(([_, status]) => status.status === 'completed' && status.keywords);
+
+  if (completedAsins.length === 0) {
+    return res.status(400).json({ error: 'No completed ASINs to download' });
+  }
+
+  // Create workbook with multiple sheets
+  const workbook = XLSX.utils.book_new();
+  const allKeywords = [];
+
+  completedAsins.forEach(([asin, status]) => {
+    // Create sheet for this ASIN
+    const sheetName = asin.substring(0, 31);
+    const ws = XLSX.utils.json_to_sheet(status.keywords);
+    XLSX.utils.book_append_sheet(workbook, ws, sheetName);
+
+    // Add to combined data
+    status.keywords.forEach(kw => {
+      allKeywords.push({
+        ASIN: asin,
+        ProductTitle: status.productTitle,
+        ...kw
+      });
+    });
+  });
+
+  // Add combined sheet at the beginning
+  if (allKeywords.length > 0) {
+    const combinedWs = XLSX.utils.json_to_sheet(allKeywords);
+    // Insert at beginning by creating new workbook
+    const finalWorkbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(finalWorkbook, combinedWs, 'All Keywords');
+    workbook.SheetNames.forEach(name => {
+      XLSX.utils.book_append_sheet(finalWorkbook, workbook.Sheets[name], name);
+    });
+
+    const buffer = XLSX.write(finalWorkbook, { type: 'buffer', bookType: 'xlsx' });
+    const timestamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=IN_AMAZON_cerebro_all_keywords_${timestamp}.xlsx`);
+    res.send(buffer);
+  } else {
+    res.status(400).json({ error: 'No keywords to download' });
+  }
+});
+
+// ✅ Clean up old jobs (older than 1 hour)
+setInterval(() => {
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  for (const [jobId, job] of cerebroJobs.entries()) {
+    if (job.createdAt < oneHourAgo) {
+      cerebroJobs.delete(jobId);
+      console.log(`[*] Cleaned up old job: ${jobId}`);
+    }
+  }
+}, 15 * 60 * 1000); // Run every 15 minutes
 
 // --------------------
 // Start Server

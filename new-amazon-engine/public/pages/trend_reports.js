@@ -992,6 +992,9 @@ class TrendReports {
                 apiBase = `${location.protocol}//${location.hostname}`;
             } else if (location.port === '5000' || (location.hostname === 'localhost' && location.port === '')) {
                 apiBase = '';
+            } else if (location.port === '' || location.hostname.includes('.run.app') || location.hostname.includes('cloud.google.com')) {
+                // If on Cloud Run or production (no port), use relative URLs
+                apiBase = '';
             } else {
                 apiBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
             }

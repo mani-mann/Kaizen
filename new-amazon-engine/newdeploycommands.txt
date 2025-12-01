@@ -1,0 +1,75 @@
+# Amazon Analytics - Deployment Commands
+# Updated: 2025-12-01
+# Version: v32-cors-fix (with Helium 10 ASIN to Keyword integration + CORS fix for production)
+
+# ===========================================
+# STEP 1: Build Docker Image
+# ===========================================
+cd Kaizen\new-amazon-engine
+docker build -t us-central1-docker.pkg.dev/telegram-bot-integrator-459515/amazon-engine/amazon-analytics:v32-cors-fix .
+
+# ===========================================
+# STEP 2: Push to Google Container Registry
+# ===========================================
+docker push us-central1-docker.pkg.dev/telegram-bot-integrator-459515/amazon-engine/amazon-analytics:v32-cors-fix
+
+# ===========================================
+# STEP 3: Create env.yaml file (temporary)
+# ===========================================
+# Create file: env.yaml with content:
+# PGHOST: "/cloudsql/telegram-bot-integrator-459515:us-central1:keyword"
+# PGPORT: "5432"
+# PGDATABASE: "postgres"
+# PGUSER: "postgres"
+# PGPASSWORD: "Z;Y~l{k{Th\\FR.,l"
+# NODE_ENV: "production"
+# PGSSL: "disable"
+
+# ===========================================
+# STEP 4: Deploy to Cloud Run
+# ===========================================
+gcloud run deploy amazon-analytics --image us-central1-docker.pkg.dev/telegram-bot-integrator-459515/amazon-engine/amazon-analytics:v32-cors-fix --region us-central1 --platform managed --allow-unauthenticated --add-cloudsql-instances "telegram-bot-integrator-459515:us-central1:keyword" --env-vars-file env.yaml --memory=1Gi --cpu=1
+
+# ===========================================
+# STEP 5: Clean up (delete env.yaml after deploy)
+# ===========================================
+rm env.yaml
+
+# ===========================================
+# SERVICE URL
+# ===========================================
+# Main: https://amazon-analytics-565767837560.us-central1.run.app
+# ASIN to Keyword: https://amazon-analytics-565767837560.us-central1.run.app/pages/asin_to_keyword.html
+
+# ===========================================
+# CONFIGURATION DETAILS
+# ===========================================
+# Project: telegram-bot-integrator-459515
+# Region: us-central1
+# Repository: amazon-engine
+# Image: amazon-analytics
+# Cloud SQL Instance: telegram-bot-integrator-459515:us-central1:keyword
+# Database: postgres
+# Memory: 1Gi
+# CPU: 1
+
+# ===========================================
+# DATABASE CONNECTION (using individual PG* vars)
+# ===========================================
+# Changed from DATABASE_URL to individual variables because
+# the password contains special characters that break URL parsing.
+#
+# PGHOST: Cloud SQL socket path for Cloud Run
+# PGPORT: 5432
+# PGDATABASE: postgres
+# PGUSER: postgres
+# PGPASSWORD: (contains special chars: ; ~ { } \ , )
+# PGSSL: disable (Cloud SQL uses socket, not SSL)
+
+# ===========================================
+# HELIUM 10 SESSION (ASIN to Keyword feature)
+# ===========================================
+# Session cookies are stored in: backend/h10_session.json
+# Valid for 30 days from login
+# Tokens auto-refresh every 24 hours
+# Marketplace: Amazon India (A21TJRUUN4KGV)

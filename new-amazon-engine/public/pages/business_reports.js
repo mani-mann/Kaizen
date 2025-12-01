@@ -246,12 +246,29 @@ getApiBase() {
         const host = (typeof location !== 'undefined') ? location.hostname : '';
         const port = (typeof location !== 'undefined') ? location.port : '';
         const protocol = (typeof location !== 'undefined') ? location.protocol : 'http:';
-        // Always prefer same-origin backend unless explicitly on localhost:5000
-        if (host === 'localhost' && (port === '5000' || port === '')) {
+        
+        // If accessing through ngrok, use the ngrok URL for backend
+        if (host.includes('ngrok-free.app') || host.includes('ngrok.io')) {
+            return `${protocol}//${host}`;
+        }
+        
+        // If on Cloud Run (run.app domain), use relative URLs (same origin)
+        if (host.includes('run.app') || host.includes('cloudrun')) {
             return '';
         }
-        // Use same origin for deployed environments (run.app, vercel, etc.)
-        return `${protocol}//${host}${port ? `:${port}` : ''}`;
+        
+        // If on port 5000 (backend serving frontend), use relative URLs
+        if (port === '5000' || (host === 'localhost' && port === '')) {
+            return '';
+        }
+        
+        // If on Cloud Run or production (no port), use relative URLs
+        if (port === '' || host.includes('.run.app') || host.includes('cloud.google.com')) {
+            return '';
+        }
+        
+        // If on Live Server (port 5500) or other ports, connect to backend on port 5000
+        return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
     } catch (_) {
         return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
     }
