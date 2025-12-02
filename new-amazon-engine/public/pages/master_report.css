@@ -743,18 +743,34 @@
 }
 
 .product-image-section {
-    text-align: center;
     margin-bottom: 24px;
 }
 
-.product-image-large {
-    width: 200px;
-    height: 200px;
-    object-fit: cover;
+.product-image-wrapper {
+    width: 100%;
+    max-width: 280px;
+    margin: 0 auto;
     border-radius: 12px;
+    background: white;
+    padding: 12px;
     border: 1px solid var(--border-primary);
+    box-shadow: var(--shadow-sm);
+    text-align: center;
+}
+
+.product-image-large {
+    max-width: 100%;
+    width: 100%;
+    height: auto;
+    max-height: 240px;
+    object-fit: contain;
+    border-radius: 8px;
+    border: none;
     cursor: pointer;
     transition: transform var(--transition-fast);
+    background: var(--bg-secondary);
+    display: block;
+    margin: 0 auto;
 }
 
 .product-image-large:hover {
@@ -762,8 +778,9 @@
 }
 
 .drawer-image-placeholder {
-    width: 200px;
-    height: 200px;
+    width: 100%;
+    max-width: 280px;
+    min-height: 240px;
     background: linear-gradient(135deg, #1d5a55 0%, #80d5be 100%);
     border-radius: 12px;
     border: 1px solid var(--border-primary);
@@ -856,9 +873,12 @@
 
 .modal-content {
     position: relative;
-    max-width: 90vw;
-    max-height: 90vh;
+    max-width: 70vw;
+    max-height: 80vh;
     z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .modal-close {
@@ -872,6 +892,7 @@
     padding: 8px;
     border-radius: 50%;
     transition: all var(--transition-fast);
+    z-index: 2;
 }
 
 .modal-close:hover {
@@ -880,7 +901,10 @@
 
 .modal-image {
     max-width: 100%;
-    max-height: 100%;
+    max-height: 80vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
     border-radius: 8px;
     box-shadow: var(--shadow-lg);
 }
@@ -1026,8 +1050,16 @@
         padding: 16px;
     }
     
+    .product-image-wrapper {
+        max-width: 220px;
+    }
+    
     .product-image-large {
-        width: 150px;
-        height: 150px;
+        max-height: 180px;
+    }
+    
+    .drawer-image-placeholder {
+        max-width: 220px;
+        min-height: 180px;
     }
 }

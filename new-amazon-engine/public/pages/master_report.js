@@ -590,24 +590,21 @@ class MasterReport {
         if (drawerImage) {
             const drawerImageContainer = drawerImage.parentElement;
             
-            // Remove any existing placeholder
-            const existingPlaceholder = drawerImageContainer.querySelector('.drawer-image-placeholder');
-            if (existingPlaceholder) {
-                existingPlaceholder.remove();
-            }
-            
             // Clear the image container
             drawerImageContainer.innerHTML = '';
+            
+            // Create wrapper
+            const wrapper = document.createElement('div');
+            wrapper.className = 'product-image-wrapper';
             
             // Create image or placeholder
             if (product.imageUrl) {
                 const img = document.createElement('img');
                 img.id = 'drawerImage';
-                img.className = 'drawer-image';
+                img.className = 'product-image-large';
                 img.src = product.imageUrl;
                 img.alt = product.productTitle;
                 img.title = product.productTitle;
-                img.style.display = 'block';
                 img.addEventListener('error', () => {
                     img.remove();
                     const placeholder = document.createElement('div');
@@ -617,12 +614,12 @@ class MasterReport {
                     placeholder.addEventListener('click', () => {
                         window.open(`https://www.amazon.in/dp/${product.parentAsin}`, '_blank');
                     });
-                    drawerImageContainer.appendChild(placeholder);
+                    wrapper.appendChild(placeholder);
                 });
                 img.addEventListener('click', () => {
                     this.openImageModal(product.imageUrl, product.productTitle);
                 });
-                drawerImageContainer.appendChild(img);
+                wrapper.appendChild(img);
             } else {
                 const placeholder = document.createElement('div');
                 placeholder.className = 'drawer-image-placeholder';
@@ -631,8 +628,10 @@ class MasterReport {
                 placeholder.addEventListener('click', () => {
                     window.open(`https://www.amazon.in/dp/${product.parentAsin}`, '_blank');
                 });
-                drawerImageContainer.appendChild(placeholder);
+                wrapper.appendChild(placeholder);
             }
+            
+            drawerImageContainer.appendChild(wrapper);
         }
         if (drawerSku) drawerSku.textContent = product.sku;
         if (drawerAsin) {
