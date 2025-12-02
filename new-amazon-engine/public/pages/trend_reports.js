@@ -1974,18 +1974,30 @@ class TrendReports {
         }
         
         // Search-terms: ALWAYS recompute DAILY TOTAL rows from individual data
-        // so the chart uses the same Ad metrics as the table (spend, sales, clicks, etc.).
+        // so the chart mirrors the table (including business sessions/pageviews).
         if (this.currentCategory === 'search-terms') {
             const totalsByDate = {};
+            const businessTotalsByDate = {};
             const uploadFilterActive =
                 Array.isArray(this.uploadedProductNames) &&
                 this.uploadedProductNames.length > 0 &&
                 this.selectedUploadedPatterns &&
                 this.selectedUploadedPatterns.size > 0;
 
+            // Capture business sessions/pageviews from existing DAILY TOTAL rows (if any)
             data.forEach(item => {
                 const nm = String(item.name || '');
-                if (nm.includes('📊')) return; // skip any existing helper total rows
+                if (!nm.includes('📊')) return;
+                const key = this.normalizeDateKey(item.date);
+                businessTotalsByDate[key] = {
+                    sessions: Number(item.sessions || 0),
+                    pageviews: Number(item.pageviews || 0)
+                };
+            });
+
+            data.forEach(item => {
+                const nm = String(item.name || '');
+                if (nm.includes('📊')) return; // skip helper totals
                 const key = this.normalizeDateKey(item.date);
                 if (!totalsByDate[key]) {
                     totalsByDate[key] = {
@@ -1995,8 +2007,7 @@ class TrendReports {
                         sessions: 0,
                         pageviews: 0,
                         orders: 0,
-                        totalSalesBusiness: 0,
-                        totalSalesSubset: 0
+                        totalSalesBusiness: 0
                     };
                 }
                 const bucket = totalsByDate[key];
@@ -2007,25 +2018,21 @@ class TrendReports {
                 bucket.pageviews += Number(item.pageviews || 0);
                 bucket.orders += Number(item.orders || 0);
 
-                // Business-level Total Sales (overall account): same value repeated on each row.
-                // Use the maximum per date to avoid multiplying by number of terms.
                 const dayTotalSales = Number(item.totalSales || 0);
-                const existingBiz = Number(bucket.totalSalesBusiness || 0);
-                bucket.totalSalesBusiness = Math.max(existingBiz, dayTotalSales);
-
-                // Subset Total Sales: when an upload filter is active, treat this as
-                // the sum of ad Sales for the selected terms.
-                bucket.totalSalesSubset += Number(item.sales || 0);
+                bucket.totalSalesBusiness = Math.max(bucket.totalSalesBusiness || 0, dayTotalSales);
             });
 
             data = [];
             Object.entries(totalsByDate).forEach(([key, t]) => {
+                const biz = businessTotalsByDate[key] || { sessions: t.sessions, pageviews: t.pageviews };
+                const sessions = biz.sessions;
+                const pageviews = biz.pageviews;
+                const totalSalesForMetric = t.totalSalesBusiness || 0;
                 const cpc = t.clicks > 0 ? t.spend / t.clicks : 0;
                 const roas = t.spend > 0 ? t.sales / t.spend : 0;
                 const acos = t.sales > 0 ? (t.spend / t.sales) * 100 : 0;
-                const totalSalesForMetric = uploadFilterActive ? t.totalSalesSubset : t.totalSalesBusiness;
                 const tcos = totalSalesForMetric > 0 ? (t.spend / totalSalesForMetric) * 100 : 0;
-                const ctr = t.clicks > 0 && t.sessions > 0 ? (t.clicks / t.sessions) * 100 : 0;
+                const ctr = sessions > 0 ? (t.clicks / sessions) * 100 : 0;
                 data.push({
                     date: key,
                     category: this.currentCategory,
@@ -2034,8 +2041,8 @@ class TrendReports {
                     spend: t.spend,
                     sales: t.sales,
                     clicks: t.clicks,
-                    sessions: t.sessions,
-                    pageviews: t.pageviews,
+                    sessions,
+                    pageviews,
                     orders: t.orders,
                     totalSales: totalSalesForMetric,
                     cpc, roas, acos, tcos, ctr
@@ -2230,6 +2237,9 @@ class TrendReports {
 
     groupDataByTimePeriod(data, metric) {
         const groups = {};
+        const isAcosMetric = metric === 'acos';
+        const isTcosMetric = metric === 'tcos';
+        const isRoasMetric = metric === 'roas';
         
         data.forEach(item => {
             let key;
@@ -2251,10 +2261,19 @@ class TrendReports {
             }
             
             if (!groups[key]) {
-                groups[key] = { values: [], count: 0, dateRange: key };
+                groups[key] = { values: [], count: 0, dateRange: key, sumSpend: 0, sumSales: 0, sumTotalSales: 0 };
             }
-            groups[key].values.push(item[metric]);
+            const value = Number(item[metric] || 0);
+            groups[key].values.push(value);
             groups[key].count++;
+            if (isAcosMetric || isRoasMetric) {
+                groups[key].sumSpend += Number(item.spend || 0);
+                groups[key].sumSales += Number(item.sales || 0);
+            }
+            if (isTcosMetric) {
+                groups[key].sumSpend += Number(item.spend || 0);
+                groups[key].sumTotalSales += Number(item.totalSales || 0);
+            }
         });
         
         // Build sorted keys; for daily with date range, include all dates in range
@@ -2307,10 +2326,20 @@ class TrendReports {
             if (metric === 'sessions' && this.currentCategory !== 'products') {
                 return group.values.length ? Math.max(...group.values.map(v => Number(v)||0)) : 0;
             }
-            if (metric === 'roas') {
-                // Estimate ROAS via available fields when we grouped by value only
-                // Fallback to averaged value
-                return group.count > 0 ? (group.values.reduce((s,v)=>s+(Number(v)||0),0)/group.count) : 0;
+            if (isTcosMetric) {
+                const spend = group.sumSpend || 0;
+                const totalSales = group.sumTotalSales || 0;
+                return totalSales > 0 ? (spend / totalSales) * 100 : 0;
+            }
+            if (isAcosMetric) {
+                const spend = group.sumSpend || 0;
+                const sales = group.sumSales || 0;
+                return sales > 0 ? (spend / sales) * 100 : 0;
+            }
+            if (isRoasMetric) {
+                const spend = group.sumSpend || 0;
+                const sales = group.sumSales || 0;
+                return spend > 0 ? (sales / spend) : 0;
             }
             return group.count > 0 ? (group.values.reduce((sum, val) => sum + (Number(val)||0), 0) / group.count) : 0;
         });
@@ -4193,6 +4222,12 @@ class TrendReports {
             // Build a pivoted dataset exactly like the table (current tab + filters)
             const pivot = this.buildPivotDataset();
             
+            if (!pivot || !pivot.headers || !pivot.rows) {
+                console.error('❌ Export Error: Invalid pivot data');
+                alert('No data available for export. Please ensure you have data loaded.');
+                return;
+            }
+            
             // Debug: Log export data
             console.log(`🔍 Export Debug - ${format.toUpperCase()}:`, {
                 category: this.currentCategory,
@@ -4201,12 +4236,6 @@ class TrendReports {
                 sampleHeaders: pivot.headers.slice(0, 5),
                 sampleRows: pivot.rows.slice(0, 2)
             });
-            
-            if (!pivot || !pivot.headers || !pivot.rows) {
-                console.error('❌ Export Error: Invalid pivot data');
-                alert('No data available for export. Please ensure you have data loaded.');
-                return;
-            }
             
             if (format === 'csv') {
                 this.downloadCSVPivot(pivot.headers, pivot.rows);
@@ -4263,6 +4292,19 @@ class TrendReports {
             selectedName: this.selectedName,
             dataBeforeFilter: data.length
         });
+
+        const uploadFilterActiveNoMatches =
+            this.currentCategory === 'search-terms' &&
+            Array.isArray(this.uploadedProductNames) &&
+            this.uploadedProductNames.length > 0 &&
+            this.selectedUploadedPatterns &&
+            this.selectedUploadedPatterns.size > 0 &&
+            this.uploadFilterHasMatches === false;
+
+        if (uploadFilterActiveNoMatches) {
+            console.log('🎯 Export: Upload filter has no matches, aborting export.');
+            return null;
+        }
         
         // Name filter like table (keeps DAILY TOTAL rows regardless)
         if (this.selectedNames && this.selectedNames.size > 0) {
