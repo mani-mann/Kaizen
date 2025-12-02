@@ -577,7 +577,7 @@ class MasterReport {
     openDetailDrawer(product) {
         const drawer = document.getElementById('detailDrawer');
         const drawerTitle = document.getElementById('drawerTitle');
-        const drawerImage = document.getElementById('drawerImage');
+        const drawerImageContainer = document.querySelector('.product-image-section');
         const drawerSku = document.getElementById('drawerSku');
         const drawerAsin = document.getElementById('drawerAsin');
         const drawerProductTitle = document.getElementById('drawerProductTitle');
@@ -587,9 +587,7 @@ class MasterReport {
         
         // Update drawer content
         if (drawerTitle) drawerTitle.textContent = 'Product Details';
-        if (drawerImage) {
-            const drawerImageContainer = drawerImage.parentElement;
-            
+        if (drawerImageContainer) {
             // Clear the image container
             drawerImageContainer.innerHTML = '';
             
