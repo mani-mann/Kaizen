@@ -3162,8 +3162,10 @@ class AmazonDashboard {
                 aggregatedData.sort((a, b) => b.spend - a.spend);
             }
             
-            // Show ALL data for keywords view (no pagination limit)
-            rowsSource = aggregatedData;
+            // Apply client-side pagination for keywords view so "Rows per page"
+            // and page navigation actually change the visible slice of data.
+            const paginatedData = this.getPaginatedDataFromSource(aggregatedData);
+            rowsSource = paginatedData;
             
             // Reset to original headers for keywords view
             tableHead.innerHTML = `
@@ -5046,14 +5048,92 @@ class AmazonDashboard {
     async exportToExcel() {
         try {
             this.showNotification('Preparing Excel export...', 'info');
-            
-            const payload = await this.fetchAnalytics(this.dateRange.start, this.dateRange.end);
-            if (!payload || !payload.rows) {
-                this.showNotification('No data available for export', 'warning');
-                return;
+
+            // Prefer already-loaded full table data so we don't hit any backend page limits.
+            // currentData holds ALL rows for the selected date range (client-side pagination only).
+            let baseRows = Array.isArray(this.currentData) && this.currentData.length > 0
+                ? this.currentData
+                : null;
+
+            // Fallback: if for some reason currentData is empty (e.g., export called before load),
+            // fetch data from backend once.
+            if (!baseRows) {
+                const payload = await this.fetchAnalytics(this.dateRange.start, this.dateRange.end);
+                if (!payload || !Array.isArray(payload.rows) || payload.rows.length === 0) {
+                    this.showNotification('No data available for export', 'warning');
+                    return;
+                }
+                baseRows = payload.rows;
             }
 
-            const exportData = payload.rows.map(row => {
+            // For the keywords tab, export data grouped by Date + Search Term
+            // (so each row represents a specific search term on a specific date).
+            let rowsForExport;
+            if (this.currentTab === 'keywords') {
+                const source = (this.filteredData && this.filteredData.length > 0)
+                    ? this.filteredData
+                    : baseRows;
+
+                // Group by date + search term so we can show a real Date column
+                const byDateAndSearchTerm = new Map();
+                for (const item of source) {
+                    const dateKey = item.date || item.report_date || '';
+                    const key = item.searchTerm || 'Unknown Search Term';
+                    const combinedKey = `${dateKey}||${key}`;
+                    if (!byDateAndSearchTerm.has(combinedKey)) {
+                        byDateAndSearchTerm.set(combinedKey, {
+                            date: dateKey,
+                            searchTerm: key,
+                            keywords: new Set(),
+                            campaignName: new Set(),
+                            spend: 0,
+                            sales: 0,
+                            clicks: 0,
+                            impressions: 0,
+                            purchases: 0
+                        });
+                    }
+                    const agg = byDateAndSearchTerm.get(combinedKey);
+                    agg.keywords.add(item.keywords || 'Unknown');
+                    agg.campaignName.add(item.campaignName || 'Unknown Campaign');
+                    agg.spend += Number(item.spend || 0);
+                    agg.sales += Number(item.sales || 0);
+                    agg.clicks += Number(item.clicks || 0);
+                    agg.impressions += Number(item.impressions || 0);
+                    agg.purchases += Number(item.purchases || 0);
+                }
+
+                rowsForExport = Array.from(byDateAndSearchTerm.values()).map(item => ({
+                    date: item.date,
+                    searchTerm: item.searchTerm,
+                    keywords: Array.from(item.keywords).join(', '),
+                    campaignName: Array.from(item.campaignName).join(', '),
+                    spend: item.spend,
+                    sales: item.sales,
+                    clicks: item.clicks,
+                    impressions: item.impressions,
+                    purchases: item.purchases
+                }));
+
+                // IMPORTANT: For Excel export we always sort ONLY by Date (desc),
+                // regardless of any column sorting applied in the UI. Within the
+                // same date, sort alphabetically by Search Term for stable order.
+                rowsForExport.sort((a, b) => {
+                    const ad = a.date || '';
+                    const bd = b.date || '';
+                    if (ad !== bd) return ad < bd ? 1 : -1; // newer dates first
+                    const at = String(a.searchTerm || '').toLowerCase();
+                    const bt = String(b.searchTerm || '').toLowerCase();
+                    if (at < bt) return -1;
+                    if (at > bt) return 1;
+                    return 0;
+                });
+            } else {
+                // Other tabs: export the raw rows
+                rowsForExport = baseRows;
+            }
+
+            const exportData = rowsForExport.map(row => {
                 const spend = parseFloat(row.spend || row.cost || 0);
                 const sales = parseFloat(row.sales || row.sales_1d || 0);
                 const clicks = parseInt(row.clicks || 0);
@@ -5063,8 +5143,9 @@ class AmazonDashboard {
                 const roas = spend > 0 ? sales / spend : 0;
                 const cpc = clicks > 0 ? spend / clicks : 0;
                 const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-
+                
                 return {
+                    // For keywords export, Date now reflects the specific row's date
                     'Date': row.date || row.report_date || '',
                     'Search Term': row.searchTerm || row.search_term || 'Unknown',
                     'Keywords': row.keywords || row.keyword_info || row.match_type || '',

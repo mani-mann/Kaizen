@@ -230,13 +230,14 @@ async function reconnectDbIfNeeded() {
 // --------------------
 // Fetch Keyword Data with Date Filtering
 // --------------------
-async function fetchKeywordData(startDate = null, endDate = null, page = 1, limit = 500) {
+// NOTE: Passing a null/undefined limit will fetch ALL rows for the range with no LIMIT/OFFSET.
+// The page parameter is only used when limit is provided.
+async function fetchKeywordData(startDate = null, endDate = null, page = null, limit = null) {
   try {
     const startTime = Date.now();
     console.log(`🔍 fetchKeywordData called with: { startDate: '${startDate}', endDate: '${endDate}', page: ${page}, limit: ${limit} }`);
-    
-    // Calculate offset for pagination
-    const offset = (page - 1) * limit;
+    const usePaging = Number.isFinite(limit) && Number.isFinite(page);
+    const offset = usePaging ? (page - 1) * limit : 0;
     
     // Select only the columns used by the frontend
     let query = `SELECT search_term, keyword_info, match_type, campaign_name, cost, sales_1d, clicks, impressions, purchases_1d, report_date
@@ -249,13 +250,20 @@ async function fetchKeywordData(startDate = null, endDate = null, page = 1, limi
       query += ` WHERE report_date >= $${paramIndex}::date AND report_date <= $${paramIndex + 1}::date`;
       params = [startDate, endDate];
       paramIndex += 2;
-      // Fetch paginated data with proper sorting
-      query += ` ORDER BY report_date DESC, cost DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-      params.push(limit, offset);
+      // Always sort by most recent + highest spend
+      query += ` ORDER BY report_date DESC, cost DESC`;
+      // Apply LIMIT/OFFSET only when paging is requested
+      if (usePaging) {
+        query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, offset);
+      }
     } else {
-      // When no date range specified, fetch paginated data
-      query += ` ORDER BY report_date DESC, cost DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-      params = [limit, offset];
+      // When no date range specified, fetch recent data (optionally paginated)
+      query += ` ORDER BY report_date DESC, cost DESC`;
+      if (usePaging) {
+        query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params = [limit, offset];
+      }
     }
     
     console.log(`🔍 Executing keyword query with params:`, params);
@@ -1053,8 +1061,10 @@ app.get('/api/analytics', async (req, res) => {
     const { start, end, page } = req.query;
     const kpisOnly = String(req.query.kpisOnly).toLowerCase() === 'true';
     const initialLoad = String(req.query.initialLoad).toLowerCase() === 'true';
-    const currentPage = parseInt(page) || 1; // Default to page 1
-    const pageLimit = 500; // 500 rows per page
+    // Pagination parameters are accepted for backwards compatibility, but
+    // we now fetch ALL rows for the selected range in a single query.
+    const currentPage = parseInt(page) || 1;
+    const pageLimit = null; // No per-page limit – return all rows
     
     console.log(`⏱️ Date range requested: ${start || 'ALL'} to ${end || 'ALL'}`);
     if (kpisOnly) {
@@ -1210,16 +1220,14 @@ app.get('/api/analytics', async (req, res) => {
     
     let totalRowsCount = null;
     
-    // Always use pagination for keyword data (500 rows per page)
-    // Get total count and paginated keyword data in parallel
-    const [keywordDataResult, totalCountResult, businessDataResult] = await Promise.all([
-      fetchKeywordData(startDate, effectiveEndDate || endDate, currentPage, pageLimit),
-      getKeywordDataCount(startDate, effectiveEndDate || endDate),
+    // Fetch ALL keyword rows for the selected date range (no LIMIT/OFFSET)
+    const [keywordDataResult, businessDataResult] = await Promise.all([
+      fetchKeywordData(startDate, effectiveEndDate || endDate, null, null),
       fetchBusinessData(startDate, effectiveEndDate || endDate)
     ]);
     
     keywordData = keywordDataResult || [];
-    totalRowsCount = totalCountResult || 0;
+    totalRowsCount = keywordData.length;
     businessDataForChart = businessDataResult || [];
     businessDataForKPIs = businessDataResult || [];
     
@@ -1328,10 +1336,10 @@ app.get('/api/analytics', async (req, res) => {
     // Get data range for date picker via lightweight query
     const dataRange = await getGlobalDateRange();
     
-    // Calculate pagination info
-    const totalPages = Math.ceil((totalRowsCount || 0) / pageLimit);
-    const hasNextPage = currentPage < totalPages;
-    const hasPrevPage = currentPage > 1;
+    // Pagination metadata (single page containing all rows)
+    const totalPages = 1;
+    const hasNextPage = false;
+    const hasPrevPage = false;
     
     // Prepare response data
     const responseData = {
@@ -1348,14 +1356,14 @@ app.get('/api/analytics', async (req, res) => {
       },
       dataRange,
       pagination: {
-        currentPage: currentPage,
-        pageLimit: pageLimit,
-        totalRows: totalRowsCount || 0,
+        currentPage: 1,
+        pageLimit: totalRowsCount || (rows ? rows.length : 0),
+        totalRows: totalRowsCount || (rows ? rows.length : 0),
         totalPages: totalPages,
         hasNextPage: hasNextPage,
         hasPrevPage: hasPrevPage
       },
-      totalRows: totalRowsCount !== null ? totalRowsCount : (rows ? rows.length : 0)
+      totalRows: totalRowsCount || (rows ? rows.length : 0)
     };
     
     // Cache the result
@@ -1366,7 +1374,7 @@ app.get('/api/analytics', async (req, res) => {
     
     // Determine mode for summary
     const mode = kpisOnly ? 'KPIs-only (fast path)' : 
-                 `PAGINATED (page ${currentPage} of ${totalPages}, ${pageLimit} rows per page)`;
+                 'FULL (no pagination limit – all rows in single response)';
     
     // Summary log at the end
     console.log(`\n⏱️ ========== REQUEST SUMMARY ==========`);

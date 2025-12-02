@@ -52,6 +52,8 @@ class TrendReports {
         this.uploadedProductNames = [];
         this.uploadedProductNameSet = new Set();
         this.selectedUploadedPatterns = new Set();
+        // Tracks whether the current upload filter matched any rows
+        this.uploadFilterHasMatches = true;
         
         this.init();
     }
@@ -217,20 +219,21 @@ class TrendReports {
         const uploadApply = document.getElementById('uploadProductsApply');
         if (uploadBtn && uploadModal && uploadClose && uploadCancel && uploadApply) {
             const openUploadModal = async () => {
-                // Always work on Search Terms tab for uploads
-                if (this.currentCategory !== 'search-terms') {
-                    try {
-                        await this.switchCategory('search-terms');
-                    } catch (_) {
-                        // If switching fails, don't open modal
-                        return;
-                    }
-                }
+                // Open the modal immediately
                 uploadModal.style.display = 'flex';
                 const textarea = document.getElementById('uploadProductsTextarea');
                 if (textarea) {
                     textarea.value = this.uploadedProductNames.join('\n');
                     textarea.focus();
+                }
+                // Then switch to the Search Terms tab in the background so
+                // the data and filters are correct while keeping the modal open.
+                if (this.currentCategory !== 'search-terms') {
+                    try {
+                        await this.switchCategory('search-terms');
+                    } catch (_) {
+                        // Ignore errors – the modal is already open
+                    }
                 }
             };
             const closeUploadModal = () => {
@@ -1314,25 +1317,32 @@ class TrendReports {
 
         const patterns = Array.from(this.selectedUploadedPatterns);
         const matches = new Set();
+        const normalize = (value) => (
+            (value || '')
+                .toString()
+                .trim()
+                .replace(/\s+/g, ' ')
+                .toLowerCase()
+        );
+        const normalizedPatterns = new Set(
+            patterns
+                .map(p => normalize(p))
+                .filter(Boolean)
+        );
 
         (this.currentData || []).forEach(item => {
             if (item.category !== 'search-terms') return;
-            const displayName = (item.displayName || '').toString();
-            const rawName = (item.name || '').toString();
-            const lowerDisplay = displayName.toLowerCase();
-            const lowerRaw = rawName.toLowerCase();
-            for (const p of patterns) {
-                if (!p) continue;
-                if (lowerDisplay.includes(p) || lowerRaw.includes(p)) {
-                    // Prefer displayName (SKU) when present; otherwise fall back to raw name
-                    const key = displayName || rawName;
-                    if (key) {
-                        matches.add(key);
-                    }
-                    break;
-                }
+            const term = (item.displayName || item.name || '').toString();
+            const normalizedTerm = normalize(term);
+            if (!normalizedTerm) return;
+            if (normalizedPatterns.has(normalizedTerm)) {
+                matches.add(term);
             }
         });
+
+        // Remember whether this upload produced any matches so that
+        // chart/table can show "no data" instead of all data.
+        this.uploadFilterHasMatches = matches.size > 0;
 
         // Update selectedNames only for Search Terms, leave other categories intact
         this.selectedNames.clear();
@@ -1826,7 +1836,7 @@ class TrendReports {
         // Apply name filter to chart data (same as table) - FILTER HAS PRIORITY
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
-        // Apply name filter if multi-select has items; keep DAILY TOTAL rows
+        // Apply name filter if multi-select has items; keep true DAILY TOTAL rows
         if (this.selectedNames && this.selectedNames.size > 0) {
             console.log('🔍 Chart: Applying name filter for campaigns:', {
                 selectedNames: Array.from(this.selectedNames),
@@ -1836,7 +1846,9 @@ class TrendReports {
             
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
-                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                // Treat only our explicit DAILY TOTAL helper rows as totals
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
                 return isTotal || this.selectedNames.has(nm);
             });
             
@@ -1852,7 +1864,8 @@ class TrendReports {
         if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
-                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
                 if (isTotal) return true; // Keep DAILY TOTAL rows
                 const campaignName = item.campaignName || item.campaign_name || '';
                 return campaignName && this.selectedCampaigns.has(campaignName);
@@ -1863,6 +1876,19 @@ class TrendReports {
         // name/campaign filters are applied, so chart + table stay in sync.
         data = this.filterDataByDateRange(data);
         console.log('📅 Chart: Date range applied, data length after:', data.length);
+
+        // If an upload filter is active but produced NO matches, force chart to show no data.
+        const uploadFilterActiveNoMatches =
+            this.currentCategory === 'search-terms' &&
+            Array.isArray(this.uploadedProductNames) &&
+            this.uploadedProductNames.length > 0 &&
+            this.selectedUploadedPatterns &&
+            this.selectedUploadedPatterns.size > 0 &&
+            this.uploadFilterHasMatches === false;
+        if (uploadFilterActiveNoMatches) {
+            data = [];
+            console.log('🎯 Chart: Upload filter has no matches, using empty dataset.');
+        }
 
         // Campaigns: avoid double-counting in the chart when DAILY TOTAL rows
         // are present (backend provides both individuals and totals). If totals
@@ -3367,11 +3393,13 @@ class TrendReports {
             currentCategory: this.currentCategory
         });
         
-        // Apply name filter if multi-select has items; keep DAILY TOTAL rows
+        // Apply name filter if multi-select has items; keep true DAILY TOTAL rows
         if (this.selectedNames && this.selectedNames.size > 0) {
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
-                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                // Treat only our explicit DAILY TOTAL helper rows as totals
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
                 return isTotal || this.selectedNames.has(nm);
             });
         } else if (this.selectedName) {
@@ -3382,7 +3410,8 @@ class TrendReports {
         if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
-                const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
                 if (isTotal) return true; // Keep DAILY TOTAL rows
                 const campaignName = item.campaignName || item.campaign_name || '';
                 return campaignName && this.selectedCampaigns.has(campaignName);
@@ -3402,7 +3431,19 @@ class TrendReports {
             dataLengthBefore: data.length
         });
         
-        if (!hasFilterApplied) {
+        // If an upload filter is active but produced NO matches, force table to show no data.
+        const uploadFilterActiveNoMatches =
+            this.currentCategory === 'search-terms' &&
+            Array.isArray(this.uploadedProductNames) &&
+            this.uploadedProductNames.length > 0 &&
+            this.selectedUploadedPatterns &&
+            this.selectedUploadedPatterns.size > 0 &&
+            this.uploadFilterHasMatches === false;
+
+        if (uploadFilterActiveNoMatches) {
+            data = [];
+            console.log('🎯 Table: Upload filter has no matches, showing empty table.');
+        } else if (!hasFilterApplied) {
             // Apply date range filter only when no filter is applied
             data = this.filterDataByDateRange(data);
             console.log('📅 Table: Date range applied, data length after:', data.length);
