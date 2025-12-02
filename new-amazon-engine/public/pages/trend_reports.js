@@ -55,6 +55,11 @@ class TrendReports {
         // Tracks whether the current upload filter matched any rows
         this.uploadFilterHasMatches = true;
         
+        // Client-side data cache to avoid reloading on tab switches
+        this.dataCache = new Map();
+        this.cacheTimestamps = new Map();
+        this.CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+        
         this.init();
     }
 
@@ -777,11 +782,20 @@ class TrendReports {
         }
     }
 
+    clearCache() {
+        this.dataCache.clear();
+        this.cacheTimestamps.clear();
+        console.log('🧹 Client-side cache cleared');
+    }
+
     async confirmDateRange() {
         if (this.currentDateRange.start && this.currentDateRange.end) {
             this.updateDateDisplay();
             this.hasManualDateSelection = true;
             this.persistGlobalDateRange();
+            
+            // Clear cache when date range changes
+            this.clearCache();
             
             try {
                 // Fetch new data with the selected date range
@@ -963,6 +977,9 @@ class TrendReports {
     }
 
     async fetchDataFromDatabase() {
+        // Set loading flag at the start
+        this.isLoadingData = true;
+        
         try {
             // Build query parameters
             const params = new URLSearchParams({
@@ -982,6 +999,23 @@ class TrendReports {
             if (this.currentDateRange.start && this.currentDateRange.end) {
                 params.append('start', this.formatLocalDate(this.currentDateRange.start));
                 params.append('end', this.formatLocalDate(this.currentDateRange.end));
+            }
+            
+            // Create cache key based on category, period, and date range
+            const cacheKey = `${this.currentCategory}_${this.currentTimePeriod}_${this.currentDateRange.start || 'all'}_${this.currentDateRange.end || 'all'}`;
+            
+            // Check if we have valid cached data
+            const now = Date.now();
+            const cachedTimestamp = this.cacheTimestamps.get(cacheKey);
+            if (cachedTimestamp && (now - cachedTimestamp) < this.CACHE_TTL) {
+                const cachedData = this.dataCache.get(cacheKey);
+                if (cachedData) {
+                    console.log('📦 Using cached data for:', cacheKey);
+                    this.currentData = cachedData;
+                    this.filteredData = [...this.currentData];
+                    this.isLoadingData = false; // Clear loading flag for cached data
+                    return;
+                }
             }
 
             // For campaigns, always request both individual and aggregated data
@@ -1238,6 +1272,12 @@ class TrendReports {
                 this.currentData = normalized;
                 this.filteredData = [...normalized];
                 
+                // Cache the fetched data
+                const cacheKey = `${this.currentCategory}_${this.currentTimePeriod}_${this.currentDateRange.start || 'all'}_${this.currentDateRange.end || 'all'}`;
+                this.dataCache.set(cacheKey, [...normalized]);
+                this.cacheTimestamps.set(cacheKey, Date.now());
+                console.log('💾 Cached data for:', cacheKey);
+                
                 // Debug: Log data after processing
                 console.log(`🔍 Data Processing Debug - ${result.category}:`, {
                     originalData: result.data.length,
@@ -1264,6 +1304,9 @@ class TrendReports {
             
         } catch (error) {
             throw error; // Re-throw to trigger fallback
+        } finally {
+            // Always clear loading flag when done
+            this.isLoadingData = false;
         }
     }
 
@@ -1304,6 +1347,10 @@ class TrendReports {
      */
     applyUploadedProductFilter() {
         if (this.currentCategory !== 'search-terms') return;
+        
+        // Data loading check is now handled at checkbox click level
+        console.log('✅ Applying upload filter...');
+        
         if (!this.selectedUploadedPatterns || this.selectedUploadedPatterns.size === 0) {
             // No uploaded patterns selected -> clear name selection for this category
             this.selectedNames.clear();
@@ -2406,6 +2453,14 @@ class TrendReports {
                 option.addEventListener('mousedown', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    
+                    // Check if data is still loading before allowing checkbox change
+                    if (this.isLoadingData) {
+                        console.log('⏳ Data still loading, showing alert...');
+                        alert('⏳ Please wait! Search Terms data is still loading...\n\nThe filter will be available once the data is ready.');
+                        return; // Don't change checkbox or apply filter
+                    }
+                    
                     const checkbox = option.querySelector('input[type="checkbox"]');
                     const nowChecked = !checkbox.checked;
                     checkbox.checked = nowChecked;
