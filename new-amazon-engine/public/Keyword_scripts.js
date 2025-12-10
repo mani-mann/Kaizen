@@ -40,6 +40,9 @@ class AmazonDashboard {
         // Show spend/sales by default; percentages and business metrics are opt-in
         this.selectedMetrics = ['totalSales', 'adSales', 'adSpend'];
         
+        // Chart view mode: 'simple' or 'normalized'
+        this.chartViewMode = 'normalized';
+        
         // Cache configuration
         this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL (kept for compatibility)
         // Bump cacheVersion whenever KPI logic changes so old cached values are ignored
@@ -895,6 +898,13 @@ class AmazonDashboard {
                     this.addMobileNavigation();
                 }, 100);
             }
+        });
+
+        // Chart view mode selector (Simple vs Normalized)
+        document.getElementById('chartViewMode')?.addEventListener('change', (e) => {
+            this.chartViewMode = e.target.value;
+            const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
+            this.updateChart(currentPeriod);
         });
 
         // Metric selector functionality
@@ -3658,6 +3668,12 @@ class AmazonDashboard {
         // Generate chart data using ALL database data, not selected date range
         const chartData = this.generateChartData(period);
         
+        // Check if normalized view is selected
+        if (this.chartViewMode === 'normalized') {
+            this.buildNormalizedChart(chartData, period);
+            return;
+        }
+        
         // Only create chart if we have data
         if (!chartData.labels || chartData.labels.length === 0) {
             return;
@@ -3856,6 +3872,160 @@ class AmazonDashboard {
             }, 100);
         }
         
+    }
+    
+    // Build normalized (0-1) chart where each metric is scaled to its own maximum
+    buildNormalizedChart(chartData, period) {
+        const canvas = document.getElementById('performanceChart');
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Only create chart if we have data
+        if (!chartData.labels || chartData.labels.length === 0) {
+            return;
+        }
+        
+        const isMobile = window.innerWidth <= 768;
+        
+        // Define all metrics with their data arrays and colors
+        const allMetrics = {
+            totalSales: { label: 'Total Sales', data: chartData.totalSales, color: '#10b981' },
+            adSales: { label: 'Ad Sales', data: chartData.adSales, color: '#f59e0b' },
+            adSpend: { label: 'Ad Spend', data: chartData.adSpend, color: '#3b82f6' },
+            acos: { label: 'ACOS (%)', data: chartData.acos, color: '#ef4444' },
+            tcos: { label: 'TCOS (%)', data: chartData.tacos, color: '#8b5cf6' },
+            sessions: { label: 'Total Sessions', data: chartData.sessions, color: '#06b6d4' },
+            pageViews: { label: 'Page Views', data: chartData.pageViews, color: '#84cc16' },
+            unitsOrdered: { label: 'Units Ordered', data: chartData.unitsOrdered, color: '#6366f1' },
+            conversionRate: { label: 'Conversion Rate (%)', data: chartData.conversionRate, color: '#ec4899' }
+        };
+        
+        // Default visible metrics (show these by default, others hidden)
+        const defaultVisible = ['totalSales', 'adSales', 'adSpend'];
+        
+        // Build datasets for ALL metrics, normalized to each metric's own max
+        const datasets = [];
+        const metricKeys = Object.keys(allMetrics);
+        
+        metricKeys.forEach(metricKey => {
+            const metric = allMetrics[metricKey];
+            if (!metric || !metric.data || metric.data.length === 0) return;
+            
+            // Calculate max for this metric
+            const maxVal = Math.max(...metric.data.filter(v => v != null && !isNaN(v)), 1);
+            const normalizedData = metric.data.map(v => (v != null && !isNaN(v)) ? v / maxVal : 0);
+            
+            datasets.push({
+                label: metric.label,
+                data: normalizedData,
+                borderColor: metric.color,
+                backgroundColor: metric.color + '20',
+                borderWidth: 2,
+                pointRadius: isMobile ? 3 : 2,
+                pointHoverRadius: isMobile ? 6 : 5,
+                tension: 0.4,
+                fill: false,
+                metricKey: metricKey,
+                originalData: metric.data,
+                maxValue: maxVal,
+                hidden: !defaultVisible.includes(metricKey) // Hide non-default metrics initially
+            });
+        });
+        
+        this.chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: chartData.labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 750, easing: 'easeInOutQuart' },
+                interaction: { mode: 'index', intersect: false },
+                elements: {
+                    line: { tension: 0.4, borderJoinStyle: 'round', borderCapStyle: 'round' },
+                    point: { radius: isMobile ? 3 : 2, hoverRadius: isMobile ? 6 : 5 }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        onClick: (e, legendItem, legend) => {
+                            // Simple toggle - just show/hide on click
+                            const chart = legend.chart;
+                            const index = legendItem.datasetIndex;
+                            chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
+                            chart.update();
+                        },
+                        labels: {
+                            color: '#6c757d',
+                            usePointStyle: true,
+                            padding: isMobile ? 15 : 20,
+                            font: { size: isMobile ? 12 : 11 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff',
+                        borderColor: '#80d5be',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        displayColors: true,
+                        callbacks: {
+                            title: (context) => context[0].label,
+                            label: (context) => {
+                                const dataset = context.dataset;
+                                const normalizedVal = context.parsed.y;
+                                const originalVal = dataset.originalData?.[context.dataIndex] || 0;
+                                const metricKey = dataset.metricKey;
+                                
+                                // Format original value based on metric type
+                                let formattedOriginal;
+                                if (metricKey === 'acos' || metricKey === 'tcos' || metricKey === 'conversionRate') {
+                                    formattedOriginal = originalVal.toFixed(1) + '%';
+                                } else if (metricKey === 'sessions' || metricKey === 'pageViews' || metricKey === 'unitsOrdered') {
+                                    formattedOriginal = originalVal.toLocaleString('en-IN');
+                                } else {
+                                    formattedOriginal = '₹' + originalVal.toLocaleString('en-IN');
+                                }
+                                
+                                return `${dataset.label}: ${normalizedVal.toFixed(2)} (${formattedOriginal})`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#f8f9fa', drawBorder: false },
+                        ticks: { color: '#6c757d', font: { size: isMobile ? 12 : 11 } }
+                    },
+                    y: {
+                        min: 0,
+                        max: 1,
+                        grid: { color: '#f8f9fa', drawBorder: false },
+                        ticks: {
+                            color: '#6c757d',
+                            font: { size: isMobile ? 12 : 11 },
+                            callback: (value) => value.toFixed(1)
+                        },
+                        title: {
+                            display: true,
+                            text: 'Normalized (0-1)',
+                            color: '#6c757d',
+                            font: { size: 11 }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Add mobile navigation if needed
+        if (isMobile) {
+            setTimeout(() => this.addMobileNavigation(), 100);
+        }
     }
     
     generateChartData(period) {

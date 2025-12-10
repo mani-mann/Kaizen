@@ -46,6 +46,10 @@
                     <span class="material-icons">search</span>
                     <span>AD Reports</span>
                 </a>
+                <a href="pages/comparison_reports.html" class="nav-item">
+                    <span class="material-icons">compare</span>
+                    <span>Comparison Report</span>
+                </a>
                 <a href="pages/business_reports.html" class="nav-item">
                     <span class="material-icons">bar_chart</span>
                     <span>Business Reports</span>
@@ -328,6 +332,10 @@
                                         <label><input type="checkbox" id="metric-conversionRate"> Conversion Rate (%)</label>
                                     </div>
                                 </div>
+                                <select class="period-selector" id="chartViewMode" title="Choose view mode">
+                                    <option value="normalized">Normalized (0-1)</option>
+                                    <option value="simple">Simple View</option>
+                                </select>
                                 <select class="period-selector" id="chartPeriod" title="Change chart data aggregation period (shows ALL database data)">
                                     <option value="daily">Daily</option>
                                     <option value="weekly">Weekly</option>

@@ -43,6 +43,8 @@ class TrendReports {
         // Date order for table headers (asc/desc)
         this.dateOrder = 'desc';
         this.sortDirection = 'desc';
+        // Chart view mode: 'normalized' or 'simple'
+        this.chartViewMode = 'normalized';
         this.currentMonth = undefined;
         this.currentYear = undefined;
         this.debounceTimer = null;
@@ -152,6 +154,15 @@ class TrendReports {
                     this.updateChart();
                     this.renderTable();
                 });
+            });
+        }
+
+        // Chart view mode selector (Simple vs Normalized)
+        const chartViewMode = document.getElementById('chartViewMode');
+        if (chartViewMode) {
+            chartViewMode.addEventListener('change', (e) => {
+                this.chartViewMode = e.target.value;
+                this.updateChart();
             });
         }
 
@@ -1880,6 +1891,12 @@ class TrendReports {
             this.trendChart = null;
         }
         
+        // Check if normalized view is selected
+        if (this.chartViewMode === 'normalized') {
+            this.buildNormalizedChart();
+            return;
+        }
+        
         // Apply name filter to chart data (same as table) - FILTER HAS PRIORITY
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
@@ -2277,6 +2294,179 @@ class TrendReports {
                 interaction: {
                     intersect: false,
                     mode: 'index'
+                }
+            }
+        });
+    }
+
+    // Build normalized (0-1) chart where each metric is scaled to its own maximum
+    buildNormalizedChart() {
+        const canvas = document.getElementById('trendChart');
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Get filtered data same as regular chart
+        let data = this.currentData.filter(item => item.category === this.currentCategory);
+        
+        // Apply name filter
+        if (this.selectedNames && this.selectedNames.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
+                return isTotal || this.selectedNames.has(nm);
+            });
+        } else if (this.selectedName) {
+            data = data.filter(item => (item.displayName || item.name) === this.selectedName);
+        }
+        
+        // Apply campaign filter for search-terms tab
+        if (this.currentCategory === 'search-terms' && this.selectedCampaigns && this.selectedCampaigns.size > 0) {
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
+                if (isTotal) return true;
+                const campaignName = item.campaignName || item.campaign_name || '';
+                return campaignName && this.selectedCampaigns.has(campaignName);
+            });
+        }
+        
+        // Filter by date range
+        if (this.currentDateRange.start && this.currentDateRange.end) {
+            data = data.filter(item => {
+                const itemDate = new Date(item.date);
+                return itemDate >= this.currentDateRange.start && itemDate <= this.currentDateRange.end;
+            });
+        }
+        
+        if (data.length === 0 || this.selectedMetrics.length === 0) {
+            this.trendChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+            return;
+        }
+        
+        // Get grouped data for each metric
+        const metricData = {};
+        const colors = ['#80d5be', '#1d5a55', '#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#06b6d4', '#10b981'];
+        
+        this.selectedMetrics.forEach(metric => {
+            const grouped = this.groupDataByTimePeriod(data, metric);
+            metricData[metric] = grouped;
+        });
+        
+        // Get labels from first metric
+        const firstMetric = this.selectedMetrics[0];
+        const labels = metricData[firstMetric]?.labels || [];
+        
+        // Build normalized datasets
+        const datasets = [];
+        this.selectedMetrics.forEach((metric, index) => {
+            const grouped = metricData[metric];
+            if (!grouped || !grouped.values) return;
+            
+            const rawData = grouped.values;
+            const maxVal = Math.max(...rawData.filter(v => v != null && !isNaN(v) && v > 0), 1);
+            const normalizedData = rawData.map(v => (v != null && !isNaN(v)) ? v / maxVal : 0);
+            
+            const color = colors[index % colors.length];
+            datasets.push({
+                label: this.getMetricLabel(metric),
+                data: normalizedData,
+                borderColor: color,
+                backgroundColor: color + '20',
+                borderWidth: 2,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+                tension: 0.4,
+                fill: false,
+                metricKey: metric,
+                originalData: [...rawData],
+                maxValue: maxVal
+            });
+        });
+        
+        this.trendChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 750, easing: 'easeInOutQuart' },
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        onClick: (e, legendItem, legend) => {
+                            const chart = legend.chart;
+                            const index = legendItem.datasetIndex;
+                            chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
+                            chart.update();
+                        },
+                        labels: {
+                            color: '#6c757d',
+                            usePointStyle: true,
+                            padding: 20,
+                            font: { size: 11 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff',
+                        borderColor: '#80d5be',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        displayColors: true,
+                        callbacks: {
+                            title: (context) => context[0].label,
+                            label: (context) => {
+                                const dataset = context.dataset;
+                                const normalizedVal = context.parsed.y;
+                                const originalVal = dataset.originalData?.[context.dataIndex] || 0;
+                                const metricKey = dataset.metricKey;
+                                
+                                // Format original value
+                                let formattedOriginal;
+                                if (['spend', 'sales', 'totalSales'].includes(metricKey)) {
+                                    formattedOriginal = '₹' + Math.round(originalVal).toLocaleString('en-IN');
+                                } else if (['acos', 'tcos', 'conversionRate'].includes(metricKey)) {
+                                    formattedOriginal = originalVal.toFixed(1) + '%';
+                                } else {
+                                    formattedOriginal = Math.round(originalVal).toLocaleString('en-IN');
+                                }
+                                
+                                return `${dataset.label}: ${normalizedVal.toFixed(2)} (${formattedOriginal})`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#f8f9fa', drawBorder: false },
+                        ticks: { color: '#6c757d', font: { size: 11 } }
+                    },
+                    y: {
+                        min: 0,
+                        max: 1,
+                        grid: { color: '#f8f9fa', drawBorder: false },
+                        ticks: {
+                            color: '#6c757d',
+                            font: { size: 11 },
+                            callback: (value) => value.toFixed(1)
+                        },
+                        title: {
+                            display: true,
+                            text: 'Normalized (0-1)',
+                            color: '#6c757d',
+                            font: { size: 11 }
+                        }
+                    }
                 }
             }
         });

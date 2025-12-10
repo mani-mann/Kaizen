@@ -14,14 +14,16 @@
   const PAGE_VERSION = {
     kw: 'analytics_v3',
     biz: 'biz_v1',
-    trend: 'trend_v1'
+    trend: 'trend_v1',
+    compare: 'compare_v1'
   };
 
   // Default TTLs (in ms) – keep these aligned with the existing behaviour.
   const DEFAULT_TTL = {
     kw: 60 * 60 * 1000,      // 1 hour for keyword analytics
     biz: 60 * 60 * 1000,     // 1 hour for business reports
-    trend: 60 * 60 * 1000    // 1 hour for trend reports (if used)
+    trend: 60 * 60 * 1000,   // 1 hour for trend reports (if used)
+    compare: 60 * 60 * 1000  // 1 hour for comparison reports
   };
 
   const MAX_ENTRIES_PER_PAGE = 30;

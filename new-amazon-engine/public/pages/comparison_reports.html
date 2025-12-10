@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparison Report - Amazon Analytics</title>
+    
+    <!-- Resource Hints for Performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+    
+    <!-- Google Fonts - Optimized with font-display swap -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Google Material Icons - Optimized with font-display swap -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons&display=swap" rel="stylesheet">
+    
+    <!-- Shared Keyword UI Styles -->
+    <link rel="stylesheet" href="../keywordStyle.css">
+    <link rel="stylesheet" href="comparisonStyle.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Hover trigger area for sidebar -->
+        <div class="sidebar-trigger"></div>
+        
+        <!-- Mobile Menu Button -->
+        <button class="mobile-menu-btn" id="mobileMenuBtn">
+            <span class="material-icons">menu</span>
+        </button>
+
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">A</div>
+                <div class="brand-text">
+                    <div class="brand-title">Amazon</div>
+                    <div class="brand-subtitle">Analytics</div>
+                </div>
+            </div>
+            
+            <nav class="navigation">
+                <a href="../index.html" class="nav-item">
+                    <span class="material-icons">search</span>
+                    <span>AD Reports</span>
+                </a>
+                <a href="comparison_reports.html" class="nav-item active">
+                    <span class="material-icons">compare</span>
+                    <span>Comparison Report</span>
+                </a>
+                <a href="business_reports.html" class="nav-item">
+                    <span class="material-icons">bar_chart</span>
+                    <span>Business Reports</span>
+                </a>
+                <a href="trend_reports.html" class="nav-item">
+                    <span class="material-icons">trending_up</span>
+                    <span>Trend Reports</span>
+                </a>
+                <a href="master_report.html" class="nav-item">
+                    <span class="material-icons">inventory_2</span>
+                    <span>Master Report</span>
+                </a>
+                <a href="asin_to_keyword.html" class="nav-item">
+                    <span class="material-icons">key</span>
+                    <span>ASIN to Keyword</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="page-header">
+                <div class="header-content">
+                    <h1 class="page-title">Comparison Report</h1>
+                    <p class="page-description">Compare two date ranges side by side using the same AD Reports metrics and data.</p>
+                </div>
+                <div class="header-status">
+                    <div class="live-indicator">
+                        <div class="live-dot"></div>
+                        <span>Live Data</span>
+                    </div>
+                    <div class="last-update">Last updated: <span id="lastUpdateTime">—</span></div>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <section id="comparison" class="content-section active">
+                    <!-- Dual date pickers -->
+                    <div class="dashboard-header compare-header">
+                        <div class="dashboard-title">
+                            <h2>Compare Performance</h2>
+                            <p>Select any two date ranges and compare AD performance KPIs.</p>
+                        </div>
+                        <div class="compare-header-right">
+                            <div class="compare-date-pickers">
+                                <div class="dashboard-date-picker compare-date-picker">
+                                    <div class="compare-date-title">Primary Range</div>
+                                    <div class="date-filter" id="dateFilterA">
+                                        <span class="material-icons">calendar_today</span>
+                                        <span id="dateRangeDisplayA">—</span>
+                                        <button class="preset-toggle" id="presetToggleA" title="Quick ranges">Filter ▾</button>
+                                        <div class="preset-dropdown" id="presetDropdownA" style="display:none">
+                                            <button data-preset="yesterday">Yesterday</button>
+                                            <button data-preset="last7">Last 7 days</button>
+                                            <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                            <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                            <button data-preset="last30">Last 30 days</button>
+                                            <button data-preset="thisMonth">This month</button>
+                                            <button data-preset="lastMonth">Last month</button>
+                                            <button data-preset="ytd">Year to date</button>
+                                            <button data-preset="lifetime">Lifetime</button>
+                                        </div>
+                                        <div class="date-picker-dropdown" id="datePickerDropdownA">
+                                            <!-- Calendar content will be populated by JavaScript -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="dashboard-date-picker compare-date-picker">
+                                    <div class="compare-date-title">Comparison Range</div>
+                                    <div class="date-filter" id="dateFilterB">
+                                        <span class="material-icons">calendar_today</span>
+                                        <span id="dateRangeDisplayB">—</span>
+                                        <button class="preset-toggle" id="presetToggleB" title="Quick ranges">Filter ▾</button>
+                                        <div class="preset-dropdown" id="presetDropdownB" style="display:none">
+                                            <button data-preset="yesterday">Yesterday</button>
+                                            <button data-preset="last7">Last 7 days</button>
+                                            <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                            <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                            <button data-preset="last30">Last 30 days</button>
+                                            <button data-preset="thisMonth">This month</button>
+                                            <button data-preset="lastMonth">Last month</button>
+                                            <button data-preset="ytd">Year to date</button>
+                                            <button data-preset="lifetime">Lifetime</button>
+                                        </div>
+                                        <div class="date-picker-dropdown" id="datePickerDropdownB">
+                                            <!-- Calendar content will be populated by JavaScript -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Filters placed inline with calendars -->
+                        <div class="filters-section inline-filters">
+                            <div class="filters-header">
+                                <span class="material-icons">filter_list</span>
+                                <span>Filters</span>
+                            </div>
+                            <div class="filters-content">
+                                <select class="filter-dropdown" id="campaignFilter" multiple>
+                                </select>
+                                
+                                <select class="filter-dropdown" id="keywordFilter" multiple>
+                                </select>
+                            </div>
+                        </div>
+                        </div>
+                    </div>
+
+                    <!-- KPI Metrics Grid with side-by-side values inside each card -->
+                    <div class="metrics-grid">
+                        <!-- AD KPIs -->
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon blue">
+                                    <span class="material-icons">attach_money</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AD SPEND</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-adSpend">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-adSpend">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-adSpend">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon orange">
+                                    <span class="material-icons">shopping_cart</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AD SALES</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-adSales">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-adSales">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-adSales">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon green">
+                                    <span class="material-icons">add</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">TOTAL SALES</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-totalSales">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-totalSales">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-totalSales">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon purple">
+                                    <span class="material-icons">donut_small</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">ACOS</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-acos">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-acos">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-acos">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon red">
+                                    <span class="material-icons">track_changes</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">TCOS</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-tcos">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-tcos">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-tcos">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon teal">
+                                    <span class="material-icons">trending_up</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">ROAS</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-roas">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-roas">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-roas">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon violet">
+                                    <span class="material-icons">mouse</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AD CLICKS</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-adClicks">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-adClicks">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-adClicks">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon indigo">
+                                    <span class="material-icons">attach_money</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AVG. CPC</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-avgCpc">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-avgCpc">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-avgCpc">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <!-- Business KPIs -->
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon blue">
+                                    <span class="material-icons">groups</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">TOTAL SESSIONS</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-sessions">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-sessions">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-sessions">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon orange">
+                                    <span class="material-icons">visibility</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">PAGE VIEWS</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-pageViews">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-pageViews">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-pageViews">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon green">
+                                    <span class="material-icons">shopping_bag</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">UNITS ORDERED</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-unitsOrdered">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-unitsOrdered">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-unitsOrdered">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon teal">
+                                    <span class="material-icons">schedule</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">AVG SESSIONS/DAY</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-avgSessionsPerDay">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-avgSessionsPerDay">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-avgSessionsPerDay">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+
+                        <div class="metric-card compare-card">
+                            <div class="metric-header">
+                                <div class="metric-icon purple">
+                                    <span class="material-icons">show_chart</span>
+                                </div>
+                            </div>
+                            <div class="metric-label">CONVERSION RATE</div>
+                            <div class="metric-compare-values">
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Primary</div>
+                                    <div class="metric-compare-value" id="metricA-conversionRate">—</div>
+                                </div>
+                                <div class="metric-compare-col">
+                                    <div class="metric-compare-label">Compare</div>
+                                    <div class="metric-compare-value" id="metricB-conversionRate">—</div>
+                                </div>
+                            </div>
+                            <div class="metric-compare-delta" id="delta-conversionRate">
+                                <span class="delta-abs">—</span>
+                                <span class="delta-pct">—</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Comparison chart -->
+                    <div class="chart-section">
+                        <div class="chart-header">
+                            <div class="chart-title">
+                                <span class="material-icons">trending_up</span>
+                                <span>Performance Trend</span>
+                                <small>Campaign performance over time</small>
+                            </div>
+                            <div class="chart-controls">
+                                <div class="metric-selector">
+                                    <button class="metric-toggle-btn" id="comparisonMetricToggle" title="Select metrics to display">
+                                        <span class="material-icons">visibility</span>
+                                        <span>Metrics</span>
+                                    </button>
+                                    <div class="metric-dropdown" id="comparisonMetricDropdown" style="display:none">
+                                        <label><input type="checkbox" data-metric="totalSales" checked> Total Sales</label>
+                                        <label><input type="checkbox" data-metric="adSales" checked> Ad Sales</label>
+                                        <label><input type="checkbox" data-metric="adSpend" checked> Ad Spend</label>
+                                        <label><input type="checkbox" data-metric="acos" checked> ACOS (%)</label>
+                                        <label><input type="checkbox" data-metric="tcos" checked> TCOS (%)</label>
+                                        <label><input type="checkbox" data-metric="sessions" checked> Sessions</label>
+                                        <label><input type="checkbox" data-metric="pageViews" checked> Page Views</label>
+                                        <label><input type="checkbox" data-metric="unitsOrdered" checked> Units Ordered</label>
+                                        <label><input type="checkbox" data-metric="conversionRate" checked> Conversion Rate (%)</label>
+                                    </div>
+                                </div>
+                                <select class="period-selector" id="comparisonChartMode" title="Choose comparison view">
+                                    <option value="normalized" selected>Normalized (0-1)</option>
+                                    <option value="overlay">Overlay A vs B</option>
+                                </select>
+                                <select class="period-selector" id="comparisonChartPeriod" title="Change chart data aggregation period">
+                                    <option value="daily">Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                                <button class="fullscreen-toggle-btn" id="comparisonChartRotateFullscreen" title="Rotate and show chart fullscreen on mobile">
+                                    <span class="material-icons">screen_rotation</span>
+                                    <span>Fullscreen</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="comparisonChart"></canvas>
+                        </div>
+                        <!-- Day-wise comparison is now built into the chart itself -->
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Navigation Active State Script -->
+    <script>
+        // Set active navigation item based on current page
+        document.addEventListener('DOMContentLoaded', function() {
+            const currentPage = window.location.pathname.split('/').pop() || 'comparison_reports.html';
+            const navItems = document.querySelectorAll('.nav-item');
+            
+            navItems.forEach(item => {
+                const href = item.getAttribute('href');
+                if (href === currentPage || (currentPage === '' && href === 'comparison_reports.html')) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        });
+    </script>
+
+    <!-- Shared browser cache helper (must load before page scripts) -->
+    <script src="../browser_cache.js"></script>
+    <!-- Global API config helper -->
+    <script src="../config.js"></script>
+    <!-- Load Chart.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <!-- SheetJS for Excel export (same version as AD Reports) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Comparison report logic -->
+    <script src="comparison_reports.js"></script>
+</body>
+</html>
+
+

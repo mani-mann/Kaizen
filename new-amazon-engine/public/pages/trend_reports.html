@@ -46,6 +46,10 @@
                     <span class="material-icons">search</span>
                     <span>AD Reports</span>
                 </a>
+                <a href="comparison_reports.html" class="nav-item">
+                    <span class="material-icons">compare</span>
+                    <span>Comparison Report</span>
+                </a>
                 <a href="business_reports.html" class="nav-item">
                     <span class="material-icons">bar_chart</span>
                     <span>Business Reports</span>
@@ -223,6 +227,12 @@
                                                 </div>
                                             </div>
                                         </div>
+                                    </div>
+                                    <div class="chart-control-group">
+                                        <select class="period-selector" id="chartViewMode" title="Choose view mode" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd; font-size: 13px; cursor: pointer;">
+                                            <option value="normalized">Normalized (0-1)</option>
+                                            <option value="simple">Simple View</option>
+                                        </select>
                                     </div>
                                     <div class="chart-control-group">
                                         <div class="period-dropdown-container">

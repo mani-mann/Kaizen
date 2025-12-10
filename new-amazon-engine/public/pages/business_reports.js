@@ -89,6 +89,9 @@ constructor() {
     
     // Selected metrics for chart (persist across period changes)
     this.selectedMetrics = ['sessions', 'pageViews', 'unitsOrdered', 'sales'];
+    
+    // Chart view mode: 'normalized' or 'simple'
+    this.chartViewMode = 'normalized';
     // Comment out ASIN filtering to see all data from database
     // this.allowedAsins = new Set([
     //     'B0DNKGMNTP', // Trumps: Periodic Table
@@ -568,7 +571,12 @@ async initializeComponents() {
     
     this.setupEventListeners();
     this.initializeDatePicker();
-    this.initializeChart();
+    
+    // Only initialize simple chart if not in normalized mode
+    // Normalized chart will be built when data loads
+    if (this.chartViewMode !== 'normalized') {
+        this.initializeChart();
+    }
     
     // Initialize metric checkboxes to match selected metrics
     this.syncMetricCheckboxes();
@@ -820,6 +828,16 @@ setupEventListeners() {
             // Persist selection
             this.state.chartPeriod = e.target.value || 'daily';
             this.updateChart(this.state.chartPeriod);
+        });
+    }
+    
+    // Chart view mode selector (Simple vs Normalized)
+    const chartViewMode = document.getElementById('chartViewMode');
+    if (chartViewMode) {
+        chartViewMode.addEventListener('change', (e) => {
+            this.chartViewMode = e.target.value;
+            const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
+            this.updateChart(currentPeriod);
         });
     }
     
@@ -3531,6 +3549,21 @@ async updateChart(period = null) {
         selectedMetrics: this.selectedMetrics
     });
     
+    // Check if normalized view is selected
+    if (this.chartViewMode === 'normalized') {
+        this.buildNormalizedChart(period);
+        return;
+    }
+    
+
+    // If switching from normalized to simple view, rebuild the chart with original settings
+    if (this.chart && this.chart.options?.scales?.y?.max === 1) {
+        // Chart has normalized settings, need to rebuild for simple view
+        this.chart.destroy();
+        this.chart = null;
+        this.initializeChart();
+    }
+    
     if (!this.chart || !this.state.businessData || this.state.businessData.length === 0) {
         console.log('📊 Chart update skipped - no chart or no data');
         return;
@@ -3580,9 +3613,192 @@ async updateChart(period = null) {
     console.log('📊 Chart updated successfully');
 }
 
+// Build normalized (0-1) chart where each metric is scaled to its own maximum
+// Formula: value / max_value (so max becomes 1.00, others proportional)
+buildNormalizedChart(period = 'daily') {
+    const canvas = document.getElementById('businessChart');
+    if (!canvas) return;
+    
+    // Ensure we have data before building normalized chart
+    if (!this.state.businessData || this.state.businessData.length === 0) {
+        console.log('📊 Normalized chart: No data yet, will rebuild when data loads');
+        return;
+    }
+    
+    // Destroy existing chart
+    if (this.chart) {
+        this.chart.destroy();
+        this.chart = null;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    
+    // Generate raw chart data
+    const chartData = this.generateChartData(period);
+    
+    if (!chartData.labels || chartData.labels.length === 0) {
+        console.log('📊 Normalized chart: No chart data generated');
+        return;
+    }
+    
+    if (!chartData.datasets || chartData.datasets.length === 0) {
+        console.log('📊 Normalized chart: No datasets generated');
+        return;
+    }
+    
+    // Extract raw data arrays from the datasets with flexible label matching
+    const rawData = { sessions: null, pageViews: null, unitsOrdered: null, sales: null };
+    chartData.datasets.forEach(ds => {
+        if (!ds.data || ds.data.length === 0) return;
+        const label = (ds.label || '').toLowerCase();
+        if (label.includes('session')) rawData.sessions = [...ds.data];
+        else if (label.includes('page') && label.includes('view')) rawData.pageViews = [...ds.data];
+        else if (label.includes('unit')) rawData.unitsOrdered = [...ds.data];
+        else if (label.includes('sales') || label.includes('sale')) rawData.sales = [...ds.data];
+    });
+    
+    // Define all metrics with their colors
+    const allMetrics = [
+        { key: 'sessions', label: 'Sessions', color: '#3b82f6', data: rawData.sessions },
+        { key: 'pageViews', label: 'Page Views', color: '#10b981', data: rawData.pageViews },
+        { key: 'unitsOrdered', label: 'Units Ordered', color: '#f59e0b', data: rawData.unitsOrdered },
+        { key: 'sales', label: 'Sales (₹)', color: '#ef4444', data: rawData.sales }
+    ];
+    
+    // Build normalized datasets for ALL metrics
+    const datasets = [];
+    
+    allMetrics.forEach(metric => {
+        const data = metric.data;
+        
+        if (!data || data.length === 0) return;
+        
+        // Calculate max for this metric (formula: value / max_value)
+        const validData = data.filter(v => v != null && !isNaN(v) && v > 0);
+        const maxVal = validData.length > 0 ? Math.max(...validData) : 1;
+        
+        // Normalize: value / max (so max = 1.00)
+        const normalizedData = data.map(v => {
+            if (v == null || isNaN(v)) return 0;
+            return maxVal > 0 ? v / maxVal : 0;
+        });
+        
+        datasets.push({
+            label: metric.label,
+            data: normalizedData,
+            borderColor: metric.color,
+            backgroundColor: metric.color + '20',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+            tension: 0.4,
+            fill: false,
+            metricKey: metric.key,
+            originalData: data, // Store original values for tooltip
+            maxValue: maxVal,
+            hidden: false // Show all by default
+        });
+    });
+    
+    this.chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: chartData.labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 750, easing: 'easeInOutQuart' },
+            interaction: { mode: 'index', intersect: false },
+            elements: {
+                line: { tension: 0.4, borderJoinStyle: 'round', borderCapStyle: 'round' },
+                point: { radius: 3, hoverRadius: 6 }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    onClick: (e, legendItem, legend) => {
+                        const chart = legend.chart;
+                        const index = legendItem.datasetIndex;
+                        chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
+                        chart.update();
+                    },
+                    labels: {
+                        color: '#6c757d',
+                        usePointStyle: true,
+                        padding: 20,
+                        font: { size: 11 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                    titleColor: '#ffffff',
+                    bodyColor: '#ffffff',
+                    borderColor: '#80d5be',
+                    borderWidth: 1,
+                    cornerRadius: 8,
+                    displayColors: true,
+                    callbacks: {
+                        title: (context) => context[0].label,
+                        label: (context) => {
+                            const dataset = context.dataset;
+                            const normalizedVal = context.parsed.y;
+                            const idx = context.dataIndex;
+                            const originalVal = dataset.originalData && dataset.originalData[idx] != null 
+                                ? dataset.originalData[idx] : 0;
+                            const metricKey = dataset.metricKey;
+                            
+                            // Format original value based on metric type
+                            let formattedOriginal;
+                            if (metricKey === 'sales') {
+                                formattedOriginal = '₹' + Math.round(originalVal).toLocaleString('en-IN');
+                            } else {
+                                formattedOriginal = Math.round(originalVal).toLocaleString('en-IN');
+                            }
+                            
+                            return `${dataset.label}: ${normalizedVal.toFixed(2)} (${formattedOriginal})`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: '#f8f9fa', drawBorder: false },
+                    ticks: { color: '#6c757d', font: { size: 11 } }
+                },
+                y: {
+                    min: 0,
+                    max: 1,
+                    grid: { color: '#f8f9fa', drawBorder: false },
+                    ticks: {
+                        color: '#6c757d',
+                        font: { size: 11 },
+                        callback: (value) => value.toFixed(1)
+                    },
+                    title: {
+                        display: true,
+                        text: 'Normalized (0-1)',
+                        color: '#6c757d',
+                        font: { size: 11 }
+                    }
+                }
+            }
+        }
+    });
+}
+
 // CRITICAL: Method to ensure chart always follows KPI cards
 syncChartWithKPIs() {
     console.log('📊 Syncing chart with KPI cards data');
+    
+    // If in normalized mode, just call updateChart which will handle it
+    if (this.chartViewMode === 'normalized') {
+        console.log('📊 Normalized mode - using updateChart');
+        this.updateChart();
+        return;
+    }
     
     // Use backend KPIs data if available (same as KPI cards)
     if (this.backendKPIs) {
@@ -3598,7 +3814,15 @@ syncChartWithKPIs() {
 
 // CRITICAL: Update chart using same data as KPI cards
 updateChartFromKPIs() {
-        if (!this.chart || !this.backendKPIs) {
+    // If in normalized mode, use the normalized chart builder
+    if (this.chartViewMode === 'normalized') {
+        console.log('📊 Normalized mode - using buildNormalizedChart');
+        const period = this.state?.chartPeriod || 'daily';
+        this.buildNormalizedChart(period);
+        return;
+    }
+    
+    if (!this.chart || !this.backendKPIs) {
         console.log('📊 No chart or backend KPIs available');
         return;
     }
@@ -3606,8 +3830,8 @@ updateChartFromKPIs() {
     console.log('📊 Updating chart from backend KPIs with time series:', this.backendKPIs);
     
     // Use the time series method to create proper line graph
-        const period = this.state?.chartPeriod || 'daily';
-        const chartData = this.generateChartDataFromKPIsWithTimeSeries(period);
+    const period = this.state?.chartPeriod || 'daily';
+    const chartData = this.generateChartDataFromKPIsWithTimeSeries(period);
     
     // Update chart with time series data
     this.chart.data.labels = chartData.labels;

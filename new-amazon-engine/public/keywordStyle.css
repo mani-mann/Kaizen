@@ -250,6 +250,212 @@ body {
   gap: var(--spacing-lg);
 }
 
+/* ================================
+   Comparison Report Layout
+   ================================ */
+
+.compare-header {
+  align-items: flex-start;
+  gap: var(--spacing-xl);
+  flex-wrap: wrap;
+}
+
+.compare-date-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+  align-items: stretch;
+}
+
+.compare-date-picker {
+  min-width: 260px;
+}
+
+.compare-date-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.simple-range-calendar {
+  padding: var(--spacing-md);
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.simple-range-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.simple-range-row label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.simple-range-row input[type="date"] {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-primary);
+  font-size: 12px;
+}
+
+.compare-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-lg);
+  margin-top: var(--spacing-lg);
+}
+
+.compare-panel {
+  background-color: var(--bg-primary);
+  border-radius: 12px;
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.compare-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--spacing-md);
+  color: var(--text-primary);
+}
+
+@media (max-width: 992px) {
+  .compare-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.comparison-summary {
+  margin-top: var(--spacing-lg);
+  background-color: var(--bg-primary);
+  border-radius: 12px;
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.comparison-summary-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--spacing-md);
+}
+
+.comparison-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.comparison-summary-card {
+  border-radius: 10px;
+  padding: var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  background-color: #ffffff;
+}
+
+.comparison-summary-card .summary-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.comparison-summary-card .summary-values {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.comparison-summary-card .summary-delta {
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.comparison-summary-card.direction-up .summary-delta {
+  color: var(--green);
+}
+
+.comparison-summary-card.direction-down .summary-delta {
+  color: var(--red);
+}
+
+/* Comparison KPI cards */
+.metric-card.compare-card .metric-value {
+  display: none;
+}
+
+.metric-compare-values {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-top: 8px;
+}
+
+.metric-compare-col {
+  flex: 1;
+}
+
+.metric-compare-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.metric-compare-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.metric-compare-delta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.metric-compare-delta.positive {
+  color: var(--green);
+}
+
+.metric-compare-delta.negative {
+  color: var(--red);
+}
+
+.metric-compare-delta.neutral {
+  color: var(--text-muted);
+}
+
+.metric-compare-delta .delta-abs {
+  font-weight: 600;
+}
+
+.metric-compare-delta .delta-pct {
+  opacity: 0.8;
+}
+
+
+
 .live-indicator {
   display: flex;
   align-items: center;
@@ -315,6 +521,10 @@ body {
 }
 
 .dashboard-date-picker .date-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background-color: var(--bg-primary);
   border: 1px solid var(--border-primary);
   padding: 12px 16px;

@@ -1,0 +1,66 @@
+/* Comparison page specific styles */
+.compare-header-right {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.inline-filters {
+  margin-top: var(--spacing-md);
+}
+
+.chart-day-details {
+  margin-top: var(--spacing-lg);
+}
+
+.day-selector-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.day-selector-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.day-selector-header .material-icons {
+  font-size: 18px;
+  color: var(--text-secondary);
+}
+
+.day-selector-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.day-pill {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  transition: all 0.2s ease;
+}
+
+.day-pill:hover {
+  background: var(--bg-hover);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.day-pill.active {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+  box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+}
+
