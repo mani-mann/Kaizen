@@ -125,6 +125,11 @@
                                     <span class="material-icons">upload_file</span>
                                     <span>Upload</span>
                                 </button>
+                                <!-- Toggle button for uploaded filter (only visible when data is uploaded) -->
+                                <button class="action-btn" id="toggleUploadFilterBtn" style="display: none;" title="Toggle uploaded keywords filter">
+                                    <span class="material-icons">filter_alt</span>
+                                    <span id="toggleUploadFilterText">Filter: ON</span>
+                                </button>
                             </div>
                         </div>
 
@@ -381,6 +386,10 @@ Naruto cards"></textarea>
             </div>
             <div class="tr-modal-footer">
                 <button type="button" class="action-btn" id="uploadProductsCancel">Cancel</button>
+                <button type="button" class="action-btn" id="uploadProductsClear" style="background: #ef4444; color: white;">
+                    <span class="material-icons">delete</span>
+                    <span>Clear All</span>
+                </button>
                 <button type="button" class="action-btn primary" id="uploadProductsApply">
                     <span class="material-icons">check</span>
                     <span>Apply Filter</span>

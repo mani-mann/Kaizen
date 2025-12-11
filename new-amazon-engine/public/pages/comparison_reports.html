@@ -97,53 +97,53 @@
                             <p>Select any two date ranges and compare AD performance KPIs.</p>
                         </div>
                         <div class="compare-header-right">
-                            <div class="compare-date-pickers">
-                                <div class="dashboard-date-picker compare-date-picker">
-                                    <div class="compare-date-title">Primary Range</div>
-                                    <div class="date-filter" id="dateFilterA">
-                                        <span class="material-icons">calendar_today</span>
-                                        <span id="dateRangeDisplayA">—</span>
-                                        <button class="preset-toggle" id="presetToggleA" title="Quick ranges">Filter ▾</button>
-                                        <div class="preset-dropdown" id="presetDropdownA" style="display:none">
-                                            <button data-preset="yesterday">Yesterday</button>
-                                            <button data-preset="last7">Last 7 days</button>
-                                            <button data-preset="thisWeek">This week (Mon–Sun)</button>
-                                            <button data-preset="lastWeek">Last week (Mon–Sun)</button>
-                                            <button data-preset="last30">Last 30 days</button>
-                                            <button data-preset="thisMonth">This month</button>
-                                            <button data-preset="lastMonth">Last month</button>
-                                            <button data-preset="ytd">Year to date</button>
-                                            <button data-preset="lifetime">Lifetime</button>
-                                        </div>
-                                        <div class="date-picker-dropdown" id="datePickerDropdownA">
-                                            <!-- Calendar content will be populated by JavaScript -->
-                                        </div>
+                        <div class="compare-date-pickers">
+                            <div class="dashboard-date-picker compare-date-picker">
+                                <div class="date-filter" id="dateFilterA">
+                                    <span class="compare-date-flag">Primary</span>
+                                    <span class="material-icons">calendar_today</span>
+                                    <span id="dateRangeDisplayA">—</span>
+                                    <button class="preset-toggle" id="presetToggleA" title="Quick ranges">Filter ▾</button>
+                                    <div class="preset-dropdown" id="presetDropdownA" style="display:none">
+                                        <button data-preset="yesterday">Yesterday</button>
+                                        <button data-preset="last7">Last 7 days</button>
+                                        <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                        <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                        <button data-preset="last30">Last 30 days</button>
+                                        <button data-preset="thisMonth">This month</button>
+                                        <button data-preset="lastMonth">Last month</button>
+                                        <button data-preset="ytd">Year to date</button>
+                                        <button data-preset="lifetime">Lifetime</button>
                                     </div>
-                                </div>
-
-                                <div class="dashboard-date-picker compare-date-picker">
-                                    <div class="compare-date-title">Comparison Range</div>
-                                    <div class="date-filter" id="dateFilterB">
-                                        <span class="material-icons">calendar_today</span>
-                                        <span id="dateRangeDisplayB">—</span>
-                                        <button class="preset-toggle" id="presetToggleB" title="Quick ranges">Filter ▾</button>
-                                        <div class="preset-dropdown" id="presetDropdownB" style="display:none">
-                                            <button data-preset="yesterday">Yesterday</button>
-                                            <button data-preset="last7">Last 7 days</button>
-                                            <button data-preset="thisWeek">This week (Mon–Sun)</button>
-                                            <button data-preset="lastWeek">Last week (Mon–Sun)</button>
-                                            <button data-preset="last30">Last 30 days</button>
-                                            <button data-preset="thisMonth">This month</button>
-                                            <button data-preset="lastMonth">Last month</button>
-                                            <button data-preset="ytd">Year to date</button>
-                                            <button data-preset="lifetime">Lifetime</button>
-                                        </div>
-                                        <div class="date-picker-dropdown" id="datePickerDropdownB">
-                                            <!-- Calendar content will be populated by JavaScript -->
-                                        </div>
+                                    <div class="date-picker-dropdown" id="datePickerDropdownA">
+                                        <!-- Calendar content will be populated by JavaScript -->
                                     </div>
                                 </div>
                             </div>
+
+                            <div class="dashboard-date-picker compare-date-picker">
+                                <div class="date-filter" id="dateFilterB">
+                                    <span class="compare-date-flag">Comparison</span>
+                                    <span class="material-icons">calendar_today</span>
+                                    <span id="dateRangeDisplayB">—</span>
+                                    <button class="preset-toggle" id="presetToggleB" title="Quick ranges">Filter ▾</button>
+                                    <div class="preset-dropdown" id="presetDropdownB" style="display:none">
+                                        <button data-preset="yesterday">Yesterday</button>
+                                        <button data-preset="last7">Last 7 days</button>
+                                        <button data-preset="thisWeek">This week (Mon–Sun)</button>
+                                        <button data-preset="lastWeek">Last week (Mon–Sun)</button>
+                                        <button data-preset="last30">Last 30 days</button>
+                                        <button data-preset="thisMonth">This month</button>
+                                        <button data-preset="lastMonth">Last month</button>
+                                        <button data-preset="ytd">Year to date</button>
+                                        <button data-preset="lifetime">Lifetime</button>
+                                    </div>
+                                    <div class="date-picker-dropdown" id="datePickerDropdownB">
+                                        <!-- Calendar content will be populated by JavaScript -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
                             <!-- Filters placed inline with calendars -->
                         <div class="filters-section inline-filters">

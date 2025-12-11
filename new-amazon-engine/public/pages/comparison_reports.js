@@ -125,10 +125,10 @@ class ComparisonReport {
         const elA = document.getElementById('dateRangeDisplayA');
         const elB = document.getElementById('dateRangeDisplayB');
         if (elA && this.rangeA) {
-            elA.textContent = `${this.rangeA.startStr} → ${this.rangeA.endStr}`;
+            elA.textContent = `${this.formatDesktopDate(this.rangeA.startStr)} → ${this.formatDesktopDate(this.rangeA.endStr)}`;
         }
         if (elB && this.rangeB) {
-            elB.textContent = `${this.rangeB.startStr} → ${this.rangeB.endStr}`;
+            elB.textContent = `${this.formatDesktopDate(this.rangeB.startStr)} → ${this.formatDesktopDate(this.rangeB.endStr)}`;
         }
         // Update last update time
         const nowEl = document.getElementById('lastUpdateTime');
@@ -441,6 +441,17 @@ class ComparisonReport {
         const d = new Date(date);
         if (isNaN(d)) return '';
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    formatDesktopDate(dateStr) {
+        if (!dateStr) return '—';
+        try {
+            const date = this.parseYmd(dateStr);
+            if (isNaN(date)) return dateStr;
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        } catch (_) {
+            return dateStr;
+        }
     }
 
     applyPreset(suffix, key) {

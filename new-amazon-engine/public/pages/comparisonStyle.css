@@ -1,12 +1,244 @@
 /* Comparison page specific styles */
+.compare-header {
+  overflow: visible !important;
+  position: relative;
+  z-index: 10;
+  margin-bottom: 24px;
+}
+
 .compare-header-right {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: 16px;
+  align-items: flex-start;
+  width: 100%;
+  overflow: visible;
+  position: relative;
+  z-index: 10;
 }
 
-.inline-filters {
-  margin-top: var(--spacing-md);
+.compare-date-pickers {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+.compare-date-picker {
+  min-width: auto;
+  position: relative;
+  z-index: 11;
+}
+
+.compare-date-picker .date-filter {
+  position: relative;
+  z-index: 11;
+}
+
+/* Calendar dropdown positioning and styling */
+.compare-date-picker .date-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: var(--bg-primary, #ffffff);
+  border: 1px solid var(--border-primary, #e0e6ed);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15), 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 14px 16px 10px 16px;
+  z-index: 9999;
+  width: 360px;
+  max-height: 500px;
+  overflow-y: auto;
+  display: none;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+}
+
+.compare-date-picker .date-picker-dropdown[style*="display: block"] {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: all;
+}
+
+/* Ensure dropdown appears above everything */
+.compare-date-picker .preset-dropdown {
+  z-index: 1051;
+}
+
+/* Backdrop when calendar is open (optional for better UX) */
+.compare-date-picker .date-filter.open::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.2);
+  z-index: 1049;
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .compare-date-picker .date-filter.open::before {
+    display: block;
+  }
+}
+
+/* Mobile responsive calendar */
+@media (max-width: 768px) {
+  .compare-date-picker .date-picker-dropdown {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 95vw;
+    max-width: 380px;
+    max-height: 85vh;
+    z-index: 9999;
+    border-radius: 16px;
+  }
+  
+  .compare-date-picker .range-calendar {
+    max-width: 100%;
+  }
+}
+
+/* Custom scrollbar for calendar dropdown */
+.compare-date-picker .date-picker-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.compare-date-picker .date-picker-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.compare-date-picker .date-picker-dropdown::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.compare-date-picker .date-picker-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Ensure KPI cards don't interfere with calendar */
+.metrics-grid {
+  position: relative;
+  z-index: 1;
+}
+
+/* Add spacing below header when calendar might open */
+.dashboard-header.compare-header {
+  padding-bottom: 8px;
+}
+
+/* Range calendar styling to match keyword page */
+.compare-date-picker .range-calendar {
+  width: 100%;
+  background: var(--bg-primary);
+  border: none;
+  border-radius: 16px;
+  padding: 0;
+}
+
+.compare-date-picker .range-calendar-grid,
+.compare-date-picker .range-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.compare-date-picker .range-calendar-weekday {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 0;
+}
+
+.compare-date-picker .range-calendar-day {
+  position: relative;
+  text-align: center;
+  padding: 10px 0;
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.compare-date-picker .range-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.compare-date-picker .range-calendar-month {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.compare-date-picker .range-calendar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.compare-date-picker .range-calendar-summary {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.compare-date-picker .range-calendar-confirm {
+  background: #ffffff;
+  color: #2ecc71;
+  border: 2px solid #2ecc71;
+  padding: 12px 28px;
+  border-radius: 16px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 16px;
+  transition: all 0.2s ease;
+}
+
+.compare-date-picker .range-calendar-confirm:hover {
+  background: #2ecc71;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(46, 204, 113, 0.2);
+}
+
+.compare-date-picker .range-calendar-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.compare-date-picker .range-calendar-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef2f6;
+  border: none;
+  color: var(--text-primary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.compare-date-picker .range-calendar-btn:hover {
+  background: #dde3ea;
+}
+
+.filters-section.inline-filters {
+  width: 100%;
+  max-width: 600px;
+  margin-top: 0;
 }
 
 .chart-day-details {
@@ -67,5 +299,14 @@
 .chartjs-legend li.legend-item-hidden span {
   opacity: 0.45;
   text-decoration: line-through;
+}
+
+.compare-date-flag {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin-right: 6px;
 }
 

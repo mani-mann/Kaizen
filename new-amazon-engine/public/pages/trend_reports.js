@@ -50,12 +50,16 @@ class TrendReports {
         this.debounceTimer = null;
         this.isLoadingData = false;
         this.hasManualDateSelection = false;
+        this.isInitializing = true; // Flag to prevent premature rendering
         // Uploaded name filters (used on Search Terms tab)
         this.uploadedProductNames = [];
         this.uploadedProductNameSet = new Set();
         this.selectedUploadedPatterns = new Set();
-        // Tracks whether the current upload filter matched any rows
-        this.uploadFilterHasMatches = true;
+        // Toggle state for uploaded filter (controlled by toggle button)
+        this.uploadFilterEnabled = true; // Default ON when data is uploaded
+        
+        // Load uploaded keywords from localStorage
+        this.loadUploadedKeywordsFromStorage();
         
         // Client-side data cache to avoid reloading on tab switches
         this.dataCache = new Map();
@@ -105,7 +109,11 @@ class TrendReports {
                     campaignFilterContainer.style.display = 'none';
                 }
             }
-            this.loadInitialData();
+            // Wait a bit longer to ensure upload keywords are loaded from localStorage
+            // This prevents showing incomplete data during initialization
+            setTimeout(() => {
+                this.loadInitialData();
+            }, 50);
         }, 100);
         
         // Initial data is already loaded above, no need for duplicate call
@@ -232,8 +240,9 @@ class TrendReports {
         const uploadModal = document.getElementById('uploadProductsModal');
         const uploadClose = document.getElementById('uploadProductsClose');
         const uploadCancel = document.getElementById('uploadProductsCancel');
+        const uploadClear = document.getElementById('uploadProductsClear');
         const uploadApply = document.getElementById('uploadProductsApply');
-        if (uploadBtn && uploadModal && uploadClose && uploadCancel && uploadApply) {
+        if (uploadBtn && uploadModal && uploadClose && uploadCancel && uploadClear && uploadApply) {
             const openUploadModal = async () => {
                 // Open the modal immediately
                 uploadModal.style.display = 'flex';
@@ -267,10 +276,41 @@ class TrendReports {
                 e.preventDefault();
                 closeUploadModal();
             });
+            uploadClear.addEventListener('click', (e) => {
+                e.preventDefault();
+                // Clear uploaded keywords
+                this.clearUploadedKeywords();
+                closeUploadModal();
+            });
             uploadApply.addEventListener('click', (e) => {
                 e.preventDefault();
                 this.applyUploadedProductNames();
                 closeUploadModal();
+            });
+        }
+
+        // Toggle button for uploaded filter (Search Terms tab)
+        const toggleUploadFilterBtn = document.getElementById('toggleUploadFilterBtn');
+        if (toggleUploadFilterBtn) {
+            toggleUploadFilterBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                // Toggle the filter state
+                this.uploadFilterEnabled = !this.uploadFilterEnabled;
+                
+                // Save to localStorage
+                this.saveUploadedKeywordsToStorage();
+                
+                // Update UI
+                this.updateToggleButtonUI();
+                
+                // Refresh chart and table if on search-terms tab
+                if (this.currentCategory === 'search-terms') {
+                    this.currentPage = 1;
+                    this.updateChart();
+                    this.renderTable();
+                }
+                
+                console.log('🔄 Upload filter toggled:', this.uploadFilterEnabled ? 'ON' : 'OFF');
             });
         }
 
@@ -976,12 +1016,11 @@ class TrendReports {
             await this.fetchDataFromDatabase();
             this.updateNameFilter();
             if (this.currentCategory === 'search-terms') {
-                // On Search Terms tab, auto-apply uploaded filter (if any)
-                if (this.uploadedProductNames.length > 0) {
-                    this.applyUploadedProductFilter();
-                }
+                // Update campaign filter and upload button state
                 this.updateCampaignFilter();
+                this.updateUploadButtonState();
             }
+            // Chart and table will automatically respect upload filter priority
             this.updateChart();
             this.renderTable();
         } catch (error) {
@@ -993,6 +1032,14 @@ class TrendReports {
             this.renderTable();
         } finally {
             this.isLoadingData = false;
+            // Flip initialization flag and trigger a final render so that
+            // chart/table are drawn once data + filters are fully ready.
+            const wasInitializing = this.isInitializing;
+            this.isInitializing = false; // Initialization complete
+            if (wasInitializing) {
+                this.updateChart();
+                this.renderTable();
+            }
         }
     }
 
@@ -1351,88 +1398,37 @@ class TrendReports {
                 .split(/\r?\n/)
                 .map(l => l.trim())
                 .filter(l => l.length > 0);
+            
+            // If empty, clear the upload
+            if (lines.length === 0) {
+                this.clearUploadedKeywords();
+                return;
+            }
+            
             this.uploadedProductNames = lines;
             this.uploadedProductNameSet = new Set(lines.map(l => l.toLowerCase()));
             // By default, all uploaded patterns are selected
             this.selectedUploadedPatterns = new Set(lines.map(l => l.toLowerCase()));
+            this.uploadFilterEnabled = true; // Enable filter by default on upload
+
+            // Save to localStorage
+            this.saveUploadedKeywordsToStorage();
 
             // Update visual state of Upload button (green when data is active)
             this.updateUploadButtonState();
 
             if (this.currentCategory === 'search-terms') {
-                this.applyUploadedProductFilter();
+                // Just refresh chart and table - the toggle controls the filter
+                this.currentPage = 1;
+                this.updateChart();
+                this.renderTable();
+                console.log('✅ Upload keywords saved. Toggle ON to filter by uploaded keywords.');
             }
         } catch (_) {
             // Silent fail – upload is an optional UX enhancement
         }
     }
 
-    /**
-     * Apply uploaded product filter:
-     *  - Only used on Search Terms tab
-     *  - Fuzzy-matches each uploaded name against search-term displayName/name
-     *  - Selects all matching search terms via existing name multi-select system
-     */
-    applyUploadedProductFilter() {
-        if (this.currentCategory !== 'search-terms') return;
-        
-        // Data loading check is now handled at checkbox click level
-        console.log('✅ Applying upload filter...');
-        
-        if (!this.selectedUploadedPatterns || this.selectedUploadedPatterns.size === 0) {
-            // No uploaded patterns selected -> clear name selection for this category
-            this.selectedNames.clear();
-            this.selectedNamesByCategory['search-terms'] = new Set();
-            this.updateNameFilter();
-            this.currentPage = 1;
-            this.updateChart();
-            this.renderTable();
-            return;
-        }
-
-        const patterns = Array.from(this.selectedUploadedPatterns);
-        const matches = new Set();
-        const normalize = (value) => (
-            (value || '')
-                .toString()
-                .trim()
-                .replace(/\s+/g, ' ')
-                .toLowerCase()
-        );
-        const normalizedPatterns = new Set(
-            patterns
-                .map(p => normalize(p))
-                .filter(Boolean)
-        );
-
-        (this.currentData || []).forEach(item => {
-            if (item.category !== 'search-terms') return;
-            const term = (item.displayName || item.name || '').toString();
-            const normalizedTerm = normalize(term);
-            if (!normalizedTerm) return;
-            if (normalizedPatterns.has(normalizedTerm)) {
-                matches.add(term);
-            }
-        });
-
-        // Remember whether this upload produced any matches so that
-        // chart/table can show "no data" instead of all data.
-        this.uploadFilterHasMatches = matches.size > 0;
-
-        // Update selectedNames only for Search Terms, leave other categories intact
-        this.selectedNames.clear();
-        this.selectedNamesByCategory['search-terms'] = new Set();
-        matches.forEach(n => {
-            this.selectedNames.add(n);
-            this.selectedNamesByCategory['search-terms'].add(n);
-        });
-
-        // Refresh name filter dropdown + chart/table
-        this.updateNameFilter();
-        this.currentPage = 1;
-        this.updateChart();
-        this.renderTable();
-    }
 
     /**
      * Toggle Upload button style to indicate whether an uploaded filter
@@ -1441,6 +1437,8 @@ class TrendReports {
     updateUploadButtonState() {
         const uploadBtn = document.getElementById('uploadProductsBtn');
         const uploadedFilterContainer = document.getElementById('uploadedProductsFilterContainer');
+        const toggleBtn = document.getElementById('toggleUploadFilterBtn');
+        
         if (!uploadBtn) return;
 
         const hasUpload =
@@ -1457,12 +1455,123 @@ class TrendReports {
                     this.updateUploadedFilterPlaceholder();
                 }
             }
+            // Show toggle button when upload data exists
+            if (toggleBtn) {
+                toggleBtn.style.display = 'flex';
+                this.updateToggleButtonUI();
+            }
         } else {
             uploadBtn.classList.remove('upload-active');
             if (uploadedFilterContainer) {
                 uploadedFilterContainer.style.display = 'none';
             }
+            // Hide toggle button when no upload data
+            if (toggleBtn) {
+                toggleBtn.style.display = 'none';
+            }
         }
+    }
+
+    /**
+     * Update toggle button UI to reflect current state
+     */
+    updateToggleButtonUI() {
+        const toggleBtn = document.getElementById('toggleUploadFilterBtn');
+        const toggleText = document.getElementById('toggleUploadFilterText');
+        if (!toggleBtn || !toggleText) return;
+
+        if (this.uploadFilterEnabled) {
+            toggleBtn.classList.add('upload-active');
+            toggleText.textContent = 'Filter: ON';
+        } else {
+            toggleBtn.classList.remove('upload-active');
+            toggleText.textContent = 'Filter: OFF';
+        }
+    }
+
+    /**
+     * Load uploaded keywords from localStorage
+     */
+    loadUploadedKeywordsFromStorage() {
+        try {
+            const stored = localStorage.getItem('trend_uploaded_keywords');
+            const enabledStored = localStorage.getItem('trend_upload_filter_enabled');
+            
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    this.uploadedProductNames = parsed;
+                    this.uploadedProductNameSet = new Set(parsed.map(l => l.toLowerCase()));
+                    this.selectedUploadedPatterns = new Set(parsed.map(l => l.toLowerCase()));
+                    console.log('✅ Loaded uploaded keywords from storage:', parsed.length, 'keywords');
+                }
+            }
+            
+            // Load toggle state (default to true if not set)
+            if (enabledStored !== null) {
+                this.uploadFilterEnabled = enabledStored === 'true';
+            } else {
+                this.uploadFilterEnabled = true; // Default ON
+            }
+        } catch (error) {
+            console.log('⚠️ Failed to load uploaded keywords from storage:', error);
+            this.uploadedProductNames = [];
+            this.uploadedProductNameSet = new Set();
+            this.selectedUploadedPatterns = new Set();
+            this.uploadFilterEnabled = true;
+        }
+    }
+
+    /**
+     * Save uploaded keywords to localStorage
+     */
+    saveUploadedKeywordsToStorage() {
+        try {
+            if (this.uploadedProductNames && this.uploadedProductNames.length > 0) {
+                localStorage.setItem('trend_uploaded_keywords', JSON.stringify(this.uploadedProductNames));
+                localStorage.setItem('trend_upload_filter_enabled', String(this.uploadFilterEnabled));
+                console.log('💾 Saved uploaded keywords to storage:', this.uploadedProductNames.length, 'keywords');
+            } else {
+                // Clear storage if no keywords
+                localStorage.removeItem('trend_uploaded_keywords');
+                localStorage.removeItem('trend_upload_filter_enabled');
+                console.log('🗑️ Cleared uploaded keywords from storage');
+            }
+        } catch (error) {
+            console.log('⚠️ Failed to save uploaded keywords to storage:', error);
+        }
+    }
+
+    /**
+     * Clear uploaded keywords
+     */
+    clearUploadedKeywords() {
+        this.uploadedProductNames = [];
+        this.uploadedProductNameSet = new Set();
+        this.selectedUploadedPatterns = new Set();
+        this.uploadFilterEnabled = true; // Reset to default
+        this.saveUploadedKeywordsToStorage();
+        
+        // Clear the textarea in modal
+        const textarea = document.getElementById('uploadProductsTextarea');
+        if (textarea) {
+            textarea.value = '';
+        }
+        
+        // Update UI
+        this.updateUploadButtonState();
+        
+        // If on search-terms tab, refresh to show all data
+        if (this.currentCategory === 'search-terms') {
+            this.selectedNames.clear();
+            this.selectedNamesByCategory['search-terms'] = new Set();
+            this.updateNameFilter();
+            this.currentPage = 1;
+            this.updateChart();
+            this.renderTable();
+        }
+        
+        console.log('✅ Cleared uploaded keywords');
     }
 
     async fetchProductSkuMap(apiBase) {
@@ -1899,6 +2008,12 @@ class TrendReports {
     }
 
     updateChart() {
+        // Don't render chart during initial load to prevent showing incomplete data
+        if (this.isInitializing) {
+            console.log('⏳ Skipping chart render - still initializing');
+            return;
+        }
+        
         const ctx = document.getElementById('trendChart');
         if (!ctx) return;
         
@@ -1917,8 +2032,44 @@ class TrendReports {
         // Apply name filter to chart data (same as table) - FILTER HAS PRIORITY
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
+        // 🎯 PRIORITY FILTER: Check for uploaded keywords (Search Terms tab only)
+        const hasUploadedFilter = 
+            this.currentCategory === 'search-terms' &&
+            this.uploadFilterEnabled &&
+            this.uploadedProductNames &&
+            this.uploadedProductNames.length > 0;
+        
+        if (hasUploadedFilter) {
+            console.log('🎯 Chart Priority Filter Active: Filtering by uploaded keywords');
+            // Normalize function for matching
+            const normalize = (value) => (
+                (value || '')
+                    .toString()
+                    .trim()
+                    .replace(/\s+/g, ' ')
+                    .toLowerCase()
+            );
+            const uploadedSet = new Set(this.uploadedProductNames.map(k => normalize(k)));
+            
+            // Filter data to only show uploaded keywords
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                // Keep DAILY TOTAL rows
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
+                if (isTotal) return true;
+                
+                // Check if this search term matches any uploaded keyword
+                const normalizedName = normalize(nm);
+                return uploadedSet.has(normalizedName);
+            });
+            
+            console.log(`✅ Chart upload filter applied: ${data.length} rows match uploaded keywords`);
+        }
+        
         // Apply name filter if multi-select has items; keep true DAILY TOTAL rows
-        if (this.selectedNames && this.selectedNames.size > 0) {
+        // Note: Upload filter takes priority, so if upload filter is active, this is skipped
+        if (!hasUploadedFilter && this.selectedNames && this.selectedNames.size > 0) {
             console.log('🔍 Chart: Applying name filter for campaigns:', {
                 selectedNames: Array.from(this.selectedNames),
                 dataBeforeFilter: data.length,
@@ -1957,19 +2108,6 @@ class TrendReports {
         // name/campaign filters are applied, so chart + table stay in sync.
         data = this.filterDataByDateRange(data);
         console.log('📅 Chart: Date range applied, data length after:', data.length);
-
-        // If an upload filter is active but produced NO matches, force chart to show no data.
-        const uploadFilterActiveNoMatches =
-            this.currentCategory === 'search-terms' &&
-            Array.isArray(this.uploadedProductNames) &&
-            this.uploadedProductNames.length > 0 &&
-            this.selectedUploadedPatterns &&
-            this.selectedUploadedPatterns.size > 0 &&
-            this.uploadFilterHasMatches === false;
-        if (uploadFilterActiveNoMatches) {
-            data = [];
-            console.log('🎯 Chart: Upload filter has no matches, using empty dataset.');
-        }
 
         // Campaigns: avoid double-counting in the chart when DAILY TOTAL rows
         // are present (backend provides both individuals and totals). If totals
@@ -2326,8 +2464,44 @@ class TrendReports {
         // Get filtered data same as regular chart
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
+        // 🎯 PRIORITY FILTER: Check for uploaded keywords (Search Terms tab only)
+        const hasUploadedFilter = 
+            this.currentCategory === 'search-terms' &&
+            this.uploadFilterEnabled &&
+            this.uploadedProductNames &&
+            this.uploadedProductNames.length > 0;
+        
+        if (hasUploadedFilter) {
+            console.log('🎯 Normalized Chart Priority Filter Active: Filtering by uploaded keywords');
+            // Normalize function for matching
+            const normalize = (value) => (
+                (value || '')
+                    .toString()
+                    .trim()
+                    .replace(/\s+/g, ' ')
+                    .toLowerCase()
+            );
+            const uploadedSet = new Set(this.uploadedProductNames.map(k => normalize(k)));
+            
+            // Filter data to only show uploaded keywords
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                // Keep DAILY TOTAL rows
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
+                if (isTotal) return true;
+                
+                // Check if this search term matches any uploaded keyword
+                const normalizedName = normalize(nm);
+                return uploadedSet.has(normalizedName);
+            });
+            
+            console.log(`✅ Normalized chart upload filter applied: ${data.length} rows match uploaded keywords`);
+        }
+        
         // Apply name filter
-        if (this.selectedNames && this.selectedNames.size > 0) {
+        // Note: Upload filter takes priority, so if upload filter is active, this is skipped
+        if (!hasUploadedFilter && this.selectedNames && this.selectedNames.size > 0) {
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
                 const lower = nm.toLowerCase();
@@ -2350,13 +2524,10 @@ class TrendReports {
             });
         }
         
-        // Filter by date range
-        if (this.currentDateRange.start && this.currentDateRange.end) {
-            data = data.filter(item => {
-                const itemDate = new Date(item.date);
-                return itemDate >= this.currentDateRange.start && itemDate <= this.currentDateRange.end;
-            });
-        }
+        // Filter by date range using the same helper as the main chart/table.
+        // This avoids subtle timezone bugs (for example, dropping the first
+        // day in the range when `currentDateRange.start` carries a time-of-day).
+        data = this.filterDataByDateRange(data);
         
         if (data.length === 0 || this.selectedMetrics.length === 0) {
             this.trendChart = new Chart(ctx, {
@@ -2676,8 +2847,10 @@ class TrendReports {
                     } else {
                         this.selectedUploadedPatterns.delete(lower);
                     }
-                    // Apply filter based on updated selection
-                    this.applyUploadedProductFilter();
+                    // Refresh chart and table based on toggle state
+                    this.currentPage = 1;
+                    this.updateChart();
+                    this.renderTable();
                     updatePlaceholder();
                 });
 
@@ -3664,6 +3837,12 @@ class TrendReports {
     }
 
     renderTable() {
+        // Don't render table during initial load to prevent showing incomplete data
+        if (this.isInitializing) {
+            console.log('⏳ Skipping table render - still initializing');
+            return;
+        }
+        
         const tbody = document.getElementById('tableBody');
         const theadRow = document.getElementById('tableHeaderRow');
         const tableEl = document.querySelector('.data-table');
@@ -3675,17 +3854,55 @@ class TrendReports {
         // Get individual records
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
+        // 🎯 PRIORITY FILTER: Check for uploaded keywords (Search Terms tab only)
+        const hasUploadedFilter = 
+            this.currentCategory === 'search-terms' &&
+            this.uploadFilterEnabled &&
+            this.uploadedProductNames &&
+            this.uploadedProductNames.length > 0;
+        
+        if (hasUploadedFilter) {
+            console.log('🎯 Priority Filter Active: Filtering by uploaded keywords');
+            // Normalize function for matching
+            const normalize = (value) => (
+                (value || '')
+                    .toString()
+                    .trim()
+                    .replace(/\s+/g, ' ')
+                    .toLowerCase()
+            );
+            const uploadedSet = new Set(this.uploadedProductNames.map(k => normalize(k)));
+            
+            // Filter data to only show uploaded keywords
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                // Keep DAILY TOTAL rows
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
+                if (isTotal) return true;
+                
+                // Check if this search term matches any uploaded keyword
+                const normalizedName = normalize(nm);
+                return uploadedSet.has(normalizedName);
+            });
+            
+            console.log(`✅ Upload filter applied: ${data.length} rows match uploaded keywords`);
+        }
+        
         // Debug: Log data before processing
         console.log(`🔍 Table Data Debug - ${this.currentCategory}:`, {
             totalData: this.currentData.length,
             filteredData: data.length,
+            hasUploadedFilter: hasUploadedFilter,
+            uploadFilterEnabled: this.uploadFilterEnabled,
             sampleData: data.slice(0, 3).map(item => ({ name: item.name, spend: item.spend, sales: item.sales })),
             allCategories: [...new Set(this.currentData.map(item => item.category))],
             currentCategory: this.currentCategory
         });
         
         // Apply name filter if multi-select has items; keep true DAILY TOTAL rows
-        if (this.selectedNames && this.selectedNames.size > 0) {
+        // Note: Upload filter takes priority, so if upload filter is active, this is skipped
+        if (!hasUploadedFilter && this.selectedNames && this.selectedNames.size > 0) {
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
                 // Treat only our explicit DAILY TOTAL helper rows as totals
@@ -3722,19 +3939,7 @@ class TrendReports {
             dataLengthBefore: data.length
         });
         
-        // If an upload filter is active but produced NO matches, force table to show no data.
-        const uploadFilterActiveNoMatches =
-            this.currentCategory === 'search-terms' &&
-            Array.isArray(this.uploadedProductNames) &&
-            this.uploadedProductNames.length > 0 &&
-            this.selectedUploadedPatterns &&
-            this.selectedUploadedPatterns.size > 0 &&
-            this.uploadFilterHasMatches === false;
-
-        if (uploadFilterActiveNoMatches) {
-            data = [];
-            console.log('🎯 Table: Upload filter has no matches, showing empty table.');
-        } else if (!hasFilterApplied) {
+        if (!hasFilterApplied) {
             // Apply date range filter only when no filter is applied
             data = this.filterDataByDateRange(data);
             console.log('📅 Table: Date range applied, data length after:', data.length);
@@ -4547,29 +4752,54 @@ class TrendReports {
         // Prepare the same data used by the table
         let data = this.currentData.filter(item => item.category === this.currentCategory);
         
+        // 🎯 PRIORITY FILTER: Check for uploaded keywords (Search Terms tab only)
+        const hasUploadedFilter = 
+            this.currentCategory === 'search-terms' &&
+            this.uploadFilterEnabled &&
+            this.uploadedProductNames &&
+            this.uploadedProductNames.length > 0;
+        
+        if (hasUploadedFilter) {
+            console.log('🎯 Export Priority Filter Active: Filtering by uploaded keywords');
+            // Normalize function for matching
+            const normalize = (value) => (
+                (value || '')
+                    .toString()
+                    .trim()
+                    .replace(/\s+/g, ' ')
+                    .toLowerCase()
+            );
+            const uploadedSet = new Set(this.uploadedProductNames.map(k => normalize(k)));
+            
+            // Filter data to only show uploaded keywords
+            data = data.filter(item => {
+                const nm = (item.displayName || item.name) || '';
+                // Keep DAILY TOTAL rows
+                const lower = nm.toLowerCase();
+                const isTotal = nm.includes('📊') || lower.includes('daily total');
+                if (isTotal) return true;
+                
+                // Check if this search term matches any uploaded keyword
+                const normalizedName = normalize(nm);
+                return uploadedSet.has(normalizedName);
+            });
+            
+            console.log(`✅ Export upload filter applied: ${data.length} rows match uploaded keywords`);
+        }
+        
         // Debug: Log export filter status
         console.log('🔍 Export Filter Debug:', {
             category: this.currentCategory,
+            hasUploadedFilter: hasUploadedFilter,
+            uploadFilterEnabled: this.uploadFilterEnabled,
             selectedNames: this.selectedNames ? Array.from(this.selectedNames) : null,
             selectedName: this.selectedName,
             dataBeforeFilter: data.length
         });
 
-        const uploadFilterActiveNoMatches =
-            this.currentCategory === 'search-terms' &&
-            Array.isArray(this.uploadedProductNames) &&
-            this.uploadedProductNames.length > 0 &&
-            this.selectedUploadedPatterns &&
-            this.selectedUploadedPatterns.size > 0 &&
-            this.uploadFilterHasMatches === false;
-
-        if (uploadFilterActiveNoMatches) {
-            console.log('🎯 Export: Upload filter has no matches, aborting export.');
-            return null;
-        }
-        
         // Name filter like table (keeps DAILY TOTAL rows regardless)
-        if (this.selectedNames && this.selectedNames.size > 0) {
+        // Note: Upload filter takes priority, so if upload filter is active, this is skipped
+        if (!hasUploadedFilter && this.selectedNames && this.selectedNames.size > 0) {
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
                 const isTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total') || nm.toLowerCase().includes('total');
