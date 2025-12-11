@@ -29,7 +29,8 @@ npm install
 ### 3. Test Database Connection
 
 ```bash
-node test-db.js
+# Connect to database using psql
+psql $DATABASE_URL -c "SELECT version();"
 ```
 
 Expected output:
@@ -153,7 +154,7 @@ Make sure to run `setup-indexes.js` for optimal performance:
 echo $DATABASE_URL
 
 # Test connection
-node test-db.js
+psql $DATABASE_URL -c "SELECT version();"
 
 # Verify PostgreSQL is running
 psql $DATABASE_URL -c "SELECT version();"
@@ -165,7 +166,8 @@ psql $DATABASE_URL -c "SELECT version();"
 node setup-indexes.js
 
 # Test query performance
-node test-performance.js
+# Run a test query directly:
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM amazon_ads_reports WHERE report_date >= CURRENT_DATE - INTERVAL '30 days';"
 ```
 
 ### CORS Errors

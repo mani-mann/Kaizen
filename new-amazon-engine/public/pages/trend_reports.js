@@ -904,6 +904,15 @@ class TrendReports {
         // Update the dropdown display text
             this.updateSelectedMetrics();
         
+        // Ensure date range is initialized before fetching data
+        if (!this.currentDateRange.start || !this.currentDateRange.end) {
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 30);
+            this.currentDateRange = { start: startDate, end: endDate };
+            this.updateDateDisplay();
+        }
+
         try {
             // Fetch new data for the selected category
             await this.fetchDataFromDatabase();
@@ -992,6 +1001,14 @@ class TrendReports {
         this.isLoadingData = true;
         
         try {
+            // Safety check: ensure date range exists
+            if (!this.currentDateRange.start || !this.currentDateRange.end) {
+                const endDate = new Date();
+                const startDate = new Date();
+                startDate.setDate(startDate.getDate() - 30);
+                this.currentDateRange = { start: startDate, end: endDate };
+            }
+
             // Build query parameters
             const params = new URLSearchParams({
                 category: this.currentCategory,

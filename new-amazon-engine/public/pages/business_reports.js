@@ -3813,7 +3813,7 @@ syncChartWithKPIs() {
 }
 
 // CRITICAL: Update chart using same data as KPI cards
-updateChartFromKPIs() {
+updateChartFromKPIs() {  
     // If in normalized mode, use the normalized chart builder
     if (this.chartViewMode === 'normalized') {
         console.log('📊 Normalized mode - using buildNormalizedChart');
