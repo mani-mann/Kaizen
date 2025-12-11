@@ -56,7 +56,8 @@ class TrendReports {
         this.uploadedProductNameSet = new Set();
         this.selectedUploadedPatterns = new Set();
         // Toggle state for uploaded filter (controlled by toggle button)
-        this.uploadFilterEnabled = true; // Default ON when data is uploaded
+        // Default OFF – user must explicitly turn the filter on.
+        this.uploadFilterEnabled = false;
         
         // Load uploaded keywords from localStorage
         this.loadUploadedKeywordsFromStorage();
@@ -1407,9 +1408,10 @@ class TrendReports {
             
             this.uploadedProductNames = lines;
             this.uploadedProductNameSet = new Set(lines.map(l => l.toLowerCase()));
-            // By default, all uploaded patterns are selected
+            // By default, all uploaded patterns are selected, but the filter
+            // itself remains OFF until the user explicitly toggles it on.
             this.selectedUploadedPatterns = new Set(lines.map(l => l.toLowerCase()));
-            this.uploadFilterEnabled = true; // Enable filter by default on upload
+            this.uploadFilterEnabled = false;
 
             // Save to localStorage
             this.saveUploadedKeywordsToStorage();
@@ -1511,7 +1513,8 @@ class TrendReports {
             if (enabledStored !== null) {
                 this.uploadFilterEnabled = enabledStored === 'true';
             } else {
-                this.uploadFilterEnabled = true; // Default ON
+                // No stored preference → keep filter OFF by default
+                this.uploadFilterEnabled = false;
             }
         } catch (error) {
             console.log('⚠️ Failed to load uploaded keywords from storage:', error);
@@ -1549,7 +1552,7 @@ class TrendReports {
         this.uploadedProductNames = [];
         this.uploadedProductNameSet = new Set();
         this.selectedUploadedPatterns = new Set();
-        this.uploadFilterEnabled = true; // Reset to default
+        this.uploadFilterEnabled = false; // Reset to default (OFF)
         this.saveUploadedKeywordsToStorage();
         
         // Clear the textarea in modal
