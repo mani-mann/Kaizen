@@ -1,6 +1,9 @@
 // Comparison Report JavaScript
 // Uses the same /api/analytics endpoint as AD Reports to fetch data for two ranges
 
+const DEFAULT_COMPARISON_METRICS = ['totalSales', 'adSales', 'adSpend'];
+const ALL_COMPARISON_METRICS = ['totalSales', 'adSales', 'adSpend', 'acos', 'tcos', 'sessions', 'pageViews', 'unitsOrdered', 'conversionRate'];
+
 class ComparisonReport {
     constructor() {
         // Date ranges for A (primary) and B (comparison)
@@ -23,7 +26,7 @@ class ComparisonReport {
         this.chart = null;
         this.chartPeriod = 'daily';
         this.chartMode = 'normalized'; // 'normalized' or 'overlay'
-        this.selectedChartMetrics = new Set(['totalSales', 'adSales', 'adSpend', 'acos', 'tcos', 'sessions', 'pageViews', 'unitsOrdered', 'conversionRate']);
+        this.selectedChartMetrics = new Set(DEFAULT_COMPARISON_METRICS);
 
         this.init();
     }
@@ -991,6 +994,17 @@ class ComparisonReport {
                 } catch (_) {}
             });
         }
+
+        this.syncMetricCheckboxes();
+    }
+
+    syncMetricCheckboxes() {
+        const metricDropdown = document.getElementById('comparisonMetricDropdown');
+        if (!metricDropdown) return;
+        metricDropdown.querySelectorAll('input[type="checkbox"][data-metric]').forEach(cb => {
+            const metric = cb.getAttribute('data-metric');
+            cb.checked = this.selectedChartMetrics.has(metric);
+        });
     }
 
     buildChart() {
@@ -1040,10 +1054,11 @@ class ComparisonReport {
             conversionRate: { label: 'Conversion Rate (%)', color: '#e83e8c', colorB: '#F48FB1' }
         };
 
-        // Only show selected metrics
-        this.selectedChartMetrics.forEach(metricKey => {
+        // Show all metrics, but respect visibility
+        Object.keys(allMetrics).forEach(metricKey => {
             const metric = allMetrics[metricKey];
             if (!metric) return;
+            const isVisible = this.selectedChartMetrics.has(metricKey);
             
             // Range A dataset
             datasets.push({
@@ -1055,7 +1070,8 @@ class ComparisonReport {
                 pointRadius: 4,
                 pointHoverRadius: 6,
                 metricKey: metricKey,
-                rangeType: 'A'
+                rangeType: 'A',
+                hidden: !isVisible
             });
             
             // Range B dataset
@@ -1069,7 +1085,8 @@ class ComparisonReport {
                 pointRadius: 4,
                 pointHoverRadius: 6,
                 metricKey: metricKey,
-                rangeType: 'B'
+                rangeType: 'B',
+                hidden: !isVisible
             });
         });
 
@@ -1114,6 +1131,10 @@ class ComparisonReport {
                                                     hidden: !chart.isDatasetVisible(i),
                                                     datasetIndex: i,
                                                     pointStyle: 'circle'
+                                                    ,
+                                                    className: chart.isDatasetVisible(i)
+                                                        ? 'comparison-legend-item'
+                                                        : 'comparison-legend-item legend-item-hidden'
                                                 });
                                             }
                                         }
@@ -1190,7 +1211,7 @@ class ComparisonReport {
                                     };
                                     
                                     // Show all selected metrics
-                                    const metricsArray = Array.from(this.selectedChartMetrics);
+                                    const metricsArray = ALL_COMPARISON_METRICS.filter(metricKey => this.selectedChartMetrics.has(metricKey));
                                     metricsArray.forEach((metricKey, index) => {
                                         const label = metricLabels[metricKey] || metricKey;
                                         lines.push(`${label} (A): ${formatValue(metricsA[metricKey] || 0, metricKey)}`);
@@ -1259,9 +1280,8 @@ class ComparisonReport {
             conversionRate: { label: 'Conversion Rate (%)', color: '#e83e8c', colorB: '#F48FB1' }
         };
 
-        // Find max values SEPARATELY for A and B
         const maxA = {}, maxB = {};
-        this.selectedChartMetrics.forEach(metricKey => {
+        Object.keys(allMetrics).forEach(metricKey => {
             const valuesA = this.daySeries.map(day => day.metricsA?.[metricKey] || 0);
             const valuesB = this.daySeries.map(day => day.metricsB?.[metricKey] || 0);
             maxA[metricKey] = Math.max(...valuesA, 0.001);
@@ -1271,9 +1291,10 @@ class ComparisonReport {
         // Build datasets - TWO lines per metric (A and B), each with its own max
         const datasets = [];
         
-        this.selectedChartMetrics.forEach(metricKey => {
+        Object.keys(allMetrics).forEach(metricKey => {
             const metric = allMetrics[metricKey];
             if (!metric) return;
+            const isVisible = this.selectedChartMetrics.has(metricKey);
 
             // A line - normalized to A's max
             const normA = this.daySeries.map(day => (day.metricsA?.[metricKey] || 0) / maxA[metricKey]);
@@ -1291,7 +1312,8 @@ class ComparisonReport {
                 pointHoverRadius: 6,
                 metricKey: metricKey,
                 normDataB: normB,
-                isSeriesA: true
+                isSeriesA: true,
+                hidden: !isVisible
             });
 
             // B line (dashed) - hidden from legend
@@ -1305,7 +1327,8 @@ class ComparisonReport {
                 pointRadius: 4,
                 pointHoverRadius: 6,
                 metricKey: metricKey,
-                isSeriesA: false
+                isSeriesA: false,
+                hidden: !isVisible
             });
         });
 
@@ -1330,9 +1353,28 @@ class ComparisonReport {
                                 boxWidth: 12,
                                 padding: 15,
                                 usePointStyle: true,
-                                filter: (item, data) => {
-                                    // Only show A series in legend (hide B)
-                                    return data.datasets[item.datasetIndex].isSeriesA === true;
+                                generateLabels: (chart) => {
+                                    const datasets = chart.data.datasets;
+                                    const labels = [];
+                                    const seenMetrics = new Set();
+                                    datasets.forEach((dataset, index) => {
+                                        if (!dataset.isSeriesA) return;
+                                        if (seenMetrics.has(dataset.label)) return;
+                                        seenMetrics.add(dataset.label);
+                                        labels.push({
+                                            text: dataset.label,
+                                            fillStyle: dataset.borderColor,
+                                            strokeStyle: dataset.borderColor,
+                                            lineWidth: 2,
+                                            hidden: !chart.isDatasetVisible(index),
+                                            datasetIndex: index,
+                                            pointStyle: 'circle',
+                                            className: chart.isDatasetVisible(index)
+                                                ? 'comparison-legend-item'
+                                                : 'comparison-legend-item legend-item-hidden'
+                                        });
+                                    });
+                                    return labels;
                                 }
                             },
                             onClick: (e, legendItem, legend) => {

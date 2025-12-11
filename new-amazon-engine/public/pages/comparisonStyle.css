@@ -64,3 +64,8 @@
   box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
 }
 
+.chartjs-legend li.legend-item-hidden span {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
