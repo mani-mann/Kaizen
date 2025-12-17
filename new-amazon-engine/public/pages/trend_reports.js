@@ -4,8 +4,39 @@
 const GLOBAL_DATE_RANGE_STORAGE_KEY = 'global_date_range';
 const GLOBAL_DATE_RANGE_WINDOW_PREFIX = '__GLOBAL_DATE_RANGE__=';
 
+// Helper function to clear global date range storage on reload
+function clearGlobalDateRangeOnReload() {
+    try {
+        if (typeof window === 'undefined') return;
+        const navEntry = performance.getEntriesByType('navigation')[0];
+        const isReload = navEntry && (navEntry.type === 'reload' || 
+                        (performance.navigation && performance.navigation.type === 1));
+        if (isReload) {
+            try {
+                if (window.localStorage) {
+                    window.localStorage.removeItem(GLOBAL_DATE_RANGE_STORAGE_KEY);
+                }
+            } catch (_) {}
+            try {
+                if (window.sessionStorage) {
+                    window.sessionStorage.removeItem(GLOBAL_DATE_RANGE_STORAGE_KEY);
+                }
+            } catch (_) {}
+            try {
+                if (typeof window.name === 'string' && 
+                    window.name.startsWith(GLOBAL_DATE_RANGE_WINDOW_PREFIX)) {
+                    window.name = '';
+                }
+            } catch (_) {}
+        }
+    } catch (_) {}
+}
+
 class TrendReports {
     constructor() {
+        // Clear global date range storage on reload (hard reload detection)
+        clearGlobalDateRangeOnReload();
+        
         this.currentCategory = 'products';
         this.currentTimePeriod = 'daily';
         this.currentDateRange = { start: null, end: null };
@@ -5537,3 +5568,5 @@ let trendReports;
 document.addEventListener('DOMContentLoaded', function() {
     trendReports = new TrendReports();
 });
+
+

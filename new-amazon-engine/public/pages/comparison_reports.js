@@ -4,8 +4,42 @@
 const DEFAULT_COMPARISON_METRICS = ['totalSales', 'adSales', 'adSpend'];
 const ALL_COMPARISON_METRICS = ['totalSales', 'adSales', 'adSpend', 'acos', 'tcos', 'sessions', 'pageViews', 'unitsOrdered', 'conversionRate'];
 
+const GLOBAL_DATE_RANGE_STORAGE_KEY = 'global_date_range';
+const GLOBAL_DATE_RANGE_WINDOW_PREFIX = '__GLOBAL_DATE_RANGE__=';
+
+// Helper function to clear global date range storage on reload
+function clearGlobalDateRangeOnReload() {
+    try {
+        if (typeof window === 'undefined') return;
+        const navEntry = performance.getEntriesByType('navigation')[0];
+        const isReload = navEntry && (navEntry.type === 'reload' || 
+                        (performance.navigation && performance.navigation.type === 1));
+        if (isReload) {
+            try {
+                if (window.localStorage) {
+                    window.localStorage.removeItem(GLOBAL_DATE_RANGE_STORAGE_KEY);
+                }
+            } catch (_) {}
+            try {
+                if (window.sessionStorage) {
+                    window.sessionStorage.removeItem(GLOBAL_DATE_RANGE_STORAGE_KEY);
+                }
+            } catch (_) {}
+            try {
+                if (typeof window.name === 'string' && 
+                    window.name.startsWith(GLOBAL_DATE_RANGE_WINDOW_PREFIX)) {
+                    window.name = '';
+                }
+            } catch (_) {}
+        }
+    } catch (_) {}
+}
+
 class ComparisonReport {
     constructor() {
+        // Clear global date range storage on reload (hard reload detection)
+        clearGlobalDateRangeOnReload();
+        
         // Date ranges for A (primary) and B (comparison)
         this.rangeA = null;
         this.rangeB = null;
@@ -526,7 +560,7 @@ class ComparisonReport {
                 savedAt: Date.now(),
                 manualSelection: true
             };
-            window.localStorage.setItem('global_date_range', JSON.stringify(payload));
+            window.localStorage.setItem(GLOBAL_DATE_RANGE_STORAGE_KEY, JSON.stringify(payload));
         } catch (_) {
             // ignore storage errors
         }
