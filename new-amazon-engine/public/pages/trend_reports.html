@@ -167,104 +167,102 @@
 
 
                     <!-- Trend Charts Section -->
-                    <div class="charts-section">
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <div class="chart-title">
-                                    <span class="material-icons">trending_up</span>
-                                    <span>Performance Trends</span>
-                                    <small>Track key metrics over time</small>
+                    <div class="chart-section">
+                        <div class="chart-header">
+                            <div class="chart-title">
+                                <span class="material-icons">trending_up</span>
+                                <span>Performance Trends</span>
+                                <small>Track key metrics over time</small>
+                            </div>
+                            <div class="chart-controls">
+                                <div class="chart-control-group">
+                                    <div class="multi-select-dropdown" id="chartMetricDropdown">
+                                        <div class="multi-select-toggle" id="chartMetricToggle">
+                                            <span id="chartMetricText">Select Metrics</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </div>
+                                        <div class="multi-select-options" id="chartMetricOptions" style="display: none;">
+                                            <div class="multi-select-option" data-value="spend">
+                                                <input type="checkbox" id="metric-spend">
+                                                <label for="metric-spend">Ad Spend</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="cpc">
+                                                <input type="checkbox" id="metric-cpc">
+                                                <label for="metric-cpc">AVG. CPC</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="clicks">
+                                                <input type="checkbox" id="metric-clicks">
+                                                <label for="metric-clicks">Ad Clicks</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="roas">
+                                                <input type="checkbox" id="metric-roas">
+                                                <label for="metric-roas">ROAS</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="acos">
+                                                <input type="checkbox" id="metric-acos">
+                                                <label for="metric-acos">ACOS</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="tcos">
+                                                <input type="checkbox" id="metric-tcos">
+                                                <label for="metric-tcos">TCOS</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="sales">
+                                                <input type="checkbox" id="metric-sales">
+                                                <label for="metric-sales">Sales</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="totalSales">
+                                                <input type="checkbox" id="metric-totalSales">
+                                                
+                                                <label for="metric-totalSales">Total Sales</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="orders">
+                                                <input type="checkbox" id="metric-orders">
+                                                <label for="metric-orders">No of Orders</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="sessions">
+                                                <input type="checkbox" id="metric-sessions">
+                                                <label for="metric-sessions">Sessions</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="pageviews">
+                                                <input type="checkbox" id="metric-pageviews">
+                                                <label for="metric-pageviews">Page Views</label>
+                                            </div>
+                                            <div class="multi-select-option" data-value="conversionRate">
+                                                <input type="checkbox" id="metric-conversionRate">
+                                                <label for="metric-conversionRate">Conversion Rate</label>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="chart-controls">
-                                    <div class="chart-control-group">
-                                        <div class="multi-select-dropdown" id="chartMetricDropdown">
-                                            <div class="multi-select-toggle" id="chartMetricToggle">
-                                                <span id="chartMetricText">Select Metrics</span>
-                                                <span class="material-icons">keyboard_arrow_down</span>
-                                            </div>
-                                            <div class="multi-select-options" id="chartMetricOptions" style="display: none;">
-                                                <div class="multi-select-option" data-value="spend">
-                                                    <input type="checkbox" id="metric-spend">
-                                                    <label for="metric-spend">Ad Spend</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="cpc">
-                                                    <input type="checkbox" id="metric-cpc">
-                                                    <label for="metric-cpc">AVG. CPC</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="clicks">
-                                                    <input type="checkbox" id="metric-clicks">
-                                                    <label for="metric-clicks">Ad Clicks</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="roas">
-                                                    <input type="checkbox" id="metric-roas">
-                                                    <label for="metric-roas">ROAS</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="acos">
-                                                    <input type="checkbox" id="metric-acos">
-                                                    <label for="metric-acos">ACOS</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="tcos">
-                                                    <input type="checkbox" id="metric-tcos">
-                                                    <label for="metric-tcos">TCOS</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="sales">
-                                                    <input type="checkbox" id="metric-sales">
-                                                    <label for="metric-sales">Sales</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="totalSales">
-                                                    <input type="checkbox" id="metric-totalSales">
-                                                    
-                                                    <label for="metric-totalSales">Total Sales</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="orders">
-                                                    <input type="checkbox" id="metric-orders">
-                                                    <label for="metric-orders">No of Orders</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="sessions">
-                                                    <input type="checkbox" id="metric-sessions">
-                                                    <label for="metric-sessions">Sessions</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="pageviews">
-                                                    <input type="checkbox" id="metric-pageviews">
-                                                    <label for="metric-pageviews">Page Views</label>
-                                                </div>
-                                                <div class="multi-select-option" data-value="conversionRate">
-                                                    <input type="checkbox" id="metric-conversionRate">
-                                                    <label for="metric-conversionRate">Conversion Rate</label>
-                                                </div>
-                                            </div>
+                                <div class="chart-control-group">
+                                    <select class="period-selector" id="chartViewMode" title="Choose view mode" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd; font-size: 13px; cursor: pointer;">
+                                        <option value="normalized">Normalized (0-1)</option>
+                                        <option value="simple">Simple View</option>
+                                    </select>
+                                </div>
+                                <div class="chart-control-group">
+                                    <div class="period-dropdown-container">
+                                        <button class="period-toggle" id="periodToggle">
+                                            <span id="periodDisplay">Daily</span>
+                                            <span class="material-icons">keyboard_arrow_down</span>
+                                        </button>
+                                        <div class="period-dropdown" id="periodDropdown" style="display:none">
+                                            <button data-period="daily">Daily</button>
+                                            <button data-period="weekly">Weekly</button>
+                                            <button data-period="monthly">Monthly</button>
                                         </div>
                                     </div>
-                                    <div class="chart-control-group">
-                                        <select class="period-selector" id="chartViewMode" title="Choose view mode" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd; font-size: 13px; cursor: pointer;">
-                                            <option value="normalized">Normalized (0-1)</option>
-                                            <option value="simple">Simple View</option>
-                                        </select>
-                                    </div>
-                                    <div class="chart-control-group">
-                                        <div class="period-dropdown-container">
-                                            <button class="period-toggle" id="periodToggle">
-                                                <span id="periodDisplay">Daily</span>
-                                                <span class="material-icons">keyboard_arrow_down</span>
-                                            </button>
-                                            <div class="period-dropdown" id="periodDropdown" style="display:none">
-                                                <button data-period="daily">Daily</button>
-                                                <button data-period="weekly">Weekly</button>
-                                                <button data-period="monthly">Monthly</button>
-                                            </div>
-                                        </div>
-                                    </div>
+                                </div>
 
-                                    <!-- Mobile-only fullscreen rotate button -->
-                                    <button class="fullscreen-toggle-btn" id="trendChartRotateFullscreen" title="Rotate chart fullscreen on mobile">
-                                        <span class="material-icons">screen_rotation</span>
-                                        <span class="btn-text">Fullscreen</span>
-                                    </button>
-                                </div>
+                                <!-- Mobile-only fullscreen rotate button -->
+                                <button class="fullscreen-toggle-btn" id="trendChartRotateFullscreen" title="Rotate chart fullscreen on mobile">
+                                    <span class="material-icons">screen_rotation</span>
+                                    <span class="btn-text">Fullscreen</span>
+                                </button>
                             </div>
-                            <div class="chart-wrapper">
-                                <canvas id="trendChart"></canvas>
-                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="trendChart"></canvas>
                         </div>
                     </div>
 

@@ -385,10 +385,12 @@ body {
 
 .content-section {
     display: none;
+    clear: both; /* ADD THIS */
 }
 
 .content-section.active {
     display: block;
+    clear: both; /* ADD THIS */
 }
 
 /* Simple modal for uploading product names (Trend Reports Products tab only) */
@@ -796,17 +798,34 @@ body {
     line-height: 1.2;
 }
 
-/* Charts Section */
-.charts-section {
-    margin-bottom: var(--spacing-2xl);
-}
-
-.chart-container {
+/* Chart Section - Match business_reports.css exactly */
+.chart-section {
     background: var(--bg-primary);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
-    overflow: hidden;
     border: 1px solid var(--border-primary);
+    margin-bottom: calc(var(--spacing-2xl) + var(--spacing-xl));
+    position: relative;
+    z-index: 10;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    display: block;
+    padding-bottom: 40px;
+    overflow: visible;
+}
+
+.chart-container {
+    padding: var(--spacing-lg);
+    height: 400px;
+    position: relative;
+    overflow: visible;
+    width: 100%;
+    box-sizing: border-box;
+    max-width: 100%;
+    background: #ffffff;
+    margin-bottom: 60px;
+    z-index: 10;
 }
 
 .chart-header {
@@ -816,6 +835,15 @@ body {
     justify-content: space-between;
     align-items: center;
     background: var(--bg-secondary);
+    position: relative;
+    z-index: 1;
+    overflow: visible;
+    width: 100%;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    flex-shrink: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .chart-title {
@@ -825,6 +853,8 @@ body {
     font-size: var(--font-size-xl);
     font-weight: 600;
     color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
 }
 
 .chart-title .material-icons {
@@ -843,6 +873,11 @@ body {
 .chart-controls {
     display: flex;
     gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    position: relative;
+    z-index: 1;
+    align-items: center;
+    justify-content: flex-end;
 }
 
 .chart-control-group {
@@ -864,8 +899,26 @@ body {
 .multi-select-dropdown {
     position: relative;
     min-width: 150px;
-    z-index: 100;
+    z-index: 1001; /* Higher than chart container */
 }
+
+/* Ensure chart container properly contains dropdowns */
+.chart-container .multi-select-dropdown {
+    position: relative;
+    z-index: 1001; /* Higher than chart container */
+}
+
+.chart-container .multi-select-options {
+    position: absolute;
+    z-index: 1002; /* Ensure it's above everything */
+}
+
+/* Ensure chart container header allows dropdown overflow */
+.chart-header {
+    overflow: visible;
+}
+
+/* Chart container styling - match business_reports.css */
 
 .multi-select-toggle {
     display: flex;
@@ -919,7 +972,7 @@ body {
     box-shadow: 0 8px 20px rgba(0,0,0,.15);
     border-radius: 8px;
     padding: 6px;
-    z-index: 1000;
+    z-index: 1002; /* Ensure it's above everything */
     max-height: 200px;
     overflow-y: auto;
     display: none !important;
@@ -982,9 +1035,12 @@ body {
     background: rgba(59, 130, 246, 0.05);
 }
 
-.chart-wrapper {
-    padding: var(--spacing-xl);
-    height: 400px;
+/* Chart container canvas - match business_reports.css */
+.chart-container canvas {
+    max-width: 100%;
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 
 /* Table Section */
@@ -995,6 +1051,9 @@ body {
     /* Allow dropdowns inside to overflow without being clipped */
     overflow: visible;
     border: 1px solid var(--border-primary);
+    margin-top: 80px; /* INCREASE from var(--spacing-2xl) to 80px */
+    position: relative;
+    z-index: 1;
 }
 
 .table-header {
@@ -1944,6 +2003,11 @@ body {
     .metric-value {
         font-size: var(--font-size-2xl);
     }
+    
+    .chart-container {
+        height: 450px;
+        min-height: 450px;
+    }
 }
 
 @media (max-width: 992px) {
@@ -2073,6 +2137,14 @@ body {
 @media (max-width: 768px) {
     .metrics-grid {
         grid-template-columns: 1fr;
+    }
+    
+    .chart-section {
+        margin-bottom: var(--spacing-2xl);
+    }
+    
+    .table-section {
+        margin-top: var(--spacing-2xl);
     }
     
     .table-wrapper {
@@ -2315,9 +2387,10 @@ body {
         width: 100%;
     }
     
-    .chart-wrapper {
+    .chart-container {
         padding: var(--spacing-md);
-        height: 300px;
+        height: 400px;
+        min-height: 400px;
     }
     
     .table-header {
@@ -2543,7 +2616,7 @@ body {
     animation: slideInUp 0.6s ease forwards;
 }
 
-.chart-container,
+.chart-section,
 .table-section {
     animation: fadeIn 0.8s ease forwards;
 }
@@ -2648,7 +2721,7 @@ body {
 .trend-page .fullscreen-toggle-btn:hover { border-color: var(--orange); color: var(--orange); background: var(--bg-hover); }
 @media (max-width: 768px) { .trend-page .fullscreen-toggle-btn { display: inline-flex; } }
 
-.trend-page .chart-fullscreen-active { 
+.trend-page .chart-container.chart-fullscreen-active { 
   position: fixed; 
   inset: 0; 
   background: var(--bg-primary); 
@@ -2658,9 +2731,13 @@ body {
   align-items: center; 
   justify-content: center;
   flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border-radius: 0;
 }
 
-.trend-page .chart-fullscreen-active::before {
+.trend-page .chart-container.chart-fullscreen-active::before {
   content: '✕';
   position: absolute;
   top: 16px;
@@ -2680,21 +2757,11 @@ body {
   transition: background-color 0.2s ease;
 }
 
-.trend-page .chart-fullscreen-active::before:hover {
+.trend-page .chart-container.chart-fullscreen-active::before:hover {
   background: rgba(0, 0, 0, 0.9);
 }
 
-.trend-page .chart-fullscreen-active .chart-wrapper {
-  width: 85%;
-  height: 75%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: auto;
-  padding: 20px;
-}
-
-.trend-page .chart-fullscreen-active canvas { 
+.trend-page .chart-container.chart-fullscreen-active canvas { 
   width: 100% !important; 
   height: 100% !important; 
   max-width: 85vw; 
@@ -2702,6 +2769,6 @@ body {
 }
 
 @media (max-width: 768px) and (orientation: portrait) {
-  .trend-page .chart-fullscreen-active.use-rotate-fallback { overflow: hidden; }
-  .trend-page .chart-fullscreen-active.use-rotate-fallback canvas { transform: rotate(90deg); transform-origin: center; }
+  .trend-page .chart-container.chart-fullscreen-active.use-rotate-fallback { overflow: hidden; }
+  .trend-page .chart-container.chart-fullscreen-active.use-rotate-fallback canvas { transform: rotate(90deg); transform-origin: center; }
 }

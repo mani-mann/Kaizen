@@ -351,7 +351,7 @@ class TrendReports {
         if (fsBtn) {
             fsBtn.addEventListener('click', async () => {
                 try {
-                    const chartSection = document.querySelector('.charts-section .chart-container');
+                    const chartSection = document.querySelector('.chart-section .chart-container');
                     if (!chartSection) return;
                     chartSection.classList.add('chart-fullscreen-active');
                     
@@ -418,7 +418,7 @@ class TrendReports {
 
         // Exit fullscreen handler
         document.addEventListener('fullscreenchange', () => {
-            const chartContainer = document.querySelector('.charts-section .chart-container');
+            const chartContainer = document.querySelector('.chart-section .chart-container');
             if (!document.fullscreenElement && chartContainer) {
                 this.exitFullscreen();
             }
@@ -429,7 +429,7 @@ class TrendReports {
             // Only handle clicks on the close button or outside chart area
             if (e.target.matches('.chart-fullscreen-active::before') || 
                 (e.target.parentElement && e.target.parentElement.classList.contains('chart-fullscreen-active'))) {
-                const chartContainer = document.querySelector('.charts-section .chart-container');
+                const chartContainer = document.querySelector('.chart-section .chart-container');
                 if (chartContainer && chartContainer.classList.contains('chart-fullscreen-active')) {
                     // Exit fullscreen
                     if (document.exitFullscreen) {
@@ -5528,7 +5528,7 @@ class TrendReports {
     }
 
     exitFullscreen() {
-        const chartContainer = document.querySelector('.charts-section .chart-container');
+        const chartContainer = document.querySelector('.chart-section .chart-container');
         if (chartContainer) {
             chartContainer.classList.remove('chart-fullscreen-active');
             chartContainer.classList.remove('use-rotate-fallback');
