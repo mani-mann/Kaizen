@@ -250,6 +250,41 @@ body {
   gap: var(--spacing-lg);
 }
 
+.clear-cache-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(238, 90, 111, 0.25);
+}
+
+.clear-cache-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(238, 90, 111, 0.35);
+  background: linear-gradient(135deg, #ff5252 0%, #e04556 100%);
+}
+
+.clear-cache-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(238, 90, 111, 0.3);
+}
+
+.clear-cache-btn .material-icons {
+  font-size: 18px;
+}
+
+.clear-cache-btn .clear-cache-text {
+  font-family: 'Inter', sans-serif;
+}
+
 /* ================================
    Comparison Report Layout
    ================================ */

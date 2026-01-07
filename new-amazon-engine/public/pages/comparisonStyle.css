@@ -310,3 +310,53 @@
   margin-right: 6px;
 }
 
+/* Chart.js Tooltip Custom Styling */
+/* Note: Chart.js applies backgroundColor, titleColor, bodyColor as inline styles which override CSS */
+.chartjs-tooltip {
+  opacity: 1 !important;
+  position: absolute;
+  border-radius: 8px !important;
+  pointer-events: none;
+  transition: all 0.1s ease;
+  max-height: 600px !important;
+  overflow-y: auto;
+  padding: 12px !important;
+  font-family: 'Inter', sans-serif !important;
+  z-index: 9999 !important;
+  /* Don't force background or text color - let Chart.js config handle it via inline styles */
+}
+
+.chartjs-tooltip::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chartjs-tooltip::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+}
+
+.chartjs-tooltip::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.chartjs-tooltip::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Ensure tooltip body can expand */
+.chartjs-tooltip-body {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+/* Chart container adjustments to prevent tooltip clipping */
+.chart-container {
+  overflow: visible !important;
+  position: relative;
+}
+
+.chart-section {
+  overflow: visible !important;
+}
+

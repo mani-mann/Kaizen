@@ -75,7 +75,7 @@ class TrendReports {
         this.dateOrder = 'desc';
         this.sortDirection = 'desc';
         // Chart view mode: 'normalized' or 'simple'
-        this.chartViewMode = 'normalized';
+        this.chartViewMode = 'simple';
         this.currentMonth = undefined;
         this.currentYear = undefined;
         this.debounceTimer = null;
@@ -102,6 +102,20 @@ class TrendReports {
     }
 
     init() {
+        // CRITICAL: Set chart view mode from HTML select immediately to ensure correct default
+        const chartViewModeSelect = document.getElementById('chartViewMode');
+        if (chartViewModeSelect) {
+            const selectedOption = chartViewModeSelect.querySelector('option[selected]');
+            if (selectedOption) {
+                chartViewModeSelect.value = selectedOption.value;
+                this.chartViewMode = selectedOption.value;
+            } else {
+                // Default to simple if nothing is selected
+                chartViewModeSelect.value = 'simple';
+                this.chartViewMode = 'simple';
+            }
+        }
+        
         this.setupEventListeners();
         this.initializeDatePicker();
         this.initializePeriodDropdown();
@@ -200,6 +214,17 @@ class TrendReports {
         // Chart view mode selector (Simple vs Normalized)
         const chartViewMode = document.getElementById('chartViewMode');
         if (chartViewMode) {
+            // Ensure select element has the correct value set
+            const selectedOption = chartViewMode.querySelector('option[selected]');
+            if (selectedOption) {
+                chartViewMode.value = selectedOption.value;
+            } else if (!chartViewMode.value || chartViewMode.value === '') {
+                chartViewMode.value = 'simple';
+            }
+            
+            // Read initial value from HTML to sync with selected option
+            this.chartViewMode = chartViewMode.value || 'simple';
+            
             chartViewMode.addEventListener('change', (e) => {
                 this.chartViewMode = e.target.value;
                 this.updateChart();
@@ -2055,6 +2080,25 @@ class TrendReports {
         if (this.trendChart) {
             this.trendChart.destroy();
             this.trendChart = null;
+        }
+        
+        // Ensure chartViewMode is synced with HTML select element
+        const chartViewModeSelect = document.getElementById('chartViewMode');
+        if (chartViewModeSelect) {
+            // Read value from select, with fallback to checking selected option
+            const selectValue = chartViewModeSelect.value;
+            if (selectValue) {
+                this.chartViewMode = selectValue;
+            } else {
+                // Fallback: check which option has selected attribute
+                const selectedOption = chartViewModeSelect.querySelector('option[selected]');
+                if (selectedOption) {
+                    this.chartViewMode = selectedOption.value || 'simple';
+                } else {
+                    // Default to simple if nothing is selected
+                    this.chartViewMode = 'simple';
+                }
+            }
         }
         
         // Check if normalized view is selected
@@ -3937,6 +3981,7 @@ class TrendReports {
         // Apply name filter if multi-select has items; keep true DAILY TOTAL rows
         // Note: Upload filter takes priority, so if upload filter is active, this is skipped
         if (!hasUploadedFilter && this.selectedNames && this.selectedNames.size > 0) {
+            const beforeFilter = data.length;
             data = data.filter(item => {
                 const nm = (item.displayName || item.name) || '';
                 // Treat only our explicit DAILY TOTAL helper rows as totals
@@ -3944,6 +3989,30 @@ class TrendReports {
                 const isTotal = nm.includes('📊') || lower.includes('daily total');
                 return isTotal || this.selectedNames.has(nm);
             });
+            
+            // Debug: Log filtering results for search-terms
+            if (this.currentCategory === 'search-terms') {
+                const itemsByTerm = {};
+                data.forEach(item => {
+                    const nm = (item.displayName || item.name) || '';
+                    if (!nm.includes('📊')) {
+                        if (!itemsByTerm[nm]) itemsByTerm[nm] = [];
+                        itemsByTerm[nm].push({
+                            campaign: (item.campaignName || item.campaign_name || '').trim(),
+                            date: item.date,
+                            spend: item.spend
+                        });
+                    }
+                });
+                
+                console.log('🔍 Filter Results:', {
+                    selectedSearchTerms: Array.from(this.selectedNames),
+                    dataBeforeFilter: beforeFilter,
+                    dataAfterFilter: data.length,
+                    itemsBySearchTerm: itemsByTerm,
+                    note: 'Each search term should have multiple items if it has multiple campaigns'
+                });
+            }
         } else if (this.selectedName) {
             data = data.filter(item => (item.displayName || item.name) === this.selectedName);
         }
@@ -4118,8 +4187,35 @@ class TrendReports {
         // Build date buckets based on currentTimePeriod
         const buckets = this.buildDateBuckets(data);
         
-        // Group data by product name
+        // Group data by product name (for search-terms: by search_term + campaign)
         const groupedData = this.groupDataByProductForPivot(data, buckets);
+        
+        // Debug: Verify grouping created separate rows for each campaign
+        if (this.currentCategory === 'search-terms' && this.selectedNames && this.selectedNames.size > 0) {
+            // Count how many groups exist for each selected search term
+            const selectedTerms = Array.from(this.selectedNames);
+            const groupsByTerm = {};
+            groupedData.forEach(g => {
+                const term = g.name;
+                if (!groupsByTerm[term]) {
+                    groupsByTerm[term] = [];
+                }
+                groupsByTerm[term].push({
+                    campaign: g.campaignName || 'N/A',
+                    isTotal: String(term || '').includes('📊')
+                });
+            });
+            
+            console.log('🔍 Grouping Verification:', {
+                selectedSearchTerms: selectedTerms.length,
+                selectedTerms: selectedTerms,
+                rawDataItems: data.length,
+                totalGroupedRows: groupedData.length,
+                groupsBySearchTerm: groupsByTerm,
+                expectedBehavior: 'Each (search_term, campaign) should be a separate row',
+                note: 'If a search term has multiple campaigns, it should appear multiple times in groupsBySearchTerm'
+            });
+        }
         
         // Compute totals per product to prioritize rows with data
         const withTotals = groupedData.map(g => {
@@ -4131,8 +4227,38 @@ class TrendReports {
             return { ...g, __totalSales: totalSales, __totalSpend: totalSpend, __totalSessions: totalSessions, __totalPageviews: totalPageviews };
         });
 
-        // Sort: products with data first (by sales desc, then spend), keep name sort when explicitly selected
+        // Sort: For search-terms, group by search term name first, then sort within each group
+        // For other categories, use the original sorting logic
         let sortedData = withTotals.sort((a, b) => {
+            // Check if either is a DAILY TOTAL row - these always go first
+            const aIsTotal = String(a.name || '').includes('📊') || String(a.name || '').toLowerCase().includes('daily total');
+            const bIsTotal = String(b.name || '').includes('📊') || String(b.name || '').toLowerCase().includes('daily total');
+            if (aIsTotal && !bIsTotal) return -1;
+            if (!aIsTotal && bIsTotal) return 1;
+            if (aIsTotal && bIsTotal) return 0;
+            
+            // For search-terms category: Group by search term name first, then sort within each group
+            if (this.currentCategory === 'search-terms') {
+                const aName = a.name.toLowerCase();
+                const bName = b.name.toLowerCase();
+                
+                // First, sort by search term name (alphabetically)
+                if (aName !== bName) {
+                    return aName.localeCompare(bName);
+                }
+                
+                // Same search term - now sort by campaign name, then by spend
+                const aCampaign = (a.campaignName || '').toLowerCase();
+                const bCampaign = (b.campaignName || '').toLowerCase();
+                if (aCampaign !== bCampaign) {
+                    return aCampaign.localeCompare(bCampaign);
+                }
+                
+                // Same campaign - sort by total spend (descending)
+                return (b.__totalSpend || 0) - (a.__totalSpend || 0);
+            }
+            
+            // For other categories, use original sorting logic
             if (this.sortColumn === 'name') {
                 const an = a.name.toLowerCase();
                 const bn = b.name.toLowerCase();
@@ -4163,35 +4289,15 @@ class TrendReports {
             return a.name.localeCompare(b.name);
         });
 
-        // Ensure DAILY TOTAL rows always stay on top for all categories
-        {
-            const isTotalName = (nm) => {
-                const s = String(nm || '');
-                return s.includes('📊') || s.toLowerCase().includes('daily total');
-            };
-            const totalsFirst = [];
-            const others = [];
-            sortedData.forEach(g => { (isTotalName(g.name) ? totalsFirst : others).push(g); });
-            sortedData = [...totalsFirst, ...others];
-        }
+        // Note: DAILY TOTAL rows are already handled in the sort function above
+        // No need to re-sort here since we already put totals first in the sort comparator
         
         const startIndex = (this.currentPage - 1) * this.itemsPerPage;
         const endIndex = startIndex + this.itemsPerPage;
         const pageData = sortedData.slice(startIndex, endIndex);
         
-        // For search-terms, build mapping of term -> set of campaign names (excluding DAILY TOTAL)
-        let campaignsByTerm = new Map();
-        if (this.currentCategory === 'search-terms') {
-            data.forEach(item => {
-                const nm = (item.displayName || item.name) || '';
-                const isTotal = String(item.name || '').includes('📊') || String(item.name || '').toLowerCase().includes('daily total');
-                if (isTotal) return;
-                const c = item.campaignName || item.campaign_name || '';
-                if (!c) return;
-                if (!campaignsByTerm.has(nm)) campaignsByTerm.set(nm, new Set());
-                campaignsByTerm.get(nm).add(String(c));
-            });
-        }
+        // For search-terms, campaigns are now part of the grouping key
+        // No need for separate mapping since each group has its own campaignName
 
         // Render dynamic header (name + optional campaign + metric + date columns)
         const nameHeader = this.currentCategory === 'campaigns' ? 'Campaign Name' : (this.currentCategory === 'search-terms' ? 'Search Term' : 'Product Name');
@@ -4427,12 +4533,10 @@ class TrendReports {
                 const productNameCell = `<td style="font-weight: 600;">${product.name}</td>`;
                 const campaignNamesCell = (this.currentCategory === 'search-terms') ? (() => {
                     if (isTotalRowCheck) return '<td>—</td>';
-                    // Prefer grouped campaigns collected during aggregation
-                    const groupedSet = product.campaigns instanceof Set ? product.campaigns : null;
-                    const set = groupedSet && groupedSet.size > 0 ? groupedSet : campaignsByTerm.get(product.name);
-                    if (!set || set.size === 0) return '<td class="campaign-col">—</td>';
-                    const list = Array.from(set).sort().join(' | ');
-                    return `<td class="campaign-col">${list}</td>`;
+                    // Each group now has a single campaignName
+                    const campaignName = product.campaignName || '';
+                    if (!campaignName || campaignName === 'Unknown') return '<td class="campaign-col">—</td>';
+                    return `<td class="campaign-col">${campaignName}</td>`;
                 })() : '';
                 
                 // Check if this is a total row (contains "DAILY TOTAL" or "📊")
@@ -4451,8 +4555,44 @@ class TrendReports {
             }).join('');
         }).join('');
         
-        this.updatePagination(sortedData.length);
-        this.updateResultsCount(sortedData.length);
+        // Store grouped data for reference
+        this.groupedTableData = sortedData;
+        
+        // Debug: Log the count to verify it includes all grouped rows
+        if (this.currentCategory === 'search-terms') {
+            const searchTermsWithMultipleCampaigns = sortedData.filter(g => {
+                const name = g.name;
+                const isTotal = String(name || '').includes('📊') || String(name || '').toLowerCase().includes('daily total');
+                if (isTotal) return false;
+                return sortedData.filter(g2 => g2.name === name && !String(g2.name || '').includes('📊')).length > 1;
+            });
+            
+            console.log('🔍 Results Count Debug:', {
+                selectedSearchTerms: this.selectedNames ? Array.from(this.selectedNames).length : 0,
+                totalGroupedRows: sortedData.length,
+                searchTermsWithMultipleCampaigns: searchTermsWithMultipleCampaigns.length,
+                breakdown: Array.from(new Set(sortedData.map(g => g.name).filter(n => !String(n || '').includes('📊')))).map(term => {
+                    const rowsForTerm = sortedData.filter(g => g.name === term);
+                    return {
+                        searchTerm: term,
+                        campaignCount: rowsForTerm.length,
+                        campaigns: rowsForTerm.map(r => r.campaignName || 'N/A')
+                    };
+                }).slice(0, 10)
+            });
+        }
+        
+        // IMPORTANT: Use sortedData.length (total grouped rows including all campaigns)
+        // NOT the number of selected search terms - each (search_term, campaign) is a separate row
+        const totalRows = sortedData.length;
+        console.log('🔍 Final Count Calculation:', {
+            selectedSearchTerms: this.selectedNames ? Array.from(this.selectedNames).length : 0,
+            totalGroupedRows: totalRows,
+            note: 'Count should show total rows (one per campaign), not just search term count'
+        });
+        
+        this.updatePagination(totalRows);
+        this.updateResultsCount(totalRows);
         
         // Re-attach sort event listeners for date columns
         document.querySelectorAll('.sortable').forEach(header => {
@@ -4524,6 +4664,8 @@ class TrendReports {
 
     groupDataByProductForPivot(data, buckets) {
         const groups = {};
+        this._campaignDebugLogged = false; // Reset debug flag for this grouping operation
+        const groupKeyTracker = new Map(); // Track group keys to detect duplicates
         
         data.forEach(item => {
             const name = item.displayName || item.name;
@@ -4538,9 +4680,67 @@ class TrendReports {
             else if (this.currentTimePeriod === 'monthly') { key = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`; }
             else { key = this.normalizeDateKey(item.date); }
             
-            if (!groups[name]) {
-                groups[name] = {
-                    name: name,
+            // For search-terms, group by both name and campaign to create individual rows
+            // Exception: DAILY TOTAL rows should not be split by campaign
+            let groupKey = name;
+            if (this.currentCategory === 'search-terms') {
+                const nm = String(item.name || '');
+                const isDailyTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
+                if (!isDailyTotal) {
+                    // Normalize campaign name to prevent duplicates from whitespace/case issues
+                    const campaignName = (item.campaignName || item.campaign_name || '').trim();
+                    
+                    // Debug logging for campaign names with pipes
+                    if (campaignName && campaignName.includes('|') && !this._campaignDebugLogged) {
+                        console.log('🔍 Found pipe-separated campaign name:', {
+                            searchTerm: name,
+                            campaignName: campaignName,
+                            splitParts: campaignName.split('|').map(p => p.trim()).filter(p => p),
+                            date: item.date,
+                            spend: item.spend,
+                            sales: item.sales
+                        });
+                        this._campaignDebugLogged = true; // Log once per grouping operation
+                    }
+                    
+                    // Use campaign name as part of grouping key, or 'Unknown' if missing
+                    groupKey = campaignName ? `${name}|||${campaignName}` : `${name}|||Unknown`;
+                    
+                    // Track group keys to verify uniqueness
+                    if (groupKeyTracker.has(groupKey)) {
+                        const existing = groupKeyTracker.get(groupKey);
+                        console.warn('⚠️ Duplicate group key detected:', {
+                            groupKey: groupKey,
+                            searchTerm: name,
+                            campaignName: campaignName,
+                            existingDate: existing.date,
+                            newDate: item.date,
+                            existingSpend: existing.spend,
+                            newSpend: item.spend
+                        });
+                    } else {
+                        groupKeyTracker.set(groupKey, {
+                            searchTerm: name,
+                            campaignName: campaignName,
+                            date: item.date,
+                            spend: item.spend,
+                            sales: item.sales
+                        });
+                    }
+                }
+                // For DAILY TOTAL rows, keep groupKey as just the name (no campaign split)
+            }
+            
+            if (!groups[groupKey]) {
+                // Check if this is a DAILY TOTAL row
+                const nm = String(item.name || '');
+                const isDailyTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
+                
+                groups[groupKey] = {
+                    name: name,  // Keep original search term name for display
+                    campaignName: (this.currentCategory === 'search-terms' && !isDailyTotal)
+                        ? ((item.campaignName || item.campaign_name || '').trim() || 'Unknown')
+                        : undefined,
                     spendByKey: {},
                     salesByKey: {},
                     totalSalesByKey: {},
@@ -4553,20 +4753,18 @@ class TrendReports {
                     tcosByKey: {},
                     ctrByKey: {},
                     conversionRateByKey: {},
-                    roasByKey: {},
-                    // For search-terms, track all related campaign names
-                    campaigns: new Set()
+                    roasByKey: {}
                 };
             }
             
             // Aggregate all metrics by date key
-            const currentSpend = groups[name].spendByKey[key] || 0;
-            const currentSales = groups[name].salesByKey[key] || 0;
+            const currentSpend = groups[groupKey].spendByKey[key] || 0;
+            const currentSales = groups[groupKey].salesByKey[key] || 0;
             const itemSpend = item.spend || 0;
             const itemSales = item.sales || 0;
             
-            groups[name].spendByKey[key] = currentSpend + itemSpend;
-            groups[name].salesByKey[key] = currentSales + itemSales;
+            groups[groupKey].spendByKey[key] = currentSpend + itemSpend;
+            groups[groupKey].salesByKey[key] = currentSales + itemSales;
             
             // Debug: Log data aggregation for ACOS calculation
             if (itemSpend > 0 || itemSales > 0) {
@@ -4575,9 +4773,9 @@ class TrendReports {
                     itemSales: itemSales,
                     currentSpend: currentSpend,
                     currentSales: currentSales,
-                    newSpend: groups[name].spendByKey[key],
-                    newSales: groups[name].salesByKey[key],
-                    calculatedAcos: groups[name].salesByKey[key] > 0 ? (groups[name].spendByKey[key] / groups[name].salesByKey[key]) * 100 : 0
+                    newSpend: groups[groupKey].spendByKey[key],
+                    newSales: groups[groupKey].salesByKey[key],
+                    calculatedAcos: groups[groupKey].salesByKey[key] > 0 ? (groups[groupKey].spendByKey[key] / groups[groupKey].salesByKey[key]) * 100 : 0
                 });
             }
             // Prevent duplicating per-day Total Sales across rows. For search-terms and
@@ -4587,45 +4785,42 @@ class TrendReports {
                 const nm = String(item.name || '');
                 const isDailyTotal = nm.includes('📊') || nm.toLowerCase().includes('daily total');
                 if (isDailyTotal) {
-                    const existing = groups[name].totalSalesByKey[key] || 0;
+                    const existing = groups[groupKey].totalSalesByKey[key] || 0;
                     const next = Number(item.totalSales || 0);
-                    groups[name].totalSalesByKey[key] = Math.max(existing, next);
+                    groups[groupKey].totalSalesByKey[key] = Math.max(existing, next);
                 }
                 // For non-total rows, do not add item.totalSales to avoid showing
                 // large account-level totals on individual terms.
             } else {
-                groups[name].totalSalesByKey[key] = (groups[name].totalSalesByKey[key] || 0) + (item.totalSales || 0);
+                groups[groupKey].totalSalesByKey[key] = (groups[groupKey].totalSalesByKey[key] || 0) + (item.totalSales || 0);
             }
-            groups[name].clicksByKey[key] = (groups[name].clicksByKey[key] || 0) + (item.clicks || 0);
-            groups[name].sessionsByKey[key] = (groups[name].sessionsByKey[key] || 0) + (item.sessions || 0);
-            groups[name].pageviewsByKey[key] = (groups[name].pageviewsByKey[key] || 0) + (item.pageviews || 0);
-            groups[name].ordersByKey[key] = (groups[name].ordersByKey[key] || 0) + (item.orders || 0);
+            groups[groupKey].clicksByKey[key] = (groups[groupKey].clicksByKey[key] || 0) + (item.clicks || 0);
+            groups[groupKey].sessionsByKey[key] = (groups[groupKey].sessionsByKey[key] || 0) + (item.sessions || 0);
+            groups[groupKey].pageviewsByKey[key] = (groups[groupKey].pageviewsByKey[key] || 0) + (item.pageviews || 0);
+            groups[groupKey].ordersByKey[key] = (groups[groupKey].ordersByKey[key] || 0) + (item.orders || 0);
             
             // AVG. CPC should be computed from aggregated spend/clicks for the date
             if (this.currentCategory === 'campaigns' || this.currentCategory === 'search-terms') {
-                const spendTotal = groups[name].spendByKey[key] || 0;
-                const clicksTotal = groups[name].clicksByKey[key] || 0;
-                groups[name].cpcByKey[key] = clicksTotal > 0 ? spendTotal / clicksTotal : 0;
+                const spendTotal = groups[groupKey].spendByKey[key] || 0;
+                const clicksTotal = groups[groupKey].clicksByKey[key] || 0;
+                groups[groupKey].cpcByKey[key] = clicksTotal > 0 ? spendTotal / clicksTotal : 0;
             } else {
-            groups[name].cpcByKey[key] = (groups[name].cpcByKey[key] || 0) + (item.cpc || 0);
+            groups[groupKey].cpcByKey[key] = (groups[groupKey].cpcByKey[key] || 0) + (item.cpc || 0);
             }
 
-            // Collect campaign names for search-terms so UI/export can show them
-            if (this.currentCategory === 'search-terms') {
-                const cn = item.campaignName || item.campaign_name;
-                if (cn) {
-                    groups[name].campaigns.add(String(cn));
-                }
-            }
+            // For search-terms, each group already has a single campaign name
+            // No need to collect multiple campaigns since we're grouping by (name, campaign)
+            // The campaignName is already stored in the group object above
+            
             // Calculate ACOS and TCOS from aggregated spend and sales (not by adding individual values)
-            const aggSpend = groups[name].spendByKey[key] || 0;
-            const aggSales = groups[name].salesByKey[key] || 0;
+            const aggSpend = groups[groupKey].spendByKey[key] || 0;
+            const aggSales = groups[groupKey].salesByKey[key] || 0;
             const calculatedAcos = aggSales > 0 ? (aggSpend / aggSales) * 100 : 0;
-            groups[name].acosByKey[key] = calculatedAcos;
+            groups[groupKey].acosByKey[key] = calculatedAcos;
             // For TCOS, use totalSales instead of sales
-            const aggTotalSales = groups[name].totalSalesByKey[key] || 0;
+            const aggTotalSales = groups[groupKey].totalSalesByKey[key] || 0;
             const calculatedTcos = aggTotalSales > 0 ? (aggSpend / aggTotalSales) * 100 : 0;
-            groups[name].tcosByKey[key] = calculatedTcos;
+            groups[groupKey].tcosByKey[key] = calculatedTcos;
             
             // Debug: Log ACOS calculation for troubleshooting
             if (aggSpend > 0 && aggSales > 0) {
@@ -4635,14 +4830,14 @@ class TrendReports {
                     calculatedAcos: calculatedAcos,
                     formula: `(${aggSpend} / ${aggSales}) * 100`,
                     category: this.currentCategory,
-                    spendByKey: groups[name].spendByKey,
-                    salesByKey: groups[name].salesByKey
+                    spendByKey: groups[groupKey].spendByKey,
+                    salesByKey: groups[groupKey].salesByKey
                 });
             }
-            groups[name].ctrByKey[key] = (groups[name].ctrByKey[key] || 0) + (item.ctr || 0);
-            groups[name].conversionRateByKey[key] = (groups[name].conversionRateByKey[key] || 0) + (item.conversionRate || 0);
+            groups[groupKey].ctrByKey[key] = (groups[groupKey].ctrByKey[key] || 0) + (item.ctr || 0);
+            groups[groupKey].conversionRateByKey[key] = (groups[groupKey].conversionRateByKey[key] || 0) + (item.conversionRate || 0);
             // Maintain ROAS per key from aggregated spend/sales
-            groups[name].roasByKey[key] = aggSpend > 0 ? aggSales / aggSpend : 0;
+            groups[groupKey].roasByKey[key] = aggSpend > 0 ? aggSales / aggSpend : 0;
         });
         
         return Object.values(groups);
@@ -5157,21 +5352,32 @@ class TrendReports {
                 return { ...g, __totalSales: totalSales, __totalSpend: totalSpend, __totalSessions: totalSessions, __totalPageviews: totalPageviews };
             });
 
-            // Sort: products with data first (same as table)
+            // Sort: Group by search term name first (same as table display)
+            // This ensures all rows for the same search term appear together
             const sortedData = withTotals.sort((a, b) => {
-                if (this.sortColumn === 'name') {
-                    const an = a.name.toLowerCase();
-                    const bn = b.name.toLowerCase();
-                    return this.sortDirection === 'asc' ? (an > bn ? 1 : -1) : (an < bn ? 1 : -1);
+                // Check if either is a DAILY TOTAL row - these always go first
+                const aIsTotal = String(a.name || '').includes('📊') || String(a.name || '').toLowerCase().includes('daily total');
+                const bIsTotal = String(b.name || '').includes('📊') || String(b.name || '').toLowerCase().includes('daily total');
+                if (aIsTotal && !bIsTotal) return -1;
+                if (!aIsTotal && bIsTotal) return 1;
+                if (aIsTotal && bIsTotal) return 0;
+                
+                // Group by search term name first (alphabetically)
+                const aName = a.name.toLowerCase();
+                const bName = b.name.toLowerCase();
+                if (aName !== bName) {
+                    return aName.localeCompare(bName);
                 }
                 
+                // Same search term - now sort by campaign name, then by spend
+                const aCampaign = (a.campaignName || '').toLowerCase();
+                const bCampaign = (b.campaignName || '').toLowerCase();
+                if (aCampaign !== bCampaign) {
+                    return aCampaign.localeCompare(bCampaign);
+                }
                 
-                const aKey = a.__totalSales || a.__totalSpend || 0;
-                const bKey = b.__totalSales || b.__totalSpend || 0;
-                if (bKey !== aKey) return bKey - aKey;
-                if (b.__totalSessions !== a.__totalSessions) return b.__totalSessions - a.__totalSessions;
-                if (b.__totalPageviews !== a.__totalPageviews) return b.__totalPageviews - a.__totalPageviews;
-                return a.name.localeCompare(b.name);
+                // Same campaign - sort by total spend (descending)
+                return (b.__totalSpend || 0) - (a.__totalSpend || 0);
             });
 
             // Ensure DAILY TOTAL appears first in exports (as requested)
@@ -5219,16 +5425,9 @@ class TrendReports {
             headers = [nameHeader, 'Campaign Name', 'Metric', 'Total', ...buckets.labels];
             rows = [];
             
-            // Build term -> campaign set for export (exclude DAILY TOTAL)
-            const termToCampaigns = new Map();
-            data.forEach(item => {
-                if (String(item.name || '').includes('📊')) return;
-                const term = (item.displayName || item.name) || '';
-                const c = item.campaignName || item.campaign_name || '';
-                if (!c) return;
-                if (!termToCampaigns.has(term)) termToCampaigns.set(term, new Set());
-                termToCampaigns.get(term).add(String(c));
-            });
+            // For search-terms, each group already has a single campaignName
+            // No need to build termToCampaigns map since we're grouping by (name, campaign)
+            // Each product in orderedData represents one (search_term, campaign) combination
 
             // Create rows like table display: each search term has multiple rows (one per metric)
             orderedData.forEach(product => {
@@ -5244,8 +5443,9 @@ class TrendReports {
                     if (metric.key === 'tcos' && !isTotal) {
                         return; // suppress individual TCOS rows in export
                     }
-                    const campaignList = isTotal ? '—' : (termToCampaigns.get(product.name) ? Array.from(termToCampaigns.get(product.name)).sort().join(' | ') : '—');
-                    const row = [product.name, campaignList, metric.label]; // term + campaigns + metric
+                    // Each group now has a single campaignName (not multiple campaigns joined)
+                    const campaignName = isTotal ? '—' : (product.campaignName || '—');
+                    const row = [product.name, campaignName, metric.label]; // term + single campaign + metric
                     // Add Total column
                     const sumByKeys = (getter) => buckets.keys.reduce((acc, k) => acc + Number(getter(k) || 0), 0);
                     let totalValue = 0;

@@ -122,7 +122,7 @@ constructor() {
     this.selectedMetrics = ['sessions', 'pageViews', 'unitsOrdered', 'sales'];
     
     // Chart view mode: 'normalized' or 'simple'
-    this.chartViewMode = 'normalized';
+    this.chartViewMode = 'simple';
     // Comment out ASIN filtering to see all data from database
     // this.allowedAsins = new Set([
     //     'B0DNKGMNTP', // Trumps: Periodic Table
@@ -600,6 +600,20 @@ async initializeComponents() {
     // Clear expired cache entries (past 12 PM) on page load
     this.clearExpiredCache();
     
+    // CRITICAL: Set chart view mode from HTML select immediately to ensure correct default
+    const chartViewModeSelect = document.getElementById('chartViewMode');
+    if (chartViewModeSelect) {
+        const selectedOption = chartViewModeSelect.querySelector('option[selected]');
+        if (selectedOption) {
+            chartViewModeSelect.value = selectedOption.value;
+            this.chartViewMode = selectedOption.value;
+        } else {
+            // Default to simple if nothing is selected
+            chartViewModeSelect.value = 'simple';
+            this.chartViewMode = 'simple';
+        }
+    }
+    
     this.setupEventListeners();
     this.initializeDatePicker();
     
@@ -865,6 +879,17 @@ setupEventListeners() {
     // Chart view mode selector (Simple vs Normalized)
     const chartViewMode = document.getElementById('chartViewMode');
     if (chartViewMode) {
+        // Ensure select element has the correct value set
+        const selectedOption = chartViewMode.querySelector('option[selected]');
+        if (selectedOption) {
+            chartViewMode.value = selectedOption.value;
+        } else if (!chartViewMode.value || chartViewMode.value === '') {
+            chartViewMode.value = 'simple';
+        }
+        
+        // Read initial value from HTML to sync with selected option
+        this.chartViewMode = chartViewMode.value || 'simple';
+        
         chartViewMode.addEventListener('change', (e) => {
             this.chartViewMode = e.target.value;
             const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
@@ -3572,12 +3597,33 @@ async updateChart(period = null) {
     } else {
         this.state.chartPeriod = period;
     }
+    
+    // Ensure chartViewMode is synced with HTML select element
+    const chartViewModeSelect = document.getElementById('chartViewMode');
+    if (chartViewModeSelect) {
+        // Read value from select, with fallback to checking selected option
+        const selectValue = chartViewModeSelect.value;
+        if (selectValue) {
+            this.chartViewMode = selectValue;
+        } else {
+            // Fallback: check which option has selected attribute
+            const selectedOption = chartViewModeSelect.querySelector('option[selected]');
+            if (selectedOption) {
+                this.chartViewMode = selectedOption.value || 'simple';
+            } else {
+                // Default to simple if nothing is selected
+                this.chartViewMode = 'simple';
+            }
+        }
+    }
+    
     console.log('📊 updateChart called with period:', period);
     console.log('📊 Chart state:', {
         hasChart: !!this.chart,
         businessDataLength: this.state.businessData?.length || 0,
         filteredDataLength: this.state.filteredData?.length || 0,
-        selectedMetrics: this.selectedMetrics
+        selectedMetrics: this.selectedMetrics,
+        chartViewMode: this.chartViewMode
     });
     
     // Check if normalized view is selected

@@ -59,7 +59,7 @@ class ComparisonReport {
         // Chart
         this.chart = null;
         this.chartPeriod = 'daily';
-        this.chartMode = 'normalized'; // 'normalized' or 'overlay'
+        this.chartMode = 'overlay'; // 'normalized' or 'overlay'
         this.selectedChartMetrics = new Set(DEFAULT_COMPARISON_METRICS);
 
         this.init();
@@ -69,6 +69,20 @@ class ComparisonReport {
         // Clear expired cache on page load
         if (typeof BrowserCache !== 'undefined') {
             BrowserCache.clearExpired('compare');
+        }
+        
+        // CRITICAL: Set chart mode select value immediately to ensure correct default
+        const modeSelect = document.getElementById('comparisonChartMode');
+        if (modeSelect) {
+            const selectedOption = modeSelect.querySelector('option[selected]');
+            if (selectedOption) {
+                modeSelect.value = selectedOption.value;
+                this.chartMode = selectedOption.value;
+            } else {
+                // Default to overlay if nothing is selected
+                modeSelect.value = 'overlay';
+                this.chartMode = 'overlay';
+            }
         }
         
         this.setupMobileMenu();
@@ -609,6 +623,8 @@ class ComparisonReport {
                 this.buildChart();
                 this.populateFilters();
                 this.refreshDaySelector();
+                // Ensure metric checkboxes are synced with default selection
+                this.syncMetricCheckboxes();
                 return;
             }
         }
@@ -683,6 +699,8 @@ class ComparisonReport {
             this.buildChart();
             this.populateFilters();
             this.refreshDaySelector();
+            // Ensure metric checkboxes are synced with default selection
+            this.syncMetricCheckboxes();
             
             // Cache the fetched and processed data
             if (typeof BrowserCache !== 'undefined') {
@@ -995,6 +1013,19 @@ class ComparisonReport {
 
         const modeSelect = document.getElementById('comparisonChartMode');
         if (modeSelect) {
+            // Ensure select element has the correct value set
+            // Check if value is empty or if selected option doesn't match value
+            const selectedOption = modeSelect.querySelector('option[selected]');
+            if (selectedOption) {
+                modeSelect.value = selectedOption.value;
+            } else if (!modeSelect.value || modeSelect.value === '') {
+                // Default to overlay if nothing is explicitly selected
+                modeSelect.value = 'overlay';
+            }
+            
+            // Read initial value from HTML to sync with selected option
+            this.chartMode = modeSelect.value || 'overlay';
+            
             modeSelect.addEventListener('change', (e) => {
                 this.chartMode = e.target.value || 'overlay';
                 this.buildChart();
@@ -1056,6 +1087,25 @@ class ComparisonReport {
         const canvas = document.getElementById('comparisonChart');
         if (!canvas) return;
 
+        // Ensure chartMode is synced with HTML select element
+        const modeSelect = document.getElementById('comparisonChartMode');
+        if (modeSelect) {
+            // Read value from select, with fallback to checking selected option
+            const selectValue = modeSelect.value;
+            if (selectValue) {
+                this.chartMode = selectValue;
+            } else {
+                // Fallback: check which option has selected attribute
+                const selectedOption = modeSelect.querySelector('option[selected]');
+                if (selectedOption) {
+                    this.chartMode = selectedOption.value || 'overlay';
+                } else {
+                    // Default to overlay if nothing is selected
+                    this.chartMode = 'overlay';
+                }
+            }
+        }
+
         if (this.chart) {
             this.chart.destroy();
             this.chart = null;
@@ -1072,6 +1122,12 @@ class ComparisonReport {
     buildDayWiseComparisonChart() {
         const canvas = document.getElementById('comparisonChart');
         if (!canvas) return;
+
+        // Double-check chartMode is correct (should be 'overlay' for normal view)
+        const modeSelect = document.getElementById('comparisonChartMode');
+        if (modeSelect && modeSelect.value !== 'normalized') {
+            this.chartMode = 'overlay';
+        }
 
         // Update day series first
         this.updateDaySeries();
@@ -1099,39 +1155,41 @@ class ComparisonReport {
             conversionRate: { label: 'Conversion Rate (%)', color: '#e83e8c', colorB: '#F48FB1' }
         };
 
-        // Show all metrics, but respect visibility
-        Object.keys(allMetrics).forEach(metricKey => {
+        // Only add selected metrics to datasets
+        this.selectedChartMetrics.forEach(metricKey => {
             const metric = allMetrics[metricKey];
             if (!metric) return;
-            const isVisible = this.selectedChartMetrics.has(metricKey);
             
-            // Range A dataset
+            // Get raw data for both A and B
+            const dataA = this.daySeries.map(day => day.metricsA?.[metricKey] || 0);
+            const dataB = this.daySeries.map(day => day.metricsB?.[metricKey] || 0);
+            
+            // Range A dataset (solid) - shown in legend
             datasets.push({
-                label: `${metric.label} (A)`,
-                data: this.daySeries.map(day => day.metricsA?.[metricKey] || 0),
+                label: metric.label, // No (A) suffix - cleaner legend
+                data: dataA,
                 borderColor: metric.color,
                 backgroundColor: metric.color + '33',
                 tension: 0.3,
                 pointRadius: 4,
                 pointHoverRadius: 6,
                 metricKey: metricKey,
-                rangeType: 'A',
-                hidden: !isVisible
+                rawDataB: dataB, // Store B data for tooltip
+                isSeriesA: true
             });
             
-            // Range B dataset
+            // Range B dataset (dashed) - hidden from legend
             datasets.push({
                 label: `${metric.label} (B)`,
-                data: this.daySeries.map(day => day.metricsB?.[metricKey] || 0),
+                data: dataB,
                 borderColor: metric.colorB,
                 backgroundColor: metric.colorB + '33',
-                borderDash: [5, 5],
+                borderDash: [6, 4],
                 tension: 0.3,
                 pointRadius: 4,
                 pointHoverRadius: 6,
                 metricKey: metricKey,
-                rangeType: 'B',
-                hidden: !isVisible
+                isSeriesA: false
             });
         });
 
@@ -1148,125 +1206,95 @@ class ComparisonReport {
                     },
                     plugins: {
                         legend: {
-                            display: true,
                             position: 'bottom',
                             labels: {
+                                boxWidth: 12,
+                                padding: 15,
                                 usePointStyle: true,
-                                pointStyle: 'circle',
-                                padding: 20,
-                                font: { size: 12 },
-                                boxWidth: 10,
-                                boxHeight: 10,
                                 generateLabels: (chart) => {
                                     const datasets = chart.data.datasets;
                                     const labels = [];
                                     const seenMetrics = new Set();
-                                    
-                                    // Create one legend item per metric (not per range)
-                                    datasets.forEach((dataset, i) => {
-                                        if (dataset.rangeType === 'A') {
-                                            const metricName = dataset.label.replace(' (A)', '');
-                                            if (!seenMetrics.has(metricName)) {
-                                                seenMetrics.add(metricName);
-                                                labels.push({
-                                                    text: metricName,
-                                                    fillStyle: dataset.borderColor,
-                                                    strokeStyle: dataset.borderColor,
-                                                    lineWidth: 2,
-                                                    hidden: !chart.isDatasetVisible(i),
-                                                    datasetIndex: i,
-                                                    pointStyle: 'circle'
-                                                    ,
-                                                    className: chart.isDatasetVisible(i)
-                                                        ? 'comparison-legend-item'
-                                                        : 'comparison-legend-item legend-item-hidden'
-                                                });
-                                            }
-                                        }
+                                    datasets.forEach((dataset, index) => {
+                                        if (!dataset.isSeriesA) return;
+                                        if (seenMetrics.has(dataset.label)) return;
+                                        seenMetrics.add(dataset.label);
+                                        labels.push({
+                                            text: dataset.label,
+                                            fillStyle: dataset.borderColor,
+                                            strokeStyle: dataset.borderColor,
+                                            lineWidth: 2,
+                                            hidden: !chart.isDatasetVisible(index),
+                                            datasetIndex: index,
+                                            pointStyle: 'circle',
+                                            className: chart.isDatasetVisible(index)
+                                                ? 'comparison-legend-item'
+                                                : 'comparison-legend-item legend-item-hidden'
+                                        });
                                     });
                                     return labels;
                                 }
                             },
                             onClick: (e, legendItem, legend) => {
-                                const index = legendItem.datasetIndex;
                                 const chart = legend.chart;
+                                const datasetIndex = legendItem.datasetIndex;
+                                const clickedDataset = chart.data.datasets[datasetIndex];
+                                const metricKey = clickedDataset.metricKey;
                                 
                                 // Toggle both A and B datasets for this metric
-                                if (chart.isDatasetVisible(index)) {
-                                    chart.hide(index);
-                                    chart.hide(index + 1);
-                                } else {
-                                    chart.show(index);
-                                    chart.show(index + 1);
-                                }
+                                chart.data.datasets.forEach((ds, idx) => {
+                                    if (ds.metricKey === metricKey) {
+                                        const isHidden = chart.getDatasetMeta(idx).hidden;
+                                        chart.getDatasetMeta(idx).hidden = !isHidden;
+                                    }
+                                });
+                                
+                                chart.update();
                             }
                         },
                         tooltip: {
-                            enabled: true,
-                            mode: 'index',
-                            intersect: false,
-                            backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                            titleFont: { size: 14, weight: 'bold' },
-                            bodyFont: { size: 12 },
-                            padding: 14,
-                            displayColors: true,
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            titleColor: '#333',
+                            bodyColor: '#666',
+                            borderColor: '#ddd',
+                            borderWidth: 1,
+                            padding: 12,
                             callbacks: {
-                                title: (tooltipItems) => {
-                                    if (tooltipItems.length === 0) return '';
-                                    const dayIndex = tooltipItems[0].dataIndex;
-                                    const dayData = this.daySeries[dayIndex];
-                                    const dayNumber = dayIndex + 1;
-                                    return `Day ${dayNumber}: ${dayData?.dateA || 'N/A'} vs ${dayData?.dateB || 'N/A'}`;
+                                title: (items) => {
+                                    if (items.length === 0) return '';
+                                    const dayIdx = items[0].dataIndex;
+                                    const dayInfo = this.daySeries[dayIdx];
+                                    if (dayInfo) {
+                                        return `Day ${dayIdx + 1}: ${dayInfo.dateA || ''} vs ${dayInfo.dateB || ''}`;
+                                    }
+                                    return items[0].label;
                                 },
-                                label: () => {
-                                    // Don't show individual dataset labels
-                                    return null;
-                                },
-                                afterBody: (tooltipItems) => {
-                                    if (tooltipItems.length === 0) return [];
+                                label: (context) => {
+                                    // Only show A series in tooltip (includes B value)
+                                    if (!context.dataset.isSeriesA) return null;
                                     
-                                    const dayIndex = tooltipItems[0].dataIndex;
-                                    const dayData = this.daySeries[dayIndex];
-                                    if (!dayData) return [];
+                                    const metricKey = context.dataset.metricKey;
+                                    const valA = context.parsed.y;
                                     
-                                    const metricsA = dayData.metricsA || {};
-                                    const metricsB = dayData.metricsB || {};
+                                    // Get B value from stored data
+                                    const valB = context.dataset.rawDataB?.[context.dataIndex] || 0;
                                     
-                                    const lines = [''];  // Add blank line after title
-                                    
-                                    const metricLabels = {
-                                        totalSales: 'Total Sales',
-                                        adSales: 'Ad Sales',
-                                        adSpend: 'Ad Spend',
-                                        acos: 'ACOS',
-                                        tcos: 'TCOS',
-                                        sessions: 'Sessions',
-                                        pageViews: 'Page Views',
-                                        unitsOrdered: 'Units Ordered',
-                                        conversionRate: 'Conversion Rate'
-                                    };
-                                    
-                                    const formatValue = (value, metricKey) => {
-                                        if (['totalSales', 'adSales', 'adSpend'].includes(metricKey)) {
+                                    // Format values based on metric type
+                                    const formatValue = (value, key) => {
+                                        if (['totalSales', 'adSales', 'adSpend'].includes(key)) {
                                             return '₹' + Math.round(value).toLocaleString('en-IN');
-                                        } else if (['acos', 'tcos', 'conversionRate'].includes(metricKey)) {
+                                        } else if (['acos', 'tcos', 'conversionRate'].includes(key)) {
                                             return value.toFixed(1) + '%';
                                         }
                                         return Math.round(value).toLocaleString('en-IN');
                                     };
                                     
-                                    // Show all selected metrics
-                                    const metricsArray = ALL_COMPARISON_METRICS.filter(metricKey => this.selectedChartMetrics.has(metricKey));
-                                    metricsArray.forEach((metricKey, index) => {
-                                        const label = metricLabels[metricKey] || metricKey;
-                                        lines.push(`${label} (A): ${formatValue(metricsA[metricKey] || 0, metricKey)}`);
-                                        lines.push(`${label} (B): ${formatValue(metricsB[metricKey] || 0, metricKey)}`);
-                                        if (index < metricsArray.length - 1) {
-                                            lines.push('');
-                                        }
-                                    });
-                                    
-                                    return lines;
+                                    // "Total Sales: A=₹1,234, B=₹5,678"
+                                    return `${context.dataset.label}: A=${formatValue(valA, metricKey)}, B=${formatValue(valB, metricKey)}`;
+                                },
+                                filter: (item) => {
+                                    // Only show A series in tooltip
+                                    return item.dataset.isSeriesA === true;
                                 }
                             }
                         }
@@ -1283,7 +1311,10 @@ class ComparisonReport {
                             ticks: {
                                 color: '#6c757d',
                                 font: { size: 11 },
-                                callback: (v) => '₹' + Number(v).toLocaleString('en-IN')
+                                callback: (v) => {
+                                    // Format as number with locale string (no currency symbol for mixed metrics)
+                                    return Number(v).toLocaleString('en-IN');
+                                }
                             }
                         }
                     }
@@ -1334,12 +1365,12 @@ class ComparisonReport {
         });
 
         // Build datasets - TWO lines per metric (A and B), each with its own max
+        // Only add selected metrics
         const datasets = [];
         
-        Object.keys(allMetrics).forEach(metricKey => {
+        this.selectedChartMetrics.forEach(metricKey => {
             const metric = allMetrics[metricKey];
             if (!metric) return;
-            const isVisible = this.selectedChartMetrics.has(metricKey);
 
             // A line - normalized to A's max
             const normA = this.daySeries.map(day => (day.metricsA?.[metricKey] || 0) / maxA[metricKey]);
@@ -1357,8 +1388,7 @@ class ComparisonReport {
                 pointHoverRadius: 6,
                 metricKey: metricKey,
                 normDataB: normB,
-                isSeriesA: true,
-                hidden: !isVisible
+                isSeriesA: true
             });
 
             // B line (dashed) - hidden from legend
@@ -1372,8 +1402,7 @@ class ComparisonReport {
                 pointRadius: 4,
                 pointHoverRadius: 6,
                 metricKey: metricKey,
-                isSeriesA: false,
-                hidden: !isVisible
+                isSeriesA: false
             });
         });
 
@@ -1630,20 +1659,100 @@ class ComparisonReport {
                         }
                     },
                     tooltip: {
-                        callbacks: {
-                            label: (ctx) => {
-                                const ds = ctx.dataset;
-                                const val = ctx.parsed.y;
-                                let formatted = val;
-                                if (ds.valueType === 'currency') {
-                                    formatted = '₹' + val.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-                                } else if (ds.valueType === 'percent') {
-                                    formatted = val.toFixed(2) + '%';
-                                } else {
-                                    formatted = val.toLocaleString('en-IN');
-                                }
-                                return ds.label + ': ' + formatted;
+                        enabled: false,
+                        external: (context) => {
+                            // Custom HTML tooltip
+                            const {chart, tooltip} = context;
+                            
+                            // Create tooltip element on first render
+                            let tooltipEl = document.getElementById('chartjs-tooltip');
+                            if (!tooltipEl) {
+                                tooltipEl = document.createElement('div');
+                                tooltipEl.id = 'chartjs-tooltip';
+                                tooltipEl.style.cssText = `
+                                    position: absolute;
+                                    background: rgba(0, 0, 0, 0.95);
+                                    color: white;
+                                    border-radius: 8px;
+                                    padding: 12px 16px;
+                                    pointer-events: none;
+                                    transition: all 0.1s ease;
+                                    font-family: 'Inter', sans-serif;
+                                    font-size: 12px;
+                                    line-height: 1.6;
+                                    z-index: 10000;
+                                    max-height: 500px;
+                                    overflow-y: auto;
+                                    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+                                `;
+                                document.body.appendChild(tooltipEl);
                             }
+                            
+                            // Hide if no tooltip
+                            if (tooltip.opacity === 0) {
+                                tooltipEl.style.opacity = 0;
+                                return;
+                            }
+                            
+                            // Set content
+                            if (tooltip.body) {
+                                const dataIndex = tooltip.dataPoints[0].dataIndex;
+                                const dayData = this.daySeries[dataIndex];
+                                
+                                if (dayData) {
+                                    const dayNumber = dataIndex + 1;
+                                    
+                                    const metricLabels = {
+                                        totalSales: 'Total Sales',
+                                        adSales: 'Ad Sales',
+                                        adSpend: 'Ad Spend',
+                                        acos: 'ACOS',
+                                        tcos: 'TCOS',
+                                        sessions: 'Sessions',
+                                        pageViews: 'Page Views',
+                                        unitsOrdered: 'Units Ordered',
+                                        conversionRate: 'Conversion Rate'
+                                    };
+                                    
+                                    const formatValue = (value, metricKey) => {
+                                        if (['totalSales', 'adSales', 'adSpend'].includes(metricKey)) {
+                                            return '₹' + Math.round(value).toLocaleString('en-IN');
+                                        } else if (['acos', 'tcos', 'conversionRate'].includes(metricKey)) {
+                                            return value.toFixed(1) + '%';
+                                        }
+                                        return Math.round(value).toLocaleString('en-IN');
+                                    };
+                                    
+                                    const metricsA = dayData.metricsA || {};
+                                    const metricsB = dayData.metricsB || {};
+                                    
+                                    let html = `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.2);">
+                                        Day ${dayNumber}: ${dayData.dateA || 'N/A'} vs ${dayData.dateB || 'N/A'}
+                                    </div>`;
+                                    
+                                    ALL_COMPARISON_METRICS.forEach((metricKey) => {
+                                        const label = metricLabels[metricKey] || metricKey;
+                                        const valA = metricsA[metricKey] !== undefined && metricsA[metricKey] !== null ? metricsA[metricKey] : 0;
+                                        const valB = metricsB[metricKey] !== undefined && metricsB[metricKey] !== null ? metricsB[metricKey] : 0;
+                                        
+                                        html += `<div style="margin: 4px 0;">
+                                            <div style="color: rgba(255,255,255,0.7); font-size: 11px;">${label}</div>
+                                            <div style="display: flex; gap: 20px; margin-top: 2px;">
+                                                <span>A: <strong>${formatValue(valA, metricKey)}</strong></span>
+                                                <span>B: <strong>${formatValue(valB, metricKey)}</strong></span>
+                                            </div>
+                                        </div>`;
+                                    });
+                                    
+                                    tooltipEl.innerHTML = html;
+                                }
+                            }
+                            
+                            // Position tooltip
+                            const {offsetLeft: positionX, offsetTop: positionY} = chart.canvas;
+                            tooltipEl.style.opacity = 1;
+                            tooltipEl.style.left = positionX + tooltip.caretX + 'px';
+                            tooltipEl.style.top = positionY + tooltip.caretY + 'px';
                         }
                     }
                 },

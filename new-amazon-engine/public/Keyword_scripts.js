@@ -10,6 +10,7 @@
 
 const GLOBAL_DATE_RANGE_STORAGE_KEY = 'global_date_range';
 const GLOBAL_DATE_RANGE_WINDOW_PREFIX = '__GLOBAL_DATE_RANGE__=';
+const UI_STATE_KEY = 'kw_ui_state'; // Session storage key for UI state
 
 // Helper function to clear global date range storage on reload
 function clearGlobalDateRangeOnReload() {
@@ -83,7 +84,7 @@ class AmazonDashboard {
         this.selectedMetrics = ['totalSales', 'adSales', 'adSpend'];
         
         // Chart view mode: 'simple' or 'normalized'
-        this.chartViewMode = 'normalized';
+        this.chartViewMode = 'simple';
         
         // Cache configuration
         this.CACHE_TTL = 60 * 60 * 1000; // 1 hour cache TTL (kept for compatibility)
@@ -100,6 +101,9 @@ class AmazonDashboard {
         
         // Remove mock data - we'll get real data from database
         this.init();
+        
+        // Restore UI state from sessionStorage (after init)
+        this.restoreUIState();
     }
     
     getCachedData(cacheKey) {
@@ -126,6 +130,211 @@ class AmazonDashboard {
     clearExpiredCache() {
         if (typeof BrowserCache !== 'undefined') {
             BrowserCache.clearExpired('kw');
+        }
+    }
+
+    // Save current UI state to sessionStorage (cleared on hard refresh)
+    saveUIState() {
+        try {
+            if (!window.sessionStorage) return;
+            
+            const state = {
+                // Filters
+                selectedProducts: Array.from(this.getSelectedValues('productMultiSelect') || []),
+                selectedCampaigns: Array.from(this.getSelectedValues('campaignMultiSelect') || []),
+                selectedSearchTerms: Array.from(this.getSelectedValues('keywordMultiSelect') || []),
+                
+                // Pagination & Sorting
+                currentPage: this.currentPage || 1,
+                rowsPerPage: this.rowsPerPage || 25,
+                sortKey: this.sortConfig?.key || null,
+                sortDirection: this.sortConfig?.direction || 'desc',
+                
+                // Chart preferences
+                selectedMetrics: this.selectedMetrics || [],
+                chartViewMode: this.chartViewMode || 'normalized',
+                
+                // Current tab
+                currentTab: this.currentTab || 'keywords',
+                
+                // Date range (for validation)
+                dateRangeStart: this.dateRange?.startStr,
+                dateRangeEnd: this.dateRange?.endStr,
+                
+                // Timestamp for freshness check (5 minute TTL)
+                savedAt: Date.now()
+            };
+            
+            sessionStorage.setItem(UI_STATE_KEY, JSON.stringify(state));
+            console.log('💾 UI state saved to sessionStorage');
+        } catch (err) {
+            console.warn('Failed to save UI state:', err);
+        }
+    }
+
+    // Restore UI state from sessionStorage
+    restoreUIState() {
+        try {
+            if (!window.sessionStorage) return;
+            
+            const stored = sessionStorage.getItem(UI_STATE_KEY);
+            if (!stored) return;
+            
+            const state = JSON.parse(stored);
+            
+            // Check if state is fresh (within 5 minutes) and matches current date range
+            const age = Date.now() - (state.savedAt || 0);
+            const maxAge = 5 * 60 * 1000; // 5 minutes
+            
+            if (age > maxAge) {
+                console.log('🕒 UI state expired, clearing');
+                sessionStorage.removeItem(UI_STATE_KEY);
+                return;
+            }
+            
+            // Validate date range matches (don't restore if user changed dates)
+            if (state.dateRangeStart !== this.dateRange?.startStr || 
+                state.dateRangeEnd !== this.dateRange?.endStr) {
+                console.log('📅 Date range changed, not restoring UI state');
+                sessionStorage.removeItem(UI_STATE_KEY);
+                return;
+            }
+            
+            console.log('✨ Restoring UI state from sessionStorage');
+            
+            // Restore tab (do this first)
+            if (state.currentTab && state.currentTab !== this.currentTab) {
+                this.currentTab = state.currentTab;
+                this.switchTab(state.currentTab);
+            }
+            
+            // Restore pagination & sorting
+            this.currentPage = state.currentPage || 1;
+            if (state.sortKey) {
+                this.sortConfig = {
+                    key: state.sortKey,
+                    direction: state.sortDirection || 'desc'
+                };
+            }
+            
+            // Restore chart preferences
+            if (state.selectedMetrics && state.selectedMetrics.length > 0) {
+                this.selectedMetrics = state.selectedMetrics;
+            }
+            if (state.chartViewMode) {
+                this.chartViewMode = state.chartViewMode;
+            }
+            
+            // Restore filters (do this after data loads)
+            setTimeout(() => {
+                if (state.selectedProducts && state.selectedProducts.length > 0) {
+                    this.setMultiSelectValues('productMultiSelect', state.selectedProducts);
+                }
+                if (state.selectedCampaigns && state.selectedCampaigns.length > 0) {
+                    this.setMultiSelectValues('campaignMultiSelect', state.selectedCampaigns);
+                }
+                if (state.selectedSearchTerms && state.selectedSearchTerms.length > 0) {
+                    this.setMultiSelectValues('keywordMultiSelect', state.selectedSearchTerms);
+                }
+                
+                // Re-apply filters and render
+                this.applyFilters();
+            }, 500);
+            
+        } catch (err) {
+            console.warn('Failed to restore UI state:', err);
+            sessionStorage.removeItem(UI_STATE_KEY);
+        }
+    }
+
+    // Helper to get selected values from multi-select
+    getSelectedValues(selectId) {
+        const container = document.getElementById(selectId);
+        if (!container) return new Set();
+        const state = container.__multiSelectState;
+        return state ? state.selected : new Set();
+    }
+
+    // Helper to set multi-select values
+    setMultiSelectValues(selectId, values) {
+        const container = document.getElementById(selectId);
+        if (!container || !values || values.length === 0) return;
+        
+        const state = container.__multiSelectState;
+        if (!state) return;
+        
+        // Add each value to selected set
+        values.forEach(val => state.selected.add(val));
+        
+        // Trigger the update function if available
+        if (container.__syncMultiSelectTags) {
+            container.__syncMultiSelectTags();
+        }
+    }
+
+    // Clear UI state manually
+    clearUIState() {
+        try {
+            if (window.sessionStorage) {
+                sessionStorage.removeItem(UI_STATE_KEY);
+                console.log('🗑️ UI state cleared');
+            }
+        } catch (err) {
+            console.warn('Failed to clear UI state:', err);
+        }
+    }
+
+    // Clear all caches (API data + UI state)
+    clearAllCaches() {
+        try {
+            // Clear API data cache by removing all localStorage entries with cache prefix
+            if (window.localStorage) {
+                const keys = Object.keys(localStorage);
+                const cacheKeys = keys.filter(k => k.startsWith('__cache__:kw:'));
+                cacheKeys.forEach(k => localStorage.removeItem(k));
+                console.log(`🧹 Cleared ${cacheKeys.length} API cache entries`);
+            }
+            
+            // Clear UI state
+            this.clearUIState();
+            
+            // Clear global date range
+            if (window.localStorage) {
+                localStorage.removeItem(GLOBAL_DATE_RANGE_STORAGE_KEY);
+            }
+            if (window.sessionStorage) {
+                sessionStorage.removeItem(GLOBAL_DATE_RANGE_STORAGE_KEY);
+            }
+            
+            // Clear localStorage preferences (optional - keep rows per page)
+            // Uncomment if you want to clear everything:
+            // if (window.localStorage) {
+            //     localStorage.removeItem('kw_rows_per_page');
+            // }
+            
+            // Show success message
+            this.showNotification('✅ All caches cleared! Page will reload...', 'success');
+            
+            // Reload page after short delay
+            setTimeout(() => {
+                window.location.reload(true); // Force reload from server
+            }, 1000);
+        } catch (err) {
+            console.error('Failed to clear caches:', err);
+            this.showNotification('⚠️ Failed to clear caches', 'error');
+        }
+    }
+
+    // Bind Clear Cache button
+    bindClearCacheButton() {
+        const clearCacheBtn = document.getElementById('clearCacheBtn');
+        if (clearCacheBtn) {
+            clearCacheBtn.addEventListener('click', () => {
+                // Confirm before clearing
+                if (confirm('Clear all cached data and UI state? This will reload the page.')) {
+                    this.clearAllCaches();
+                }
+            });
         }
     }
 
@@ -874,6 +1083,20 @@ class AmazonDashboard {
         // Clear expired cache entries (past 12 PM) on page load
         this.clearExpiredCache();
         
+        // CRITICAL: Set chart view mode from HTML select immediately to ensure correct default
+        const chartViewModeSelect = document.getElementById('chartViewMode');
+        if (chartViewModeSelect) {
+            const selectedOption = chartViewModeSelect.querySelector('option[selected]');
+            if (selectedOption) {
+                chartViewModeSelect.value = selectedOption.value;
+                this.chartViewMode = selectedOption.value;
+            } else {
+                // Default to simple if nothing is selected
+                chartViewModeSelect.value = 'simple';
+                this.chartViewMode = 'simple';
+            }
+        }
+        
         this.bindEvents();
         // Resolve data bounds from backend (for calendar limits) but keep current month as default
         // This sets dataMinDate and dataMaxDate for calendar bounds, but doesn't override dateRange
@@ -886,6 +1109,9 @@ class AmazonDashboard {
         this.updateFilterVisibility();
         // Initialize metric checkboxes to match selected metrics
         this.syncMetricCheckboxes();
+        
+        // Bind Clear Cache button
+        this.bindClearCacheButton();
     }
     
     bindEvents() {
@@ -943,11 +1169,28 @@ class AmazonDashboard {
         });
 
         // Chart view mode selector (Simple vs Normalized)
-        document.getElementById('chartViewMode')?.addEventListener('change', (e) => {
-            this.chartViewMode = e.target.value;
-            const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
-            this.updateChart(currentPeriod);
-        });
+        const chartViewModeSelect = document.getElementById('chartViewMode');
+        if (chartViewModeSelect) {
+            // Ensure select element has the correct value set
+            const selectedOption = chartViewModeSelect.querySelector('option[selected]');
+            if (selectedOption) {
+                chartViewModeSelect.value = selectedOption.value;
+            } else if (!chartViewModeSelect.value || chartViewModeSelect.value === '') {
+                chartViewModeSelect.value = 'simple';
+            }
+            
+            // Read initial value from HTML to sync with selected option
+            this.chartViewMode = chartViewModeSelect.value || 'simple';
+            
+            chartViewModeSelect.addEventListener('change', (e) => {
+                this.chartViewMode = e.target.value;
+                const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
+                this.updateChart(currentPeriod);
+                
+                // Save UI state after view mode change
+                this.saveUIState();
+            });
+        }
 
         // Metric selector functionality
         const metricToggle = document.getElementById('metricToggle');
@@ -974,6 +1217,9 @@ class AmazonDashboard {
                     // Update chart with new metric selection
                     const currentPeriod = document.getElementById('chartPeriod')?.value || 'daily';
                     this.updateChart(currentPeriod);
+                    
+                    // Save UI state after metric selection
+                    this.saveUIState();
                 });
             });
 
@@ -3622,14 +3868,14 @@ class AmazonDashboard {
                 label: 'ACOS (%)',
                 borderColor: '#dc3545',
                 backgroundColor: 'rgba(220, 53, 69, 0.1)',
-                yAxisID: 'y1',
+                yAxisID: 'y',
                 valueType: 'percent'
             },
             tcos: {
                 label: 'TCOS (%)',
                 borderColor: '#6f42c1',
                 backgroundColor: 'rgba(111, 66, 193, 0.1)',
-                yAxisID: 'y1',
+                yAxisID: 'y',
                 valueType: 'percent'
             },
             sessions: {
@@ -3700,6 +3946,25 @@ class AmazonDashboard {
         const ctx = document.getElementById('performanceChart');
         if (!ctx) {
             return;
+        }
+        
+        // Ensure chartViewMode is synced with HTML select element
+        const chartViewModeSelect = document.getElementById('chartViewMode');
+        if (chartViewModeSelect) {
+            // Read value from select, with fallback to checking selected option
+            const selectValue = chartViewModeSelect.value;
+            if (selectValue) {
+                this.chartViewMode = selectValue;
+            } else {
+                // Fallback: check which option has selected attribute
+                const selectedOption = chartViewModeSelect.querySelector('option[selected]');
+                if (selectedOption) {
+                    this.chartViewMode = selectedOption.value || 'simple';
+                } else {
+                    // Default to simple if nothing is selected
+                    this.chartViewMode = 'simple';
+                }
+            }
         }
         
         // Destroy existing chart
@@ -4914,6 +5179,9 @@ class AmazonDashboard {
         this.updateTable();
         this.updateSortIcons();
         this.updatePagination();
+        
+        // Save UI state after sorting
+        this.saveUIState();
     }
     
     // Pagination methods - Client-side pagination on aggregated data
@@ -5139,6 +5407,9 @@ class AmazonDashboard {
         this.updateFilterVisibility();
         // Recompute with restored selections
         this.handleSearch(this.lastSearchTerm || '');
+        
+        // Save UI state after tab switch
+        this.saveUIState();
     }
 
     updateFilterVisibility() {
@@ -5428,6 +5699,10 @@ class AmazonDashboard {
         
         this.updateTable();
         this.updateResultsCount();
+        
+        // Save UI state after filter changes
+        this.saveUIState();
+        
         // FIXED: Only re-populate filter options when campaigns change (not when keywords change)
         // This preserves keyword multi-select state when selecting multiple keywords
         if (filterType === 'campaigns' || filterType === 'campaign') {

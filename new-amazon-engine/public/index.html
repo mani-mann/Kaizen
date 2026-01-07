@@ -83,6 +83,10 @@
                         <span>Live Data</span>
                     </div>
                     <div class="last-update">Last updated: 2 minutes ago</div>
+                    <button class="clear-cache-btn" id="clearCacheBtn" title="Clear all cached data and UI state">
+                        <span class="material-icons">cleaning_services</span>
+                        <span class="clear-cache-text">Clear Cache</span>
+                    </button>
                 </div>
             </header>
 
@@ -334,7 +338,7 @@
                                 </div>
                                 <select class="period-selector" id="chartViewMode" title="Choose view mode">
                                     <option value="normalized">Normalized (0-1)</option>
-                                    <option value="simple">Simple View</option>
+                                    <option value="simple" selected>Normal View</option>
                                 </select>
                                 <select class="period-selector" id="chartPeriod" title="Change chart data aggregation period (shows ALL database data)">
                                     <option value="daily">Daily</option>

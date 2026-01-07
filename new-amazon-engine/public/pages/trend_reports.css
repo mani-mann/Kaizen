@@ -583,7 +583,7 @@ body {
     box-shadow: 0 8px 20px rgba(0,0,0,.08);
     border-radius: 8px;
     padding: 6px;
-    z-index: 30;
+    z-index: 102; /* Higher than chart controls to appear above */
 }
 
 .period-dropdown button {
@@ -836,7 +836,7 @@ body {
     align-items: center;
     background: var(--bg-secondary);
     position: relative;
-    z-index: 1;
+    z-index: 100; /* Higher z-index to ensure dropdowns appear above chart */
     overflow: visible;
     width: 100%;
     box-sizing: border-box;
@@ -875,7 +875,7 @@ body {
     gap: var(--spacing-sm);
     flex-wrap: wrap;
     position: relative;
-    z-index: 1;
+    z-index: 101; /* Higher than chart-header to ensure controls are above */
     align-items: center;
     justify-content: flex-end;
 }
@@ -899,23 +899,32 @@ body {
 .multi-select-dropdown {
     position: relative;
     min-width: 150px;
-    z-index: 1001; /* Higher than chart container */
+    z-index: 1002; /* Higher than chart controls and header */
 }
 
 /* Ensure chart container properly contains dropdowns */
 .chart-container .multi-select-dropdown {
     position: relative;
-    z-index: 1001; /* Higher than chart container */
+    z-index: 1002; /* Higher than chart container and controls */
 }
 
 .chart-container .multi-select-options {
     position: absolute;
-    z-index: 1002; /* Ensure it's above everything */
+    z-index: 1003; /* Ensure it's above everything */
 }
 
 /* Ensure chart container header allows dropdown overflow */
 .chart-header {
     overflow: visible;
+}
+
+/* Raise chart header z-index when dropdown is open to prevent overlap */
+.chart-header:has(.multi-select-dropdown.open) {
+    z-index: 200;
+}
+
+.chart-controls:has(.multi-select-dropdown.open) {
+    z-index: 201;
 }
 
 /* Chart container styling - match business_reports.css */
@@ -934,7 +943,7 @@ body {
     transition: all var(--transition-normal);
     user-select: none;
     position: relative;
-    z-index: 101;
+    z-index: 1; /* Relative to parent dropdown */
 }
 
 .multi-select-toggle:hover {
@@ -972,7 +981,7 @@ body {
     box-shadow: 0 8px 20px rgba(0,0,0,.15);
     border-radius: 8px;
     padding: 6px;
-    z-index: 1002; /* Ensure it's above everything */
+    z-index: 1003; /* Ensure it's above everything */
     max-height: 200px;
     overflow-y: auto;
     display: none !important;
@@ -1014,7 +1023,7 @@ body {
 
 /* Ensure dropdown is always visible when open */
 .multi-select-dropdown.open {
-    z-index: 1001;
+    z-index: 1002;
 }
 
 /* Add visual feedback for clickable toggle */
