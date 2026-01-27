@@ -2307,11 +2307,23 @@ app.post('/api/cerebro/upload', upload.single('file'), async (req, res) => {
     const sheet = workbook.Sheets[sheetName];
 
     // Get ASINs from first column (no header)
-    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    // Handle both string and number formats (Excel sometimes stores ASINs as numbers)
+    const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
     const asins = data
-      .map(row => row[0])
-      .filter(asin => asin && typeof asin === 'string' && asin.trim().length > 0)
-      .map(asin => asin.trim().toUpperCase());
+      .map(row => {
+        const cellValue = row[0];
+        // Convert to string if it's a number (Excel might store B089M671M6 as number)
+        if (cellValue === null || cellValue === undefined) return null;
+        return String(cellValue).trim();
+      })
+      .filter(asin => {
+        // Filter out empty strings and validate ASIN format (10 characters, alphanumeric)
+        if (!asin || asin.length === 0) return false;
+        // ASINs are typically 10 characters, alphanumeric
+        const asinUpper = asin.toUpperCase();
+        return asinUpper.length >= 8 && asinUpper.length <= 15 && /^[A-Z0-9]+$/.test(asinUpper);
+      })
+      .map(asin => asin.toUpperCase()); // Convert to uppercase for consistency
 
     if (asins.length === 0) {
       return res.status(400).json({ error: 'No ASINs found in the uploaded file' });
@@ -2387,6 +2399,130 @@ app.get('/api/cerebro/job/:jobId/status', (req, res) => {
   });
 });
 
+// ✅ Save keywords to database for weekly tracking
+async function saveKeywordsToDatabase(asin, productTitle, keywords) {
+  if (!dbConnected) {
+    console.log('[-] Database not connected, skipping keyword save');
+    return false;
+  }
+
+  try {
+    const trackingDate = new Date().toISOString().split('T')[0]; // Today's date (YYYY-MM-DD)
+    const asinUpper = asin.toUpperCase();
+    
+    // Prepare batch insert data
+    const values = [];
+    const placeholders = [];
+    let paramIndex = 1;
+
+    for (const kw of keywords) {
+      // Extract organic rank from the transformed keyword data
+      const organicRankRaw = kw['Organic Rank'] || kw['organic_rank'] || null;
+      const keywordPhrase = String(kw['Keyword Phrase'] || kw['keyword_phrase'] || '').trim();
+      const iqScoreRaw = kw['Cerebro IQ Score'] || kw['cerebro_iq_score'] || null;
+      const searchVolumeRaw = kw['Search Volume'] || kw['search_volume'] || null;
+      const cprRaw = kw['CPR'] || kw['cpr'] || null;
+      const competingProductsRaw = kw['Competing Products'] || kw['competing_products'] || null;
+
+      // Skip if no keyword phrase
+      if (!keywordPhrase) continue;
+
+      // Convert to proper data types
+      const organicRank = organicRankRaw ? (isNaN(organicRankRaw) ? null : parseInt(organicRankRaw)) : null;
+      const iqScore = iqScoreRaw ? (isNaN(iqScoreRaw) ? null : parseFloat(iqScoreRaw)) : null;
+      const searchVolume = searchVolumeRaw ? (isNaN(searchVolumeRaw) ? null : parseInt(searchVolumeRaw)) : null;
+      const cpr = cprRaw ? (isNaN(cprRaw) ? null : parseFloat(cprRaw)) : null;
+      const competingProducts = competingProductsRaw ? (isNaN(competingProductsRaw) ? null : parseInt(competingProductsRaw)) : null;
+      
+      // Truncate product title if too long (max 500 chars)
+      const productTitleSafe = productTitle ? String(productTitle).substring(0, 500) : null;
+
+      // Get previous week's rank for this ASIN + keyword
+      let previousRank = null;
+      let rankChange = null;
+      
+      if (organicRank !== null) {
+        try {
+          const previousRankQuery = `
+            SELECT organic_rank 
+            FROM asin_keywords_tracking 
+            WHERE asin = $1 
+              AND keyword_phrase = $2 
+              AND tracking_date < $3
+              AND organic_rank IS NOT NULL
+            ORDER BY tracking_date DESC 
+            LIMIT 1;
+          `;
+          const prevResult = await pool.query(previousRankQuery, [asinUpper, keywordPhrase, trackingDate]);
+          
+          if (prevResult.rows.length > 0 && prevResult.rows[0].organic_rank !== null) {
+            previousRank = parseInt(prevResult.rows[0].organic_rank);
+            // Calculate rank change: negative = improved, positive = declined
+            // Example: rank 5 -> rank 3 = -2 (improved by 2 positions)
+            rankChange = organicRank - previousRank;
+          }
+        } catch (prevError) {
+          console.error(`[-] Error fetching previous rank for ${asinUpper}/${keywordPhrase}:`, prevError.message);
+          // Continue without previous rank if query fails
+        }
+      }
+
+      values.push(
+        trackingDate,         // tracking_date
+        asinUpper,            // asin (uppercase)
+        keywordPhrase,        // keyword_phrase
+        organicRank,          // organic_rank (integer)
+        productTitleSafe,     // product_title (truncated to 500)
+        iqScore,              // cerebro_iq_score (decimal)
+        searchVolume,         // search_volume (integer)
+        cpr,                  // cpr (decimal)
+        competingProducts,    // competing_products (integer)
+        previousRank,         // previous_rank (integer)
+        rankChange            // rank_change (integer)
+      );
+
+      placeholders.push(
+        `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6}, $${paramIndex + 7}, $${paramIndex + 8}, $${paramIndex + 9}, $${paramIndex + 10})`
+      );
+      paramIndex += 11;
+    }
+
+    if (values.length === 0) {
+      console.log(`[*] No keywords to save for ASIN: ${asin}`);
+      return false;
+    }
+
+    // Use ON CONFLICT to update if record exists (for same date/asin/keyword)
+    const insertQuery = `
+      INSERT INTO asin_keywords_tracking 
+        (tracking_date, asin, keyword_phrase, organic_rank, product_title, 
+         cerebro_iq_score, search_volume, cpr, competing_products, previous_rank, rank_change, updated_at)
+      VALUES ${placeholders.join(', ')}
+      ON CONFLICT (tracking_date, asin, keyword_phrase) 
+      DO UPDATE SET
+        organic_rank = EXCLUDED.organic_rank,
+        cerebro_iq_score = EXCLUDED.cerebro_iq_score,
+        search_volume = EXCLUDED.search_volume,
+        cpr = EXCLUDED.cpr,
+        competing_products = EXCLUDED.competing_products,
+        previous_rank = EXCLUDED.previous_rank,
+        rank_change = EXCLUDED.rank_change,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id;
+    `;
+
+    const result = await pool.query(insertQuery, values);
+    console.log(`[+] Saved ${result.rows.length} keywords to database for ASIN: ${asin} (Date: ${trackingDate})`);
+    return true;
+
+  } catch (error) {
+    console.error(`[-] Error saving keywords to database for ASIN ${asin}:`, error.message);
+    console.error('   Full error:', error);
+    // Don't throw - allow processing to continue even if DB save fails
+    return false;
+  }
+}
+
 // ✅ Process a single ASIN from a job (called by frontend one at a time)
 app.post('/api/cerebro/job/:jobId/process/:asin', async (req, res) => {
   const { jobId, asin } = req.params;
@@ -2437,6 +2573,21 @@ app.post('/api/cerebro/job/:jobId/process/:asin', async (req, res) => {
     // Transform keywords to Helium 10 export format (16 columns)
     const keywords = transformKeywordsForExport(rawKeywords);
 
+    // Save keywords to database for weekly tracking
+    job.status[asin].progress = 90;
+    job.status[asin].message = 'Saving to database...';
+    const productTitle = searchResult.title || 'Unknown';
+    try {
+      const saved = await saveKeywordsToDatabase(asin, productTitle, keywords);
+      if (saved) {
+        console.log(`[+] Successfully saved keywords to database for ASIN: ${asin}`);
+      }
+    } catch (dbError) {
+      // Log but don't fail the whole process if DB save fails
+      console.error(`[-] Database save failed for ${asin}:`, dbError.message);
+      console.error('   Stack:', dbError.stack);
+    }
+
     // Update status to completed
     job.status[asin] = {
       status: 'completed',
@@ -2444,7 +2595,7 @@ app.post('/api/cerebro/job/:jobId/process/:asin', async (req, res) => {
       message: `Found ${keywords.length} keywords`,
       keywords: keywords,
       totalKeywords: keywords.length,
-      productTitle: searchResult.title || 'Unknown',
+      productTitle: productTitle,
       searchId: searchResult.id,
       error: null,
       timestamp: Date.now()
@@ -2565,6 +2716,104 @@ app.get('/api/cerebro/job/:jobId/download-all', (req, res) => {
     res.send(buffer);
   } else {
     res.status(400).json({ error: 'No keywords to download' });
+  }
+});
+
+// ✅ Get keyword tracking data from database
+app.get('/api/cerebro/keywords-tracking', async (req, res) => {
+  try {
+    const { asin, startDate, endDate, keyword } = req.query;
+
+    if (!dbConnected) {
+      return res.status(503).json({ error: 'Database not connected' });
+    }
+
+    let query = 'SELECT * FROM asin_keywords_tracking WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (asin) {
+      query += ` AND asin = $${paramIndex}`;
+      params.push(asin.toUpperCase());
+      paramIndex++;
+    }
+
+    if (startDate) {
+      query += ` AND tracking_date >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex++;
+    }
+
+    if (endDate) {
+      query += ` AND tracking_date <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex++;
+    }
+
+    if (keyword) {
+      query += ` AND keyword_phrase ILIKE $${paramIndex}`;
+      params.push(`%${keyword}%`);
+      paramIndex++;
+    }
+
+    query += ' ORDER BY tracking_date DESC, asin, organic_rank NULLS LAST LIMIT 1000';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('[-] Error fetching keyword tracking data:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ Get weekly keyword summary (for tracking over time)
+app.get('/api/cerebro/keywords-summary', async (req, res) => {
+  try {
+    const { asin, weeks = 4 } = req.query;
+
+    if (!dbConnected) {
+      return res.status(503).json({ error: 'Database not connected' });
+    }
+
+    if (!asin) {
+      return res.status(400).json({ error: 'ASIN parameter required' });
+    }
+
+    const weeksAgo = new Date();
+    weeksAgo.setDate(weeksAgo.getDate() - (parseInt(weeks) * 7));
+
+    const query = `
+      SELECT 
+        tracking_date,
+        COUNT(*) as total_keywords,
+        COUNT(organic_rank) as keywords_with_rank,
+        AVG(organic_rank) FILTER (WHERE organic_rank IS NOT NULL) as avg_organic_rank,
+        MIN(organic_rank) FILTER (WHERE organic_rank IS NOT NULL) as best_rank
+      FROM asin_keywords_tracking
+      WHERE asin = $1 
+        AND tracking_date >= $2
+      GROUP BY tracking_date
+      ORDER BY tracking_date DESC;
+    `;
+
+    const result = await pool.query(query, [asin.toUpperCase(), weeksAgo.toISOString().split('T')[0]]);
+
+    res.json({
+      success: true,
+      asin: asin.toUpperCase(),
+      weeks: parseInt(weeks),
+      summary: result.rows
+    });
+
+  } catch (error) {
+    console.error('[-] Error fetching keyword summary:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
