@@ -8,16 +8,16 @@ const client = new Client({
   database: process.env.PGDATABASE || 'postgres',
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD || '',
-  ssl: process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: false }
+  ssl: false
 });
 
-async function checkJanuary5Data() {
+async function checkJanuary22Data() {
   try {
     console.log('🔌 Connecting to database...');
     await client.connect();
     console.log('✅ Connected to PostgreSQL');
 
-    const targetDate = '2026-01-06';
+    const targetDate = '2026-01-22';
     console.log(`\n🔍 Checking data for date: ${targetDate}`);
 
     // Check amazon_ads_reports table
@@ -107,5 +107,5 @@ async function checkJanuary5Data() {
 }
 
 // Run the check
-console.log('🧪 Testing data for January 5, 2026...\n');
-checkJanuary5Data();
+console.log('🧪 Testing data for January 22, 2026...\n');
+checkJanuary22Data();

@@ -1,0 +1,33 @@
+[dotenv@17.2.1] injecting env (10) from .env -- tip: ΓÜÖ∩╕Å  write to custom object with { processEnv: myObject }
+≡ƒº¬ Testing data for January 17, 2026...
+
+≡ƒöî Connecting to database...
+Γ£à Connected to PostgreSQL
+
+≡ƒöì Checking data for date: 2026-01-17
+
+≡ƒôè Checking amazon_ads_reports table...
+   Records found: 353
+   Total cost: $2927.33
+   Total sales: $5877.15
+   Total clicks: 439
+
+≡ƒôê Checking amazon_sales_traffic table...
+   Records found: 0
+   Total sessions: 0
+   Total page views: 0
+   Total units ordered: 0
+   Total sales: $0.00
+
+≡ƒôï SUMMARY:
+   Ads data for 2026-01-17: Γ£à EXISTS
+   Sales data for 2026-01-17: Γ¥î NOT FOUND
+
+≡ƒÄë SUCCESS: Data exists for 2026-01-17!
+
+≡ƒôà Database date range:
+   Ads data range: Tue May 06 2025 00:00:00 GMT+0530 (India Standard Time) to Sun Jan 18 2026 00:00:00 GMT+0530 (India Standard Time)
+   Sales data range: Wed Jan 01 2025 00:00:00 GMT+0530 (India Standard Time) to Wed Jan 14 2026 00:00:00 GMT+0530 (India Standard Time)
+
+≡ƒæï Disconnected from database
+
