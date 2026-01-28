@@ -1,0 +1,231 @@
+================================================================================
+                    SESSION MEMORY - January 14, 2026 (Updated x2)
+================================================================================
+
+--------------------------------------------------------------------------------
+LATEST UPDATE: Fixed Static Files + Hardcoded Tokens (Jan 14, 2026 18:10 IST)
+--------------------------------------------------------------------------------
+Problem 1: Cloud Run containers are stateless - tokens lost on restart.
+Problem 2: Pages returning 404 - was deploying from backend/ folder only.
+
+Solution:
+1. Hardcoded tokens directly in server.js (line ~1948)
+2. IMPORTANT: Deploy from ROOT folder (new-amazon-engine), NOT backend/
+
+File Modified: backend/server.js
+- Hardcoded authorization token
+- Hardcoded pacvueToken (JWT)
+- Set timestamp to Jan 14, 2026
+- Set expiresIn to 30 days (2592000 seconds)
+
+CORRECT DEPLOYMENT COMMAND (from new-amazon-engine folder):
+  gcloud run deploy amazon-analytics --source=. --region=us-central1 \
+    --platform=managed --allow-unauthenticated --clear-base-image
+
+WRONG (causes 404 for pages):
+  cd backend && gcloud run deploy ...
+
+Deployed: Revision amazon-analytics-00071-fxt
+
+Status verified:
+- hasSession: true
+- hasValidTokens: true
+- tokenExpiry: 2026-02-13T12:31:18.000Z
+- /pages/asin_to_keyword.html: 200 OK
+
+Note: Tokens expire Feb 13, 2026. Will need refresh before then.
+
+--------------------------------------------------------------------------------
+PREVIOUS UPDATE: H10 Token Fix & Direct Token Endpoint
+--------------------------------------------------------------------------------
+Problem: Session cookies weren't persisting on Cloud Run (stateless containers)
+         and tokens were expiring quickly (~1 hour).
+
+Solution:
+1. Added new endpoint: POST /api/h10/tokens
+   - Accepts authorization and pacvueToken directly
+   - Sets expiresIn to 30 days (2592000 seconds) by default
+   - File: backend/server.js (line ~2256)
+
+2. Deployed updated server to Cloud Run (revision: amazon-analytics-00067-4tt)
+
+3. Pushed 30-day tokens obtained from browser DevTools:
+   - authorization: Bearer token from Cerebro request
+   - pacvueToken: JWT from x-pacvue-token header
+   - Token expiry: 2026-02-13 (30 days)
+
+4. Verified: hasValidTokens = true, Cerebro API authenticated successfully
+
+To refresh tokens in the future:
+1. Open Helium 10 Cerebro in browser
+2. Open DevTools > Network tab
+3. Make any Cerebro request (ASIN search)
+4. Copy 'authorization' and 'x-pacvue-token' headers
+5. POST to /api/h10/tokens with JSON body:
+   {
+     "authorization": "Bearer xxx...",
+     "pacvueToken": "Bearer eyJ...",
+     "expiresIn": 2592000
+   }
+
+================================================================================
+                    ORIGINAL SESSION - January 14, 2026
+================================================================================
+
+TASK: Update Helium 10 credentials and deploy to Google Cloud Run
+
+--------------------------------------------------------------------------------
+1. HELIUM 10 PASSWORD UPDATE
+--------------------------------------------------------------------------------
+File: backend/server.js (line 1935)
+Changed: PASSWORD: "Amazon@12345" -> "India@786"
+
+Email remains: careerinbox.piet@gmail.com
+Account ID: 1547402760
+Marketplace: A21TJRUUN4KGV (Amazon India)
+
+--------------------------------------------------------------------------------
+2. ACQUIRED NEW H10 SESSION TOKENS
+--------------------------------------------------------------------------------
+- Deleted old token files:
+  - backend/h10_session.json
+  - backend/h10_tokens.json
+
+- Created login script: backend/h10_login.py
+  - Uses Selenium to automate Helium 10 login
+  - Extracts session cookies (sid, _identity, _csrf)
+  - Saves to h10_session.json
+
+- Ran script successfully, acquired new cookies
+
+--------------------------------------------------------------------------------
+3. PULLED LATEST FROM GITHUB
+--------------------------------------------------------------------------------
+Repository: https://github.com/mani-mann/Kaizen/tree/main/new-amazon-engine
+
+Files updated from remote (11 files):
+- public/Keyword_scripts.js (major updates)
+- public/index.html
+- public/keywordStyle.css
+- public/pages/business_reports.html
+- public/pages/business_reports.js
+- public/pages/comparisonStyle.css
+- public/pages/comparison_reports.html
+- public/pages/comparison_reports.js
+- public/pages/trend_reports.css
+- public/pages/trend_reports.html
+- public/pages/trend_reports.js
+
+--------------------------------------------------------------------------------
+4. FIXED LOCALHOST REFERENCES FOR PRODUCTION
+--------------------------------------------------------------------------------
+Problem: Hardcoded localhost:5000 references would fail in Cloud Run
+
+Files Fixed:
+
+a) public/Keyword_scripts.js (lines 468-477)
+   - Changed fallback to return empty string in production
+   - Only use localhost:5000 when actually on localhost/127.0.0.1
+
+b) public/pages/business_reports.js (lines 260-272, 305-315)
+   - Fixed health check fallback to only try localhost in dev
+   - Fixed getApiBase() to return empty string in production
+
+c) public/pages/trend_reports.js (line 1168)
+   - Fixed apiBase logic to use empty string in production
+
+Logic: In production (Cloud Run), use relative URLs (empty string)
+       In development (localhost), use http://localhost:5000
+
+--------------------------------------------------------------------------------
+5. UPDATED .ENV FOR PRODUCTION
+--------------------------------------------------------------------------------
+File: backend/.env
+
+Changes:
+- NODE_ENV: development -> production
+- ALLOWED_ORIGINS: Added Cloud Run URL
+- Added H10_EMAIL and H10_PASSWORD
+
+Final .env:
+  PGHOST=34.72.54.42
+  PGPORT=5432
+  PGDATABASE=postgres
+  PGUSER=postgres
+  PGPASSWORD=Z;Y~l{k{Th\FR.,l
+  PORT=5000
+  NODE_ENV=production
+  PGSSL=disable
+  ALLOWED_ORIGINS=https://amazon-analytics-565767837560.us-central1.run.app,http://localhost:3000,http://localhost:5500
+  LOG_LEVEL=info
+  H10_EMAIL=careerinbox.piet@gmail.com
+  H10_PASSWORD=India@786
+
+--------------------------------------------------------------------------------
+6. DEPLOYED TO GOOGLE CLOUD RUN
+--------------------------------------------------------------------------------
+Project: telegram-bot-integrator-459515
+Service: amazon-analytics
+Region: us-central1
+URL: https://amazon-analytics-565767837560.us-central1.run.app
+
+Command used:
+gcloud run deploy amazon-analytics --source=. --region=us-central1 \
+  --platform=managed --allow-unauthenticated \
+  --env-vars-file=deploy-env.yaml --clear-base-image
+
+Environment variables passed via deploy-env.yaml (then deleted)
+
+--------------------------------------------------------------------------------
+7. CONFIGURED H10 SESSION ON CLOUD RUN
+--------------------------------------------------------------------------------
+Since h10_session.json wasn't included in Docker image,
+pushed cookies via API:
+
+curl -X POST https://amazon-analytics-565767837560.us-central1.run.app/api/h10/session \
+  -H "Content-Type: application/json" \
+  -d '{"sid":"...", "_identity":"...", "_csrf":"..."}'
+
+Then refreshed tokens:
+curl -X POST https://amazon-analytics-565767837560.us-central1.run.app/api/h10/refresh \
+  -H "Content-Type: application/json" -H "Content-Length: 0"
+
+--------------------------------------------------------------------------------
+8. VERIFICATION
+--------------------------------------------------------------------------------
+Health Check:
+curl https://amazon-analytics-565767837560.us-central1.run.app/health
+Response: {"status":"OK","database":"Connected"}
+
+H10 Status:
+curl https://amazon-analytics-565767837560.us-central1.run.app/api/h10/status
+Response: {
+  "hasSession": true,
+  "hasValidTokens": true,
+  "cookiesSet": ["sid", "_identity", "_csrf"],
+  "tokenExpiry": "2026-01-15T06:38:38.272Z"
+}
+
+--------------------------------------------------------------------------------
+FILES CREATED/MODIFIED
+--------------------------------------------------------------------------------
+Created:
+- backend/h10_login.py (Selenium login script)
+- memory.txt (this file)
+
+Modified:
+- backend/server.js (H10 password)
+- backend/.env (production config)
+- public/Keyword_scripts.js (localhost fix)
+- public/pages/business_reports.js (localhost fix)
+- public/pages/trend_reports.js (localhost fix)
+
+--------------------------------------------------------------------------------
+NOTES FOR FUTURE
+--------------------------------------------------------------------------------
+1. H10 session tokens expire in ~24 hours
+2. To refresh tokens, run h10_login.py locally then push to API
+3. Cloud Run URL: https://amazon-analytics-565767837560.us-central1.run.app
+4. GCP Project: telegram-bot-integrator-459515
+
+================================================================================

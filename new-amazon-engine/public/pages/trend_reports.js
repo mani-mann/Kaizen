@@ -1165,7 +1165,8 @@ class TrendReports {
                 // If on Cloud Run or production (no port), use relative URLs
                 apiBase = '';
             } else {
-                apiBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+                // Dev ports (5500, etc) connect to localhost:5000, production uses relative URLs
+                apiBase = (window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')) ? 'http://localhost:5000' : '';
             }
             const apiUrl = `${apiBase}/api/trend-reports?${params.toString()}`;
             

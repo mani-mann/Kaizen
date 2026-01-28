@@ -465,10 +465,15 @@ class AmazonDashboard {
                 return '';
             }
             
-            // If on Live Server (port 5500) or other ports, connect to backend on port 5000
-            return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+            // If on Live Server (port 5500) or other dev ports, connect to backend on port 5000
+            // For production/Cloud Run, use relative URLs (empty string)
+            if (window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')) {
+                return 'http://localhost:5000';
+            }
+            return ''; // Production: use relative URLs
         } catch (_) {
-            return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+            // Production fallback: use relative URLs
+            return '';
         }
     }
     

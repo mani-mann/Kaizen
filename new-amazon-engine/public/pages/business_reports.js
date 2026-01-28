@@ -257,17 +257,19 @@ async waitForBackendReady(apiBase, maxAttempts = 6, delayMs = 500) {
                 }
             } catch (_) {}
 
-            // Fallback: explicitly try localhost:5000 if not already
-            try {
-                const localBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
-                if (!apiBase || !apiBase.includes('localhost:5000')) {
-                    const res2 = await fetch(`${localBase}/health`);
-                    if (res2.ok) {
-                        const j2 = await res2.json();
-                        if ((j2?.database || '').toLowerCase() === 'connected') return true;
+            // Fallback: try localhost:5000 only in development
+            if (window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')) {
+                try {
+                    const localBase = 'http://localhost:5000';
+                    if (!apiBase || !apiBase.includes('localhost:5000')) {
+                        const res2 = await fetch(`${localBase}/health`);
+                        if (res2.ok) {
+                            const j2 = await res2.json();
+                            if ((j2?.database || '').toLowerCase() === 'connected') return true;
+                        }
                     }
-                }
-            } catch (_) {}
+                } catch (_) {}
+            }
 
             await new Promise(r => setTimeout(r, delayMs));
         }
@@ -301,10 +303,15 @@ getApiBase() {
             return '';
         }
         
-        // If on Live Server (port 5500) or other ports, connect to backend on port 5000
-        return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+        // If on Live Server (port 5500) or other dev ports, connect to backend on port 5000
+        // For production/Cloud Run, use relative URLs (empty string)
+        if (window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')) {
+            return 'http://localhost:5000';
+        }
+        return ''; // Production: use relative URLs
     } catch (_) {
-        return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+        // Production fallback: use relative URLs
+        return '';
     }
 }
 

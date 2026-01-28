@@ -99,25 +99,42 @@ const shouldUseSSL = (() => {
 
 // Use Pool instead of Client for automatic connection management and parallel requests
 // Support both DATABASE_URL and individual PG* env vars
-const poolConfig = {
-  host: process.env.PGHOST || 'localhost',
-  port: parseInt(process.env.PGPORT) || 5432,
-  database: process.env.PGDATABASE || 'postgres',
-  user: process.env.PGUSER || 'postgres',
-  password: process.env.PGPASSWORD || '',
-};
+let pool;
 
-console.log(`[DB] Connecting to ${poolConfig.host}:${poolConfig.port}/${poolConfig.database} as ${poolConfig.user}`);
+if (process.env.DATABASE_URL) {
+  // Use DATABASE_URL if available (Cloud Run with Cloud SQL)
+  console.log(`[DB] Using DATABASE_URL for connection`);
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 5000,
+    // Pool configuration for better performance with multiple concurrent requests
+    max: 20, // Maximum number of clients in the pool
+    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+    allowExitOnIdle: false, // Keep pool alive even when idle
+  });
+} else {
+  // Fall back to individual PG* env vars
+  const poolConfig = {
+    host: process.env.PGHOST || 'localhost',
+    port: parseInt(process.env.PGPORT) || 5432,
+    database: process.env.PGDATABASE || 'postgres',
+    user: process.env.PGUSER || 'postgres',
+    password: process.env.PGPASSWORD || '',
+  };
 
-const pool = new Pool({
-  ...poolConfig,
-  ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
-  connectionTimeoutMillis: 5000,
-  // Pool configuration for better performance with multiple concurrent requests
-  max: 20, // Maximum number of clients in the pool
-  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  allowExitOnIdle: false, // Keep pool alive even when idle
-});
+  console.log(`[DB] Connecting to ${poolConfig.host}:${poolConfig.port}/${poolConfig.database} as ${poolConfig.user}`);
+
+  pool = new Pool({
+    ...poolConfig,
+    ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 5000,
+    // Pool configuration for better performance with multiple concurrent requests
+    max: 20, // Maximum number of clients in the pool
+    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+    allowExitOnIdle: false, // Keep pool alive even when idle
+  });
+}
 
 // Track connection status
 let dbConnected = false;
@@ -1915,7 +1932,7 @@ app.get('/api/trend-reports', async (req, res) => {
 // Helium 10 Configuration
 const H10_CONFIG = {
   EMAIL: process.env.H10_EMAIL || "careerinbox.piet@gmail.com",
-  PASSWORD: process.env.H10_PASSWORD || "Amazon@12345",
+  PASSWORD: process.env.H10_PASSWORD || "India@786",
   ACCOUNT_ID: process.env.H10_ACCOUNT_ID || "1547402760",
   MARKETPLACE: process.env.H10_MARKETPLACE || "A21TJRUUN4KGV", // Amazon.in
   BASE_URL: "https://members.helium10.com",
@@ -1928,12 +1945,13 @@ const H10_CONFIG = {
 const fs = require('fs');
 
 // In-memory token storage for Helium 10
+// HARDCODED TOKENS - Valid for 30 days from Jan 14, 2026
 let h10Tokens = {
-  authorization: null,
-  pacvueToken: null,
+  authorization: 'x7hkeRH56YSL6BdgeRG29Cfve1g8euc73lpRjPPMFpisEyvFgy4GEQxh5L4hWDlP46c6e3ac80e442e8d661a136b557b34d',
+  pacvueToken: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjZGNEIxQ0Y5NENFNTE0M0M5MUQ2MjhCQTJGRjEyNEM1NkQ0QjdCRkIiLCJ0eXAiOiJKV1QiLCJ4NXQiOiJiMHNjLVV6bEZEeVIxaWk2TF9Fa3hXMUxlX3MifQ.eyJuYmYiOjE3NjgzNzA4NjgsImV4cCI6MTc2ODQ1NzI2OCwiaXNzIjoiaHR0cDovL2lkZW50aXR5IiwiYXVkIjpbImh0dHA6Ly9pZGVudGl0eS9yZXNvdXJjZXMiLCJhcGkxIiwib3BlbmlkIiwid2ljayJdLCJjbGllbnRfaWQiOiJjbGllbnQuaDEwLmp3dCIsInN1YiI6IjE1NDc0MDI3NjAiLCJhdXRoX3RpbWUiOjE3NjgzNzA4NjgsImlkcCI6ImxvY2FsIiwicm9sZSI6IkFkbWluIiwidXNlckluZm8iOiJ7XCJtYWlsXCI6XCJjYXJlZXJpbmJveC5waWV0QGdtYWlsLmNvbVwiLFwidXNlck5hbWVcIjpcImIzIFNvbHV0aW9ucyBQdnQgbHRkXCIsXCJ1c2VyUm9sZVwiOlwiQWRtaW5cIixcInVzZXJJZFwiOjUwNzIxNTAxLFwicm9vdFVzZXJJZFwiOjUwNzIxNTAxLFwiY2xpZW50SWRcIjo1MDY4NDY1MixcImlzU3VwZXJBZG1pblwiOnRydWUsXCJoMTBVc2VySWRcIjoxNTQ3NDAyNzYwLFwiaDEwQWNjb3VudElkXCI6MTU0NzQwMjc2MH0iLCJzY29wZSI6WyJhcGkxIiwib3BlbmlkIiwid2ljayIsIm9mZmxpbmVfYWNjZXNzIl0sImFtciI6WyJiYXNpY2F1dGh0b2tlbiJdfQ.GyAi6HVflFUbkY6iBbkhMlvS_yeWmy1WJRHIYk38E5tIyZK06e20y_sVbUiyjuhHdKogK3RaCwZxNtPipyjSHT47MX8gQbjmY0K8VVkU2KVsfTjRprRZFwkZVvsFmqbwFJ-DjwKL1ZNMcnqB0-c3to-tuODUbb3IAcauODrQ6u7xyXG6sXcfN8Rptwm7ka1x5_c1q09h0S_5h3-4TqvRSggu9Kv4YzavquPLBI0bnk4Nh3Kws8xUshK0cM_OLxvOb5eTUmhJLZSskUpdl1hNdGRhGTQh-Ezp93mG3Oe1w-InYFgDIrOn4kVMgryX4bOIUMQLhDS6smimgZ7ZPBxnFw',
   cookies: {},
-  timestamp: null,
-  expiresIn: 86400 // 24 hours default
+  timestamp: 1768393878000, // Jan 14, 2026 12:31:18 UTC
+  expiresIn: 2592000 // 30 days
 };
 
 // Load session from JSON files (same format as Python script)
@@ -2211,8 +2229,10 @@ app.post('/api/h10/session', express.json(), (req, res) => {
 
 // ✅ H10 Session Status Endpoint
 app.get('/api/h10/status', (req, res) => {
-  const hasSession = h10Tokens.cookies && Object.keys(h10Tokens.cookies).length > 0;
+  const hasCookies = h10Tokens.cookies && Object.keys(h10Tokens.cookies).length > 0;
   const hasValidTokens = !isH10TokenExpired();
+  // hasSession is true if we have cookies OR valid tokens (direct token mode)
+  const hasSession = hasCookies || hasValidTokens;
 
   res.json({
     hasSession,
@@ -2231,6 +2251,40 @@ app.post('/api/h10/refresh', async (req, res) => {
     } else {
       res.status(401).json({ success: false, error: 'Failed to refresh tokens. Session may have expired.' });
     }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ H10 Direct Token Setup - Set authorization and pacvue tokens directly
+app.post('/api/h10/tokens', express.json(), (req, res) => {
+  try {
+    const { authorization, pacvueToken, expiresIn } = req.body;
+
+    if (!authorization || !pacvueToken) {
+      return res.status(400).json({
+        error: 'Missing required tokens',
+        required: ['authorization', 'pacvueToken'],
+        optional: ['expiresIn']
+      });
+    }
+
+    // Remove 'Bearer ' prefix if present
+    h10Tokens.authorization = authorization.replace(/^Bearer\s+/i, '');
+    h10Tokens.pacvueToken = pacvueToken.replace(/^Bearer\s+/i, '');
+    h10Tokens.timestamp = Date.now();
+    h10Tokens.expiresIn = expiresIn || 2592000; // Default 30 days
+
+    // Save tokens to file
+    saveH10Tokens();
+
+    console.log('[+] H10 tokens set directly');
+    res.json({
+      success: true,
+      message: 'Tokens saved successfully',
+      expiresIn: h10Tokens.expiresIn,
+      tokenExpiry: new Date(h10Tokens.timestamp + h10Tokens.expiresIn * 1000).toISOString()
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
