@@ -9,7 +9,7 @@ window.APP_CONFIG = {
     // API Configuration
     api: {
         // Development API base URL
-        development: 'http://localhost:5000',
+        development: 'http://localhost:5001',
         
         // Production API base URL (set this when deploying)
         production: '', // Will be set via environment variables
@@ -26,6 +26,7 @@ window.APP_CONFIG = {
             // Check if we're on a specific port (development)
             if (window.location.port === '5500' || 
                 window.location.port === '3000' ||
+                window.location.port === '3001' ||
                 window.location.port === '8080') {
                 return this.development;
             }

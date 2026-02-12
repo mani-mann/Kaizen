@@ -257,10 +257,10 @@ async waitForBackendReady(apiBase, maxAttempts = 6, delayMs = 500) {
                 }
             } catch (_) {}
 
-            // Fallback: explicitly try localhost:5000 if not already
+            // Fallback: explicitly try localhost:5001 if not already
             try {
-                const localBase = window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
-                if (!apiBase || !apiBase.includes('localhost:5000')) {
+                const localBase = window.location.origin.includes('localhost') ? 'http://localhost:5001' : '';
+                if (!apiBase || !apiBase.includes('localhost:5001')) {
                     const res2 = await fetch(`${localBase}/health`);
                     if (res2.ok) {
                         const j2 = await res2.json();
@@ -302,9 +302,9 @@ getApiBase() {
         }
         
         // If on Live Server (port 5500) or other ports, connect to backend on port 5000
-        return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+        return window.location.origin.includes('localhost') ? 'http://localhost:5001' : '';
     } catch (_) {
-        return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+        return window.location.origin.includes('localhost') ? 'http://localhost:5001' : '';
     }
 }
 

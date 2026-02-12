@@ -4,6 +4,14 @@ const { Pool } = require('pg');
 const cors = require('cors');
 const path = require('path');
 
+// Data API client (REST API instead of direct PostgreSQL)
+const dataApi = require('./data-api');
+
+const USE_DATA_API = !!(process.env.DATA_API_URL && process.env.DATA_API_URL.trim());
+if (USE_DATA_API) {
+  console.log(`[API] Using Data API: ${process.env.DATA_API_URL}`);
+}
+
 const app = express();
 
 // CORS Configuration
@@ -49,26 +57,29 @@ try {
   })); 
 } catch (_) {}
 
-// Serve static files from the public directory with caching
-app.use(express.static(path.join(__dirname, '../public'), {
-  maxAge: '1d', // Cache static files for 1 day
-  etag: true,
-  lastModified: true,
-  setHeaders: (res, filePath) => {
-    // Cache CSS/JS for 1 week
-    if (filePath.endsWith('.css') || filePath.endsWith('.js')) {
-      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+// Optional static hosting from backend (disabled by default for strict frontend/backend separation)
+const SERVE_FRONTEND_FROM_BACKEND = String(process.env.SERVE_FRONTEND_FROM_BACKEND || 'false').toLowerCase() === 'true';
+if (SERVE_FRONTEND_FROM_BACKEND) {
+  app.use(express.static(path.join(__dirname, '../public'), {
+    maxAge: '1d', // Cache static files for 1 day
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+      // Cache CSS/JS for 1 week
+      if (filePath.endsWith('.css') || filePath.endsWith('.js')) {
+        res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+      }
+      // Cache images for 1 month
+      if (filePath.match(/\.(jpg|jpeg|png|gif|svg|webp|ico)$/)) {
+        res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+      }
+      // Don't cache HTML files
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      }
     }
-    // Cache images for 1 month
-    if (filePath.match(/\.(jpg|jpeg|png|gif|svg|webp|ico)$/)) {
-      res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
-    }
-    // Don't cache HTML files
-    if (filePath.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-    }
-  }
-}));
+  }));
+}
 
 // Avoid noisy 404s for browser favicon requests
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
@@ -107,7 +118,9 @@ const poolConfig = {
   password: process.env.PGPASSWORD || '',
 };
 
-console.log(`[DB] Connecting to ${poolConfig.host}:${poolConfig.port}/${poolConfig.database} as ${poolConfig.user}`);
+if (!USE_DATA_API) {
+  console.log(`[DB] Connecting to ${poolConfig.host}:${poolConfig.port}/${poolConfig.database} as ${poolConfig.user}`);
+}
 
 const pool = new Pool({
   ...poolConfig,
@@ -176,21 +189,30 @@ function setCachedData(key, data) {
   console.log(`💾 Cached data for key: ${key}. Next refresh: ${nextRefresh.toLocaleString()}`);
 }
 
-// Test pool connection on startup
-pool.query('SELECT NOW()')
-  .then(() => {
-    dbConnected = true;
-    console.log("✅ PostgreSQL Pool initialized successfully");
-  })
-  .catch(err => {
-    dbConnected = false;
-    console.error("❌ DB Pool Connection Error:", err);
-    console.log("💡 To fix this error:");
-    console.log("   1. Make sure PostgreSQL is running");
-    console.log("   2. Check your DATABASE_URL in .env file");
-    console.log("   3. Verify database exists and credentials are correct");
-    console.log("   4. For local development, try: PGSSL=disable");
-  });
+// Test pool connection on startup (skip when using Data API for main data)
+if (USE_DATA_API) {
+  dbConnected = true; // App is "connected" via API for ads/sales
+  console.log("✅ Using Data API for ads/sales (PostgreSQL optional for Cerebro keyword tracking)");
+  dataApi.probeApi().then(ok => {
+    if (ok) console.log("✅ Data API reachable");
+    else console.warn("⚠️ Data API not reachable - check DATA_API_URL");
+  }).catch(() => {});
+} else {
+  pool.query('SELECT NOW()')
+    .then(() => {
+      dbConnected = true;
+      console.log("✅ PostgreSQL Pool initialized successfully");
+    })
+    .catch(err => {
+      dbConnected = false;
+      console.error("❌ DB Pool Connection Error:", err);
+      console.log("💡 To fix this error:");
+      console.log("   1. Make sure PostgreSQL is running");
+      console.log("   2. Check your DATABASE_URL in .env file");
+      console.log("   3. Verify database exists and credentials are correct");
+      console.log("   4. For local development, try: PGSSL=disable");
+    });
+}
 
 // Handle pool errors (individual connection errors, not pool errors)
 pool.on('error', (err, client) => {
@@ -206,13 +228,16 @@ pool.on('connect', () => {
   }
 });
 
-// Lightweight DB probe used by health checks
-// Pool automatically manages connections, so no manual reconnection needed
+// Lightweight DB/API probe used by health checks
 async function probeDb() {
+  if (USE_DATA_API) {
+    const ok = await dataApi.probeApi();
+    dbConnected = ok;
+    return ok;
+  }
   try {
-    // Use a very cheap query - pool handles connection automatically
     await pool.query('SELECT 1');
-    dbConnected = true; // Update status on successful query
+    dbConnected = true;
     return true;
   } catch (err) {
     dbConnected = false;
@@ -238,49 +263,45 @@ async function fetchKeywordData(startDate = null, endDate = null, page = null, l
     console.log(`🔍 fetchKeywordData called with: { startDate: '${startDate}', endDate: '${endDate}', page: ${page}, limit: ${limit} }`);
     const usePaging = Number.isFinite(limit) && Number.isFinite(page);
     const offset = usePaging ? (page - 1) * limit : 0;
-    
-    // Select only the columns used by the frontend
+
+    if (USE_DATA_API) {
+      const rows = await dataApi.fetchAdsData(startDate, endDate);
+      const sliced = usePaging ? rows.slice(offset, offset + limit) : rows;
+      const duration = Date.now() - startTime;
+      console.log(`📊 [API] Fetched ${sliced.length} keyword records in ${duration}ms`);
+      return sliced;
+    }
+
+    // PostgreSQL path
     let query = `SELECT search_term, keyword_info, match_type, campaign_name, cost, sales_1d, clicks, impressions, purchases_1d, report_date
                  FROM amazon_ads_reports`;
     let params = [];
     let paramIndex = 1;
-    
+
     if (startDate && endDate) {
-      // Optimized: Use direct date comparison instead of DATE() function for better index usage
       query += ` WHERE report_date >= $${paramIndex}::date AND report_date <= $${paramIndex + 1}::date`;
       params = [startDate, endDate];
       paramIndex += 2;
-      // Always sort by most recent + highest spend
       query += ` ORDER BY report_date DESC, cost DESC`;
-      // Apply LIMIT/OFFSET only when paging is requested
       if (usePaging) {
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(limit, offset);
       }
     } else {
-      // When no date range specified, fetch recent data (optionally paginated)
       query += ` ORDER BY report_date DESC, cost DESC`;
       if (usePaging) {
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params = [limit, offset];
       }
     }
-    
-    console.log(`🔍 Executing keyword query with params:`, params);
+
     const res = await pool.query(query, params);
     const duration = Date.now() - startTime;
-    console.log(`📊 Fetched ${res.rows.length} keyword records (page ${page}, limit ${limit}) in ${duration}ms${startDate && endDate ? ' for date range' : ' (recent data)'}`);
-    
-    // Warn if query is slow
-    if (duration > 2000) {
-      console.warn(`⚠️ Slow query detected (${duration}ms). Consider adding database indexes.`);
-    }
-    
+    console.log(`📊 Fetched ${res.rows.length} keyword records (page ${page}, limit ${limit}) in ${duration}ms`);
     return res.rows;
   } catch (err) {
     console.error("❌ Error fetching keywords:", err);
-    console.error("❌ Error stack:", err.stack);
-    console.log("⚠️ Database error, returning empty data");
+    console.log("⚠️ Returning empty data");
     return [];
   }
 }
@@ -288,14 +309,16 @@ async function fetchKeywordData(startDate = null, endDate = null, page = null, l
 // Get total count of keyword records for pagination
 async function getKeywordDataCount(startDate = null, endDate = null) {
   try {
+    if (USE_DATA_API) {
+      const rows = await dataApi.fetchAdsData(startDate, endDate);
+      return rows.length;
+    }
     let query = `SELECT COUNT(*) as total FROM amazon_ads_reports`;
     let params = [];
-    
     if (startDate && endDate) {
       query += " WHERE report_date >= $1::date AND report_date <= $2::date";
       params = [startDate, endDate];
     }
-    
     const res = await pool.query(query, params);
     return parseInt(res.rows[0]?.total || 0);
   } catch (err) {
@@ -309,12 +332,17 @@ async function getKeywordDataCount(startDate = null, endDate = null) {
 // --------------------
 async function fetchBusinessData(startDate = null, endDate = null) {
   try {
-    
     console.log('🔍 fetchBusinessData called with:', { startDate, endDate });
-    
-    // If no date range provided, aggregate by date for chart data
+
+    if (USE_DATA_API) {
+      const rows = await dataApi.fetchSalesData(startDate, endDate);
+      const aggregated = dataApi.aggregateSalesByDate(rows);
+      console.log(`📊 [API] Aggregated ${aggregated.length} unique dates from business data`);
+      return aggregated;
+    }
+
+    // PostgreSQL path
     if (!startDate || !endDate) {
-      console.log('📊 Fetching ALL business data aggregated by date for chart');
       const query = `
         SELECT 
           (date AT TIME ZONE 'Asia/Kolkata')::date as date,
@@ -327,30 +355,9 @@ async function fetchBusinessData(startDate = null, endDate = null) {
         GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
         ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
       `;
-      
       const res = await pool.query(query);
-      console.log(`📊 Aggregated ${res.rows.length} unique dates from business data (ALL dates)`);
-      
-      // Debug: Show first few rows of business data
-      if (res.rows.length > 0) {
-        console.log('🔍 First 5 business data rows:', res.rows.slice(0, 5).map(row => ({
-          date: row.date,
-          ordered_product_sales: row.ordered_product_sales
-        })));
-        
-        // Debug: Check specifically for September 8th
-        const sep8Data = res.rows.filter(row => {
-          const date = new Date(row.date);
-          return date.getMonth() === 8 && date.getDate() === 8; // September 8th
-        });
-        console.log('🔍 September 8th business data:', sep8Data);
-      }
-      
       return res.rows;
     }
-    
-    // If date range provided, aggregate by date for specific date range
-    // Optimized: Use date directly in WHERE clause for index usage (date column is 'date' type)
     const query = `
       SELECT 
         (date AT TIME ZONE 'Asia/Kolkata')::date as date,
@@ -359,19 +366,14 @@ async function fetchBusinessData(startDate = null, endDate = null) {
         SUM(CAST(units_ordered AS INTEGER)) as units_ordered,
         SUM(CAST(ordered_product_sales AS DECIMAL)) as ordered_product_sales
       FROM amazon_sales_traffic
-      WHERE date >= $1::date 
-        AND date <= $2::date
+      WHERE date >= $1::date AND date <= $2::date
       GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
       ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
     `;
-    
     const res = await pool.query(query, [startDate, endDate]);
-    console.log(`📊 Found ${res.rows.length} business data records for date range ${startDate} to ${endDate}`);
-    
     return res.rows;
   } catch (err) {
     console.error("❌ Error fetching business data:", err);
-    console.log("⚠️ Database error, returning empty data");
     return [];
   }
 }
@@ -381,13 +383,7 @@ async function fetchBusinessData(startDate = null, endDate = null) {
 // --------------------
 async function fetchBusinessRows(startDate, endDate, includeAll = false) {
   try {
-    if (!dbConnected) {
-      console.log("⚠️ Database not connected, returning empty business rows (no mock)");
-      return [];
-    }
-
     if (!startDate || !endDate) {
-      // Fallback: last 30 days if not provided
       const end = new Date();
       const start = new Date();
       start.setDate(end.getDate() - 29);
@@ -396,56 +392,47 @@ async function fetchBusinessRows(startDate, endDate, includeAll = false) {
       endDate = toYmd(end);
     }
 
-    let query;
-    if (includeAll) {
-      // Include ALL individual entries (for complete export)
-      query = `
-        SELECT 
-          (date AT TIME ZONE 'Asia/Kolkata')::date as date,
-          COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin,
-          COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
-          COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
-          CAST(sessions AS INTEGER) as sessions,
-          CAST(page_views AS INTEGER) as page_views,
-          CAST(units_ordered AS INTEGER) as units_ordered,
-          CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
-        FROM amazon_sales_traffic
-        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
-          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
-        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC, ordered_product_sales DESC NULLS LAST
-      `;
-    } else {
-      // Only include rows with activity (for frontend table)
-      query = `
-        SELECT 
-          (date AT TIME ZONE 'Asia/Kolkata')::date as date,
-          COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin,
-          COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
-          COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
-          CAST(sessions AS INTEGER) as sessions,
-          CAST(page_views AS INTEGER) as page_views,
-          CAST(units_ordered AS INTEGER) as units_ordered,
-          CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
-        FROM amazon_sales_traffic
-        WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date 
-          AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
-          AND (CAST(sessions AS INTEGER) > 0 
-               OR CAST(page_views AS INTEGER) > 0 
-               OR CAST(units_ordered AS INTEGER) > 0 
-               OR CAST(ordered_product_sales AS DECIMAL) > 0)
-        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC, ordered_product_sales DESC NULLS LAST
-      `;
+    if (USE_DATA_API) {
+      const rows = await dataApi.fetchSalesData(startDate, endDate);
+      const mapped = rows.map(r => ({
+        date: r.date,
+        parent_asin: r.parent_asin || 'Unknown',
+        sku: r.sku || 'Unknown',
+        product_title: r.parent_asin || r.sku || 'Unknown Product',
+        sessions: r.sessions,
+        page_views: r.page_views,
+        units_ordered: r.units_ordered,
+        ordered_product_sales: r.ordered_product_sales
+      }));
+      let filtered = includeAll ? mapped : mapped.filter(r =>
+        (r.sessions || 0) > 0 || (r.page_views || 0) > 0 || (r.units_ordered || 0) > 0 || (r.ordered_product_sales || 0) > 0
+      );
+      filtered.sort((a, b) => new Date(b.date) - new Date(a.date) || (b.ordered_product_sales - a.ordered_product_sales));
+      console.log(`📦 [API] Fetched ${filtered.length} business rows for table`);
+      return filtered;
     }
 
-    const res = await pool.query(query, [startDate, endDate]);
-    console.log(`📦 Fetched ${res.rows.length} business rows for table between ${startDate} and ${endDate}`);
-    
-    // If no data found for the specific date range, return empty array
-    if (res.rows.length === 0) {
-      console.log('🔍 No detailed rows found for selected date range - returning empty array');
-      return [];
+    if (!dbConnected) return [];
+    let query;
+    if (includeAll) {
+      query = `SELECT (date AT TIME ZONE 'Asia/Kolkata')::date as date,
+        COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin, COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
+        COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
+        CAST(sessions AS INTEGER) as sessions, CAST(page_views AS INTEGER) as page_views,
+        CAST(units_ordered AS INTEGER) as units_ordered, CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
+        FROM amazon_sales_traffic WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC, ordered_product_sales DESC NULLS LAST`;
+    } else {
+      query = `SELECT (date AT TIME ZONE 'Asia/Kolkata')::date as date,
+        COALESCE(NULLIF(parent_asin, ''), 'Unknown') as parent_asin, COALESCE(NULLIF(sku, ''), 'Unknown') as sku,
+        COALESCE(NULLIF(parent_asin, ''), NULLIF(sku, ''), 'Unknown Product') as product_title,
+        CAST(sessions AS INTEGER) as sessions, CAST(page_views AS INTEGER) as page_views,
+        CAST(units_ordered AS INTEGER) as units_ordered, CAST(ordered_product_sales AS DECIMAL) as ordered_product_sales
+        FROM amazon_sales_traffic WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+        AND (CAST(sessions AS INTEGER) > 0 OR CAST(page_views AS INTEGER) > 0 OR CAST(units_ordered AS INTEGER) > 0 OR CAST(ordered_product_sales AS DECIMAL) > 0)
+        ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC, ordered_product_sales DESC NULLS LAST`;
     }
-    
+    const res = await pool.query(query, [startDate, endDate]);
     return res.rows;
   } catch (err) {
     console.error("❌ Error fetching business rows:", err);
@@ -456,16 +443,27 @@ async function fetchBusinessRows(startDate, endDate, includeAll = false) {
 // Lightweight date bounds query to avoid scanning all rows into memory
 async function getGlobalDateRange() {
   try {
+    if (USE_DATA_API) {
+      const [ads, sales] = await Promise.all([
+        dataApi.fetchAdsData(),
+        dataApi.fetchSalesData()
+      ]);
+      const dates = [];
+      ads.forEach(r => { if (r.report_date) dates.push(new Date(r.report_date)); });
+      sales.forEach(r => { if (r.date) dates.push(new Date(r.date)); });
+      if (!dates.length) return null;
+      return { min: new Date(Math.min(...dates)), max: new Date(Math.max(...dates)) };
+    }
     if (!dbConnected) return null;
     const [adMinMax, bizMinMax] = await Promise.all([
       pool.query('SELECT MIN(report_date) AS min, MAX(report_date) AS max FROM amazon_ads_reports'),
       pool.query("SELECT MIN((date AT TIME ZONE 'Asia/Kolkata')::date) AS min, MAX((date AT TIME ZONE 'Asia/Kolkata')::date) AS max FROM amazon_sales_traffic")
     ]);
     const dates = [];
-    if (adMinMax.rows[0].min) { dates.push(new Date(adMinMax.rows[0].min)); }
-    if (adMinMax.rows[0].max) { dates.push(new Date(adMinMax.rows[0].max)); }
-    if (bizMinMax.rows[0].min) { dates.push(new Date(bizMinMax.rows[0].min)); }
-    if (bizMinMax.rows[0].max) { dates.push(new Date(bizMinMax.rows[0].max)); }
+    if (adMinMax.rows[0].min) dates.push(new Date(adMinMax.rows[0].min));
+    if (adMinMax.rows[0].max) dates.push(new Date(adMinMax.rows[0].max));
+    if (bizMinMax.rows[0].min) dates.push(new Date(bizMinMax.rows[0].min));
+    if (bizMinMax.rows[0].max) dates.push(new Date(bizMinMax.rows[0].max));
     if (!dates.length) return null;
     return { min: new Date(Math.min(...dates)), max: new Date(Math.max(...dates)) };
   } catch (e) {
@@ -594,6 +592,19 @@ function calculateDashboardKPIs(keywordData, businessData) {
 // Transform Database Data for Frontend
 // --------------------
 function transformKeywordDataForFrontend(dbData, businessData = []) {
+  const toDateKey = (value) => {
+    if (!value) return null;
+    if (typeof value === 'string') {
+      const m = value.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (m) return m[1];
+    }
+    try {
+      const d = new Date(value);
+      if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+    } catch (_) {}
+    return null;
+  };
+
   console.log('🔍 transformKeywordDataForFrontend called with:', {
     dbDataLength: dbData.length,
     businessDataLength: businessData.length,
@@ -604,8 +615,8 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
   const businessDataByDate = {};
   businessData.forEach(bizRow => {
     // Use YYYY-MM-DD format for consistent date matching
-    const date = new Date(bizRow.date);
-    const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const dateStr = toDateKey(bizRow.date);
+    if (!dateStr) return;
     
     if (!businessDataByDate[dateStr]) {
       businessDataByDate[dateStr] = {
@@ -637,8 +648,20 @@ function transformKeywordDataForFrontend(dbData, businessData = []) {
   return dbData.map(row => {
     // Find matching business data for the same date to get real total sales
     // Use YYYY-MM-DD format to match business data keys
-    const keywordDate = new Date(row.report_date);
-    const keywordDateStr = keywordDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const keywordDateStr = toDateKey(row.report_date); // YYYY-MM-DD format
+    if (!keywordDateStr) {
+      return {
+        searchTerm: row.search_term || 'Unknown',
+        keywords: row.keyword_info || row.match_type || '',
+        campaignName: row.campaign_name || 'Unknown Campaign',
+        spend: parseFloat(row.cost || 0),
+        sales: parseFloat(row.sales_1d || 0),
+        totalSales: 0,
+        clicks: parseInt(row.clicks || 0),
+        impressions: parseInt(row.impressions || 0),
+        date: row.report_date
+      };
+    }
     const matchingBusinessData = businessDataByDate[keywordDateStr];
     
     // FIXED LOGIC: ordered_product_sales = TOTAL SALES (ad + organic)
@@ -757,6 +780,10 @@ function ensureBusinessSalesRows(rows = [], businessData = []) {
 
     const getDateKey = (value) => {
       if (!value) return null;
+      if (typeof value === 'string') {
+        const m = value.match(/^(\d{4}-\d{2}-\d{2})/);
+        if (m) return m[1];
+      }
       try {
         const d = new Date(value);
         if (!isNaN(d.getTime())) {
@@ -764,7 +791,6 @@ function ensureBusinessSalesRows(rows = [], businessData = []) {
         }
       } catch (_) {}
       if (typeof value === 'string') {
-        if (value.includes('T')) return value.split('T')[0];
         if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
       }
       return null;
@@ -925,32 +951,34 @@ app.get('/api/business-data', async (req, res) => {
 
       // Disable heuristic that widened single-day range to Lifetime to avoid hidden range changes
       
-      // DEBUG: Check what dates exist in the database for this range
-      console.log('🔍 ===== CHECKING DATABASE FOR DATE RANGE =====');
-      try {
-        const dateCheckQuery = `
-          SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date, COUNT(*) as record_count
-          FROM amazon_sales_traffic 
-          WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
-          GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
-          ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date
-        `;
-        const dateCheckResult = await pool.query(dateCheckQuery, [startDate, endDate]);
-        console.log('🔍 Dates found in database for range:', dateCheckResult.rows);
-        console.log('🔍 Total dates with data:', dateCheckResult.rows.length);
-        
-        // Also check what dates exist in the entire database
-        const allDatesQuery = `
-          SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date
-          FROM amazon_sales_traffic 
-          ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
-          LIMIT 20
-        `;
-        const allDatesResult = await pool.query(allDatesQuery);
-        console.log('🔍 Recent dates in entire database:', allDatesResult.rows.map(r => r.date));
-        
-      } catch (debugErr) {
-        console.error('🔍 Error checking database dates:', debugErr);
+      // DEBUG: Check what dates exist in the database for this range (PostgreSQL mode only)
+      if (!USE_DATA_API) {
+        console.log('🔍 ===== CHECKING DATABASE FOR DATE RANGE =====');
+        try {
+          const dateCheckQuery = `
+            SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date, COUNT(*) as record_count
+            FROM amazon_sales_traffic 
+            WHERE (date AT TIME ZONE 'Asia/Kolkata')::date >= $1::date AND (date AT TIME ZONE 'Asia/Kolkata')::date <= $2::date
+            GROUP BY (date AT TIME ZONE 'Asia/Kolkata')::date
+            ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date
+          `;
+          const dateCheckResult = await pool.query(dateCheckQuery, [startDate, endDate]);
+          console.log('🔍 Dates found in database for range:', dateCheckResult.rows);
+          console.log('🔍 Total dates with data:', dateCheckResult.rows.length);
+          
+          // Also check what dates exist in the entire database
+          const allDatesQuery = `
+            SELECT DISTINCT (date AT TIME ZONE 'Asia/Kolkata')::date as date
+            FROM amazon_sales_traffic 
+            ORDER BY (date AT TIME ZONE 'Asia/Kolkata')::date DESC
+            LIMIT 20
+          `;
+          const allDatesResult = await pool.query(allDatesQuery);
+          console.log('🔍 Recent dates in entire database:', allDatesResult.rows.map(r => r.date));
+          
+        } catch (debugErr) {
+          console.error('🔍 Error checking database dates:', debugErr);
+        }
       }
     } else {
       console.log('🔍 No date range provided, computing Lifetime (DB min -> today)');
@@ -1082,19 +1110,38 @@ app.get('/api/analytics', async (req, res) => {
       startDate = start; // e.g., "2025-07-01"
       endDate = end;     // e.g., "2025-07-02"
     } else {
-      // Default to current month (1st of current month to today)
-      const now = new Date();
-      const currentYear = now.getFullYear();
-      const currentMonth = now.getMonth(); // 0-indexed (0 = January)
-      const currentDay = now.getDate();
-      
-      // Start: 1st of current month
-      startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
-      
-      // End: Today (or latest data date if available)
-      endDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}`;
-      
-      console.log(`⏱️ No date range provided, defaulting to current month: ${startDate} to ${endDate}`);
+      // Default range:
+      // - API mode: last 30 days ending at latest available data date
+      // - DB mode: current month
+      if (USE_DATA_API) {
+        const range = await getGlobalDateRange();
+        if (range?.max) {
+          const end = new Date(range.max);
+          const start30 = new Date(end);
+          start30.setDate(end.getDate() - 29);
+          const min = range?.min ? new Date(range.min) : null;
+          const startEffective = (min && start30 < min) ? min : start30;
+          const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          startDate = toYmd(startEffective);
+          endDate = toYmd(end);
+          console.log(`⏱️ No date range provided, defaulting to latest API data window: ${startDate} to ${endDate}`);
+        } else {
+          const now = new Date();
+          const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          endDate = toYmd(now);
+          const s = new Date(now); s.setDate(now.getDate() - 29);
+          startDate = toYmd(s);
+          console.log(`⏱️ No date range provided, API range unavailable; using last 30 days: ${startDate} to ${endDate}`);
+        }
+      } else {
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth();
+        const currentDay = now.getDate();
+        startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+        endDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}`;
+        console.log(`⏱️ No date range provided, defaulting to current month: ${startDate} to ${endDate}`);
+      }
     }
     
     // Use the exact start/end provided by the UI without modification
@@ -1118,6 +1165,53 @@ app.get('/api/analytics', async (req, res) => {
     if (kpisOnly) {
       // Fast KPI path: aggregate directly in SQL and skip heavy row transformation
       const endBound = effectiveEndDate || endDate;
+      if (USE_DATA_API) {
+        const [adRows, bizRows] = await Promise.all([
+          fetchKeywordData(startDate, endBound, null, null),
+          fetchBusinessRows(startDate, endBound, true)
+        ]);
+
+        const adSpend = adRows.reduce((s, r) => s + Number(r.cost || 0), 0);
+        const adSales = adRows.reduce((s, r) => s + Number(r.sales_1d || 0), 0);
+        const clicks = adRows.reduce((s, r) => s + Number(r.clicks || 0), 0);
+        const impressions = adRows.reduce((s, r) => s + Number(r.impressions || 0), 0);
+
+        const totalSessions = bizRows.reduce((s, r) => s + Number(r.sessions || 0), 0);
+        const totalPageViews = bizRows.reduce((s, r) => s + Number(r.page_views || 0), 0);
+        const totalUnitsOrdered = bizRows.reduce((s, r) => s + Number(r.units_ordered || 0), 0);
+        const totalSales = bizRows.reduce((s, r) => s + Number(r.ordered_product_sales || 0), 0);
+        const activeDays = new Set(bizRows.map(r => String(r.date || '').slice(0, 10)).filter(Boolean)).size;
+
+        const avgCpc = clicks > 0 ? adSpend / clicks : 0;
+        const acos = adSales > 0 ? (adSpend / adSales) * 100 : 0;
+        const roas = adSpend > 0 ? adSales / adSpend : 0;
+        const tacos = totalSales > 0 ? (adSpend / totalSales) * 100 : 0;
+        const conversionRate = totalSessions > 0 ? (totalUnitsOrdered / totalSessions) * 100 : 0;
+        const avgSessionsPerDay = activeDays > 0 ? (totalSessions / activeDays) : 0;
+
+        const responseData = {
+          rows: [],
+          kpis: {
+            adSpend,
+            adSales,
+            totalSales,
+            acos,
+            tacos,
+            roas,
+            adClicks: clicks,
+            avgCpc,
+            sessions: totalSessions,
+            pageViews: totalPageViews,
+            unitsOrdered: totalUnitsOrdered,
+            avgSessionsPerDay,
+            conversionRate,
+            impressions
+          },
+          dataRange: await getGlobalDateRange(),
+          totalRows: adRows.length
+        };
+        return res.json(responseData);
+      }
 
       // Aggregate ad metrics from amazon_ads_reports
       const adAggSql = `
@@ -1276,7 +1370,7 @@ app.get('/api/analytics', async (req, res) => {
 
     // Harden TOTAL SALES: compute directly via SQL SUM for the exact date window
     try {
-      if (startDate && (effectiveEndDate || endDate)) {
+      if (!USE_DATA_API && startDate && (effectiveEndDate || endDate)) {
         const endBound = effectiveEndDate || endDate;
         const totalSalesSql = `
           SELECT COALESCE(SUM(CAST(ordered_product_sales AS DECIMAL)), 0) AS total
@@ -1406,6 +1500,26 @@ app.get('/api/date-range', async (req, res) => {
         hasData: false
       });
     }
+    if (USE_DATA_API) {
+      const [adsRows, salesRows] = await Promise.all([
+        dataApi.fetchAdsData(),
+        dataApi.fetchSalesData()
+      ]);
+      const dates = [];
+      adsRows.forEach(r => { if (r.report_date) dates.push(new Date(r.report_date)); });
+      salesRows.forEach(r => { if (r.date) dates.push(new Date(r.date)); });
+      if (!dates.length) {
+        return res.json({ minDate: null, maxDate: null, hasData: false, totalRecords: 0 });
+      }
+      const minDate = new Date(Math.min(...dates));
+      const maxDate = new Date(Math.max(...dates));
+      return res.json({
+        minDate: minDate.toISOString().slice(0, 10),
+        maxDate: maxDate.toISOString().slice(0, 10),
+        hasData: true,
+        totalRecords: adsRows.length + salesRows.length
+      });
+    }
     
     console.log('📅 Fetching available date range from database...');
     
@@ -1458,6 +1572,20 @@ app.get('/api/business-date-range', async (req, res) => {
     }
     
     console.log('📅 Fetching available business data date range...');
+    if (USE_DATA_API) {
+      const salesRows = await dataApi.fetchSalesData();
+      const dates = salesRows.map(r => String(r.date || '').slice(0, 10)).filter(Boolean).sort();
+      if (!dates.length) {
+        return res.json({ minDate: null, maxDate: null, hasData: false, totalRecords: 0, uniqueDates: 0 });
+      }
+      return res.json({
+        minDate: dates[0],
+        maxDate: dates[dates.length - 1],
+        hasData: true,
+        totalRecords: salesRows.length,
+        uniqueDates: new Set(dates).size
+      });
+    }
     
     // Get date range specifically from business data table (amazon_sales_traffic)
     // Only return dates that actually have business data
@@ -1517,6 +1645,11 @@ app.get('/api/business-available-dates', async (req, res) => {
     }
     
     console.log('📅 Fetching all available dates from business table...');
+    if (USE_DATA_API) {
+      const salesRows = await dataApi.fetchSalesData();
+      const dates = [...new Set(salesRows.map(r => String(r.date || '').slice(0, 10)).filter(Boolean))].sort();
+      return res.json({ dates, hasData: dates.length > 0, totalDates: dates.length });
+    }
     
     // Get all unique dates that have business data
     const query = `
@@ -1566,6 +1699,36 @@ app.get('/api/debug-dates', async (req, res) => {
     const { start, end } = req.query;
     console.log('🔍 Debug endpoint called with:', { start, end });
     
+    if (USE_DATA_API) {
+      const [adsRows, salesRows] = await Promise.all([
+        dataApi.fetchAdsData(),
+        dataApi.fetchSalesData()
+      ]);
+      const businessDates = [...new Set(salesRows.map(r => String(r.date || '').slice(0, 10)).filter(Boolean))].sort().reverse().slice(0, 20);
+      const adsDates = [...new Set(adsRows.map(r => String(r.report_date || '').slice(0, 10)).filter(Boolean))].sort().reverse().slice(0, 20);
+      const businessSample = salesRows.slice(0, 5);
+      const adsSample = adsRows.slice(0, 5);
+      return res.json({
+        businessDates,
+        adsDates,
+        businessRange: {
+          min_date: businessDates[businessDates.length - 1] || null,
+          max_date: businessDates[0] || null,
+          count: salesRows.length
+        },
+        adsRange: {
+          min_date: adsDates[adsDates.length - 1] || null,
+          max_date: adsDates[0] || null,
+          count: adsRows.length
+        },
+        rangeQuery: null,
+        businessSample,
+        adsSample,
+        totalBusinessRecords: salesRows.length,
+        totalAdsRecords: adsRows.length
+      });
+    }
+
     // Test 1: Get all dates in business table
     const businessDatesQuery = `SELECT DISTINCT date FROM amazon_sales_traffic ORDER BY date DESC LIMIT 20`;
     const businessDatesResult = await pool.query(businessDatesQuery);
@@ -1688,7 +1851,7 @@ app.get('/api/self-test', async (req, res) => {
 // ✅ Trend Reports endpoint - Get data for trend analysis
 app.get('/api/trend-reports', async (req, res) => {
   try {
-    if (!dbConnected) {
+    if (!dbConnected && !USE_DATA_API) {
       return res.status(500).json({ error: 'Database not connected' });
     }
     
@@ -1696,6 +1859,164 @@ app.get('/api/trend-reports', async (req, res) => {
     console.log('📊 Trend Reports endpoint called with:', { start, end, category, timePeriod });
     
     let data = [];
+
+    // Data API path - fetch and process in memory
+    if (USE_DATA_API) {
+      const [adsRows, salesRows] = await Promise.all([
+        dataApi.fetchAdsData(start || null, end || null),
+        dataApi.fetchSalesData(start || null, end || null)
+      ]);
+      const toYmd = (val) => {
+        if (!val) return null;
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
+      };
+      const inRange = (d) => !start || !end || (d && d >= start && d <= end);
+
+      if (category === 'products') {
+        data = salesRows
+          .filter(r => r.date && (r.parent_asin || r.sku))
+          .map(r => {
+            const d = toYmd(r.date);
+            const dayAds = adsRows.filter(a => toYmd(a.report_date) === d);
+            const spend = dayAds.reduce((s, a) => s + (a.cost || 0), 0);
+            const clicks = dayAds.reduce((s, a) => s + (a.clicks || 0), 0);
+            const impressions = dayAds.reduce((s, a) => s + (a.impressions || 0), 0);
+            const sales = parseFloat(r.ordered_product_sales || 0);
+            const sess = parseInt(r.sessions || 0, 10);
+            const units = parseInt(r.units_ordered || 0, 10);
+            return {
+              date: r.date,
+              category: 'products',
+              name: r.parent_asin || r.sku || 'Unknown Product',
+              sku: r.sku || null,
+              spend,
+              cpc: clicks > 0 ? spend / clicks : 0,
+              sales,
+              units_ordered: units,
+              acos: sales > 0 ? (spend / sales) * 100 : 0,
+              tcos: sales > 0 ? (spend / sales) * 100 : 0,
+              ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+              sessions: sess,
+              pageviews: parseInt(r.page_views || 0, 10),
+              conversionRate: sess > 0 ? (units / sess) * 100 : 0
+            };
+          })
+          .filter(r => inRange(toYmd(r.date)))
+          .sort((a, b) => new Date(b.date) - new Date(a.date));
+      } else if (category === 'campaigns') {
+        const aggregateByDate = req.query.aggregate === 'date';
+        const rows = adsRows.filter(r => inRange(toYmd(r.report_date))).map(r => ({
+          date: r.report_date,
+          name: r.campaign_name || 'Unknown Campaign',
+          spend: parseFloat(r.cost || 0),
+          clicks: parseInt(r.clicks || 0, 10),
+          impressions: parseInt(r.impressions || 0, 10),
+          sales: parseFloat(r.sales_1d || 0)
+        }));
+        if (aggregateByDate) {
+          const byDate = new Map();
+          rows.forEach(r => {
+            const d = toYmd(r.date);
+            if (!byDate.has(d)) byDate.set(d, []);
+            byDate.get(d).push(r);
+          });
+          const totals = [];
+          byDate.forEach((arr, d) => {
+            const t = arr.reduce((acc, r) => ({
+              spend: acc.spend + r.spend,
+              clicks: acc.clicks + r.clicks,
+              impressions: acc.impressions + r.impressions,
+              sales: acc.sales + r.sales
+            }), { spend: 0, clicks: 0, impressions: 0, sales: 0 });
+            totals.push({
+              date: d,
+              category: 'campaigns',
+              name: '📊 DAILY TOTAL',
+              rowType: 'total',
+              spend: t.spend,
+              clicks: t.clicks,
+              cpc: t.clicks > 0 ? t.spend / t.clicks : 0,
+              sales: t.sales,
+              acos: t.sales > 0 ? (t.spend / t.sales) * 100 : 0,
+              tcos: 0,
+              roas: t.spend > 0 ? t.sales / t.spend : 0,
+              ctr: t.impressions > 0 ? (t.clicks / t.impressions) * 100 : 0,
+              sessions: 0,
+              pageviews: 0,
+              conversionRate: 0
+            });
+          });
+          const individual = rows.map(r => ({
+            date: r.date,
+            category: 'campaigns',
+            name: r.name,
+            spend: r.spend,
+            clicks: r.clicks,
+            cpc: r.clicks > 0 ? r.spend / r.clicks : 0,
+            sales: r.sales,
+            acos: r.sales > 0 ? (r.spend / r.sales) * 100 : 0,
+            tcos: 0,
+            roas: r.spend > 0 ? r.sales / r.spend : 0,
+            ctr: r.impressions > 0 ? (r.clicks / r.impressions) * 100 : 0,
+            sessions: 0,
+            pageviews: 0,
+            conversionRate: 0,
+            rowType: 'individual'
+          }));
+          data = [...individual, ...totals].sort((a, b) => new Date(b.date) - new Date(a.date));
+        } else {
+          data = rows.map(r => ({
+            date: r.date,
+            category: 'campaigns',
+            name: r.name,
+            spend: r.spend,
+            clicks: r.clicks,
+            cpc: r.clicks > 0 ? r.spend / r.clicks : 0,
+            sales: r.sales,
+            acos: r.sales > 0 ? (r.spend / r.sales) * 100 : 0,
+            tcos: 0,
+            roas: r.spend > 0 ? r.sales / r.spend : 0,
+            ctr: r.impressions > 0 ? (r.clicks / r.impressions) * 100 : 0,
+            sessions: 0,
+            pageviews: 0,
+            conversionRate: 0,
+            rowType: 'individual'
+          }));
+        }
+      } else if (category === 'search-terms') {
+        data = adsRows
+          .filter(r => r.report_date && r.search_term && r.search_term.trim())
+          .filter(r => inRange(toYmd(r.report_date)))
+          .map(r => {
+            const spend = parseFloat(r.cost || 0);
+            const sales = parseFloat(r.sales_1d || 0);
+            const clicks = parseInt(r.clicks || 0, 10);
+            const impressions = parseInt(r.impressions || 0, 10);
+            return {
+              date: r.report_date,
+              category: 'search-terms',
+              name: r.search_term || 'Unknown Search Term',
+              campaign_name: r.campaign_name || null,
+              spend,
+              cpc: clicks > 0 ? spend / clicks : 0,
+              sales,
+              clicks,
+              impressions,
+              acos: sales > 0 ? (spend / sales) * 100 : 0,
+              tcos: sales > 0 ? (spend / sales) * 100 : 0,
+              ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+              sessions: 0,
+              pageviews: 0,
+              conversionRate: 0,
+              roas: spend > 0 ? sales / spend : 0
+            };
+          })
+          .sort((a, b) => new Date(b.date) - new Date(a.date));
+      }
+      console.log(`📊 [API] Returning ${data.length} trend records for ${category}`);
+      return res.json({ data, category, timePeriod });
+    }
     
     if (category === 'products') {
       // Get product data from amazon_sales_traffic with ads spend data
@@ -1925,6 +2246,12 @@ const H10_CONFIG = {
   TOKEN_FILE: process.env.H10_TOKEN_FILE || path.join(__dirname, 'h10_tokens.json')
 };
 
+// Hardcoded tokens as fallback (from environment or defaults)
+const H10_HARDCODED_TOKENS = {
+  authorization: process.env.H10_AUTHORIZATION_TOKEN || "x7hkeRH56YSL6BdgeRG29Cfve1g8euc73lpRjPPMFpisEyvFgy4GEQxh5L4hWDlP46c6e3ac80e442e8d661a136b557b34d",
+  pacvueToken: process.env.H10_PACVUE_TOKEN || "eyJhbGciOiJSUzI1NiIsImtpZCI6IjZGNEIxQ0Y5NENFNTE0M0M5MUQ2MjhCQTJGRjEyNEM1NkQ0QjdCRkIiLCJ0eXAiOiJKV1QiLCJ4NXQiOiJiMHNjLVV6bEZEeVIxaWk2TF9Fa3hXMUxlX3MifQ.eyJuYmYiOjE3NjgzNzA4NjgsImV4cCI6MTc2ODQ1NzI2OCwiaXNzIjoiaHR0cDovL2lkZW50aXR5IiwiYXVkIjpbImh0dHA6Ly9pZGVudGl0eS9yZXNvdXJjZXMiLCJhcGkxIiwib3BlbmlkIiwid2ljayJdLCJjbGllbnRfaWQiOiJjbGllbnQuaDEwLmp3dCIsInN1YiI6IjE1NDc0MDI3NjAiLCJhdXRoX3RpbWUiOjE3NjgzNzA4NjgsImlkcCI6ImxvY2FsIiwicm9sZSI6IkFkbWluIiwidXNlckluZm8iOiJ7XCJtYWlsXCI6XCJjYXJlZXJpbmJveC5waWV0QGdtYWlsLmNvbVwiLFwidXNlck5hbWVcIjpcImIzIFNvbHV0aW9ucyBQdnQgbHRkXCIsXCJ1c2VyUm9sZVwiOlwiQWRtaW5cIixcInVzZXJJZFwiOjUwNzIxNTAxLFwicm9vdFVzZXJJZFwiOjUwNzIxNTAxLFwiY2xpZW50SWRcIjo1MDY4NDY1MixcImlzU3VwZXJBZG1pblwiOnRydWUsXCJoMTBVc2VySWRcIjoxNTQ3NDAyNzYwLFwiaDEwQWNjb3VudElkXCI6MTU0NzQwMjc2MH0iLCJzY29wZSI6WyJhcGkxIiwib3BlbmlkIiwid2ljayIsIm9mZmxpbmVfYWNjZXNzIl0sImFtciI6WyJiYXNpY2F1dGh0b2tlbiJdfQ.GyAi6HVflFUbkY6iBbkhMlvS_yeWmy1WJRHIYk38E5tIyZK06e20y_sVbUiyjuhHdKogK3RaCwZxNtPipyjSHT47MX8gQbjmY0K8VVkU2KVsfTjRprRZFwkZVvsFmqbwFJ-DjwKL1ZNMcnqB0-c3to-tuODUbb3IAcauODrQ6u7xyXG6sXcfN8Rptwm7ka1x5_c1q09h0S_5h3-4TqvRSggu9Kv4YzavquPLBI0bnk4Nh3Kws8xUshK0cM_OLxvOb5eTUmhJLZSskUpdl1hNdGRhGTQh-Ezp93mG3Oe1w-InYFgDIrOn4kVMgryX4bOIUMQLhDS6smimgZ7ZPBxnFw"
+};
+
 const fs = require('fs');
 
 // In-memory token storage for Helium 10
@@ -1936,34 +2263,118 @@ let h10Tokens = {
   expiresIn: 86400 // 24 hours default
 };
 
+// JWT decoding helper function
+function decodeJWT(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(Buffer.from(base64, 'base64').toString());
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    console.error('[-] Error decoding JWT:', e.message);
+    return null;
+  }
+}
+
+// Initialize H10 tokens from environment variables or hardcoded values
+function initializeH10TokensFromEnv() {
+  try {
+    // Check if we have tokens from environment or hardcoded values
+    const authToken = H10_HARDCODED_TOKENS.authorization;
+    const pacvueToken = H10_HARDCODED_TOKENS.pacvueToken;
+
+    if (!authToken || !pacvueToken) {
+      return false;
+    }
+
+    // Decode JWT to get expiration time
+    const jwtPayload = decodeJWT(pacvueToken);
+    let expiresIn = 86400; // Default 24 hours
+    let timestamp = Date.now();
+
+    if (jwtPayload && jwtPayload.exp) {
+      // Calculate expiration in seconds from JWT exp claim
+      const expTime = jwtPayload.exp * 1000; // Convert to milliseconds
+      const now = Date.now();
+      expiresIn = Math.max(0, Math.floor((expTime - now) / 1000)); // Convert to seconds
+      
+      // If token is already expired, set a default expiration
+      if (expiresIn <= 0) {
+        expiresIn = 86400; // 24 hours default
+        timestamp = Date.now();
+      } else {
+        // Calculate when token was issued (approximately)
+        timestamp = expTime - (expiresIn * 1000);
+      }
+    }
+
+    // Set tokens in memory
+    h10Tokens.authorization = authToken;
+    h10Tokens.pacvueToken = pacvueToken;
+    h10Tokens.timestamp = timestamp;
+    h10Tokens.expiresIn = expiresIn;
+
+    // Save tokens to file for persistence
+    saveH10Tokens();
+
+    console.log('[+] H10 tokens initialized from environment/hardcoded values');
+    console.log(`[+] Token expires in ${Math.floor(expiresIn / 3600)} hours`);
+    
+    return true;
+  } catch (error) {
+    console.error('[-] Error initializing H10 tokens from env:', error.message);
+    return false;
+  }
+}
+
 // Load session from JSON files (same format as Python script)
 function loadH10Session() {
   try {
+    let hasSession = false;
+    let hasTokens = false;
+
     // Load cookies from h10_session.json
     if (fs.existsSync(H10_CONFIG.SESSION_FILE)) {
       const sessionData = JSON.parse(fs.readFileSync(H10_CONFIG.SESSION_FILE, 'utf8'));
       h10Tokens.cookies = sessionData;
-      console.log('[+] H10 session loaded from', H10_CONFIG.SESSION_FILE);
+      hasSession = Object.keys(h10Tokens.cookies).length > 0;
+      if (hasSession) {
+        console.log('[+] H10 session loaded from', H10_CONFIG.SESSION_FILE);
+      }
     }
 
     // Load tokens from h10_tokens.json
     if (fs.existsSync(H10_CONFIG.TOKEN_FILE)) {
       const tokenData = JSON.parse(fs.readFileSync(H10_CONFIG.TOKEN_FILE, 'utf8'));
-      h10Tokens.authorization = tokenData.authorization;
-      h10Tokens.pacvueToken = tokenData.pacvue_token;
-      h10Tokens.expiresIn = tokenData.expires_in || 86400;
+      if (tokenData.authorization && tokenData.pacvue_token) {
+        h10Tokens.authorization = tokenData.authorization;
+        h10Tokens.pacvueToken = tokenData.pacvue_token;
+        h10Tokens.expiresIn = tokenData.expires_in || 86400;
 
-      // Parse timestamp from ISO format
-      if (tokenData.timestamp) {
-        h10Tokens.timestamp = new Date(tokenData.timestamp).getTime();
+        // Parse timestamp from ISO format
+        if (tokenData.timestamp) {
+          h10Tokens.timestamp = new Date(tokenData.timestamp).getTime();
+        }
+        hasTokens = true;
+        console.log('[+] H10 tokens loaded from', H10_CONFIG.TOKEN_FILE);
       }
-      console.log('[+] H10 tokens loaded from', H10_CONFIG.TOKEN_FILE);
     }
 
-    return h10Tokens.cookies && Object.keys(h10Tokens.cookies).length > 0;
+    // If no tokens found in files, try to initialize from environment/hardcoded values
+    if (!hasTokens) {
+      const initialized = initializeH10TokensFromEnv();
+      if (initialized) {
+        hasTokens = true;
+      }
+    }
+
+    // Return true if we have either session cookies OR tokens
+    return hasSession || hasTokens;
   } catch (error) {
     console.error('[-] Error loading H10 session:', error.message);
-    return false;
+    // Try fallback initialization
+    return initializeH10TokensFromEnv();
   }
 }
 
@@ -1992,7 +2403,31 @@ const cerebroJobs = new Map(); // jobId -> { asins: [], results: {}, status: {} 
 
 // Check if H10 tokens are expired
 function isH10TokenExpired() {
-  if (!h10Tokens.authorization || !h10Tokens.timestamp) return true;
+  // If no tokens, they're expired
+  if (!h10Tokens.authorization || !h10Tokens.pacvueToken) return true;
+  
+  // If timestamp is null but tokens exist, try to decode JWT to check expiration
+  if (!h10Tokens.timestamp) {
+    const jwtPayload = decodeJWT(h10Tokens.pacvueToken);
+    if (jwtPayload && jwtPayload.exp) {
+      const expTime = jwtPayload.exp * 1000; // Convert to milliseconds
+      const now = Date.now();
+      // If JWT is expired, return true
+      if (now >= expTime) {
+        return true;
+      }
+      // Otherwise, set timestamp and calculate expiresIn
+      h10Tokens.timestamp = Date.now();
+      h10Tokens.expiresIn = Math.floor((expTime - now) / 1000);
+      return false;
+    }
+    // If we can't decode JWT, assume tokens are valid and set a default timestamp
+    h10Tokens.timestamp = Date.now();
+    h10Tokens.expiresIn = 86400; // 24 hours default
+    return false;
+  }
+  
+  // Check expiration based on timestamp
   const elapsed = Date.now() - h10Tokens.timestamp;
   const buffer = 60 * 60 * 1000; // 1 hour buffer
   return elapsed > (h10Tokens.expiresIn * 1000 - buffer);
@@ -2061,9 +2496,18 @@ async function refreshH10Tokens() {
 // Submit ASIN to Cerebro for analysis
 async function cerebroSearchASIN(asin) {
   if (isH10TokenExpired()) {
+    console.log('[-] H10 tokens expired, attempting to refresh...');
     const refreshed = await refreshH10Tokens();
     if (!refreshed) {
-      throw new Error('H10 authentication required. Please set session cookies first.');
+      // Check if we have tokens but they're expired
+      if (h10Tokens.authorization && h10Tokens.pacvueToken) {
+        const jwtPayload = decodeJWT(h10Tokens.pacvueToken);
+        if (jwtPayload && jwtPayload.exp) {
+          const expTime = new Date(jwtPayload.exp * 1000);
+          throw new Error(`Helium 10 token expired on ${expTime.toISOString()}. Please update tokens in .env file or provide new session cookies.`);
+        }
+      }
+      throw new Error('Helium 10 authentication failed. Tokens are expired and cannot be refreshed. Please update H10_AUTHORIZATION_TOKEN and H10_PACVUE_TOKEN in .env file or provide new session cookies.');
     }
   }
 
@@ -2097,7 +2541,23 @@ async function cerebroSearchASIN(asin) {
       return innerData;
     } else {
       const errorText = await response.text();
-      throw new Error(`Cerebro search failed: ${response.status} - ${errorText}`);
+      let errorMessage = `Cerebro search failed: ${response.status} - ${errorText}`;
+      
+      // Parse error response for better error messages
+      try {
+        const errorData = JSON.parse(errorText);
+        if (errorData.errorCode === 'rta-7017' || errorData.message?.includes('Not enough uses')) {
+          errorMessage = `Cerebro search failed: ${response.status} - Subscription has no remaining uses. Please update your payment method in Helium 10 dashboard to reactivate your subscription.`;
+        } else if (errorData.error?.message) {
+          errorMessage = `Cerebro search failed: ${response.status} - ${errorData.error.message}`;
+        } else if (errorData.message) {
+          errorMessage = `Cerebro search failed: ${response.status} - ${errorData.message}`;
+        }
+      } catch (parseError) {
+        // If JSON parsing fails, use the original error text
+      }
+      
+      throw new Error(errorMessage);
     }
   } catch (error) {
     console.error(`[-] Cerebro search error for ${asin}:`, error.message);
@@ -2144,9 +2604,18 @@ function transformKeywordsForExport(keywords) {
 // Get exported keyword data from Cerebro
 async function cerebroGetKeywords(searchId) {
   if (isH10TokenExpired()) {
+    console.log('[-] H10 tokens expired, attempting to refresh...');
     const refreshed = await refreshH10Tokens();
     if (!refreshed) {
-      throw new Error('H10 authentication required');
+      // Check if we have tokens but they're expired
+      if (h10Tokens.authorization && h10Tokens.pacvueToken) {
+        const jwtPayload = decodeJWT(h10Tokens.pacvueToken);
+        if (jwtPayload && jwtPayload.exp) {
+          const expTime = new Date(jwtPayload.exp * 1000);
+          throw new Error(`Helium 10 token expired on ${expTime.toISOString()}. Please update tokens in .env file or provide new session cookies.`);
+        }
+      }
+      throw new Error('Helium 10 authentication failed. Tokens are expired and cannot be refreshed. Please update H10_AUTHORIZATION_TOKEN and H10_PACVUE_TOKEN in .env file or provide new session cookies.');
     }
   }
 
@@ -2211,14 +2680,39 @@ app.post('/api/h10/session', express.json(), (req, res) => {
 
 // ✅ H10 Session Status Endpoint
 app.get('/api/h10/status', (req, res) => {
-  const hasSession = h10Tokens.cookies && Object.keys(h10Tokens.cookies).length > 0;
-  const hasValidTokens = !isH10TokenExpired();
+  const hasCookies = h10Tokens.cookies && Object.keys(h10Tokens.cookies).length > 0;
+  const hasTokens = !!(h10Tokens.authorization && h10Tokens.pacvueToken);
+  const isExpired = hasTokens && isH10TokenExpired();
+  const hasValidTokens = hasTokens && !isExpired;
+  
+  // Consider it a valid session if we have either cookies OR tokens
+  const hasSession = hasCookies || hasTokens;
+
+  // Calculate token expiry from JWT if available
+  let tokenExpiry = null;
+  let tokenExpiredAt = null;
+  if (h10Tokens.pacvueToken) {
+    const jwtPayload = decodeJWT(h10Tokens.pacvueToken);
+    if (jwtPayload && jwtPayload.exp) {
+      tokenExpiredAt = new Date(jwtPayload.exp * 1000);
+      tokenExpiry = tokenExpiredAt.toISOString();
+    } else if (h10Tokens.timestamp) {
+      tokenExpiry = new Date(h10Tokens.timestamp + h10Tokens.expiresIn * 1000).toISOString();
+    }
+  } else if (h10Tokens.timestamp) {
+    tokenExpiry = new Date(h10Tokens.timestamp + h10Tokens.expiresIn * 1000).toISOString();
+  }
 
   res.json({
     hasSession,
     hasValidTokens,
+    hasCookies,
+    hasTokens,
+    isExpired,
     cookiesSet: Object.keys(h10Tokens.cookies || {}),
-    tokenExpiry: h10Tokens.timestamp ? new Date(h10Tokens.timestamp + h10Tokens.expiresIn * 1000).toISOString() : null
+    tokenExpiry,
+    tokenExpiredAt: tokenExpiredAt ? tokenExpiredAt.toISOString() : null,
+    message: isExpired ? 'Tokens are expired. Please update tokens in .env file or refresh session cookies.' : null
   });
 });
 
@@ -2530,7 +3024,11 @@ app.post('/api/cerebro/job/:jobId/process/:asin', async (req, res) => {
 
   const job = cerebroJobs.get(jobId);
   if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
+    return res.status(404).json({ 
+      error: 'Job not found. The job may have been lost due to server restart. Please upload your file again.',
+      code: 'JOB_NOT_FOUND',
+      suggestion: 'Upload your Excel file again to create a new job.'
+    });
   }
 
   if (!job.status[asin]) {
@@ -2611,15 +3109,32 @@ app.post('/api/cerebro/job/:jobId/process/:asin', async (req, res) => {
 
   } catch (error) {
     console.error(`[-] Error processing ${asin}:`, error.message);
+    console.error('   Full error:', error);
+
+    // Provide more user-friendly error messages
+    let userMessage = error.message;
+    if (error.message.includes('Not enough uses') || error.message.includes('no remaining uses')) {
+      userMessage = '⚠️ Helium 10 subscription has no remaining uses. Your subscription appears to be inactive due to a payment issue. Please update your payment method in the Helium 10 dashboard to reactivate your subscription and restore Cerebro access.';
+    } else if (error.message.includes('expired')) {
+      userMessage = 'Helium 10 token has expired. Please update tokens in .env file or contact admin to refresh session cookies.';
+    } else if (error.message.includes('authentication') || error.message.includes('401')) {
+      userMessage = 'Helium 10 authentication failed. Please check your tokens or session cookies.';
+    } else if (error.message.includes('403') && !error.message.includes('uses')) {
+      userMessage = 'Helium 10 access forbidden. Please check your account permissions.';
+    } else if (error.message.includes('404')) {
+      userMessage = 'ASIN not found in Helium 10 database. Please verify the ASIN is correct.';
+    } else if (error.message.includes('500') || error.message.includes('502') || error.message.includes('503')) {
+      userMessage = 'Helium 10 service is temporarily unavailable. Please try again later.';
+    }
 
     job.status[asin] = {
       status: 'error',
       progress: 0,
-      message: error.message,
+      message: userMessage,
       keywords: null,
       totalKeywords: 0,
       productTitle: null,
-      error: error.message,
+      error: userMessage,
       timestamp: Date.now()
     };
 
@@ -2628,8 +3143,9 @@ app.post('/api/cerebro/job/:jobId/process/:asin', async (req, res) => {
     res.status(500).json({
       success: false,
       asin,
-      error: error.message,
-      status: job.status[asin]
+      error: userMessage,
+      status: job.status[asin],
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -2669,7 +3185,11 @@ app.get('/api/cerebro/job/:jobId/download-all', (req, res) => {
 
   const job = cerebroJobs.get(jobId);
   if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
+    return res.status(404).json({ 
+      error: 'Job not found. The job may have been lost due to server restart. Please upload your file again.',
+      code: 'JOB_NOT_FOUND',
+      suggestion: 'Upload your Excel file again to create a new job.'
+    });
   }
 
   const completedAsins = Object.entries(job.status)
@@ -2832,9 +3352,11 @@ setInterval(() => {
 // Start Server
 // --------------------
 const PORT = process.env.PORT || 5000;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3001';
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🚀 http://localhost:5000`);
+  console.log(`🚀 http://localhost:${PORT}`);
+  console.log(`🌐 Frontend URL: ${FRONTEND_URL}`);
   console.log(`📍 Server origin: ${SERVER_ORIGIN}`);
 });
 

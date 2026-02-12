@@ -78,9 +78,28 @@ async function initializeSession() {
         const status = await statusResponse.json();
 
         if (status.hasSession) {
-            // Session exists, try to ensure tokens are valid
-            if (!status.hasValidTokens) {
-                // Tokens expired, auto-refresh them
+            // Session exists, check if tokens are valid
+            if (status.isExpired) {
+                // Tokens expired, try to refresh them
+                updateStatusCard('loading', 'Tokens Expired', 'Attempting to refresh tokens...');
+
+                const refreshResponse = await fetch(`${API_BASE}/api/h10/refresh`, { method: 'POST' });
+                const refreshData = await refreshResponse.json();
+
+                if (refreshData.success) {
+                    updateStatusCard('connected', 'Ready', 'Connected to Helium 10 (Amazon India)');
+                    updateSessionIndicator(true);
+                } else {
+                    // Cannot refresh - tokens need to be updated
+                    const expiryMsg = status.tokenExpiredAt 
+                        ? `Token expired on ${new Date(status.tokenExpiredAt).toLocaleString()}. `
+                        : '';
+                    updateStatusCard('error', 'Token Expired', 
+                        expiryMsg + 'Please update H10_AUTHORIZATION_TOKEN and H10_PACVUE_TOKEN in backend/.env file or contact admin.');
+                    updateSessionIndicator(false);
+                }
+            } else if (!status.hasValidTokens) {
+                // Tokens exist but might be invalid, try to refresh
                 updateStatusCard('loading', 'Refreshing tokens...', 'Session valid, refreshing API tokens');
 
                 const refreshResponse = await fetch(`${API_BASE}/api/h10/refresh`, { method: 'POST' });
@@ -96,7 +115,10 @@ async function initializeSession() {
                 }
             } else {
                 // Everything is good
-                updateStatusCard('connected', 'Ready', 'Connected to Helium 10 (Amazon India)');
+                const expiryMsg = status.tokenExpiry 
+                    ? ` (expires ${new Date(status.tokenExpiry).toLocaleString()})`
+                    : '';
+                updateStatusCard('connected', 'Ready', `Connected to Helium 10 (Amazon India)${expiryMsg}`);
                 updateSessionIndicator(true);
             }
         } else {
@@ -315,11 +337,13 @@ function updateAsinRow(asin, status) {
             `;
             break;
         case 'error':
+            const errorMsg = status.error || status.message || 'Error';
             statusHtml = `
-                <div class="status-badge error" title="${status.error || 'Error'}">
+                <div class="status-badge error" title="${errorMsg}">
                     <span class="material-icons">error</span>
                     Failed
                 </div>
+                ${errorMsg ? `<div class="error-message" style="margin-top: 4px; font-size: 11px; color: #d32f2f; max-width: 300px; word-wrap: break-word;">${errorMsg}</div>` : ''}
             `;
             break;
     }
@@ -400,21 +424,105 @@ async function processAsin(asin, index) {
             method: 'POST'
         });
 
+        // Check if response is ok before parsing JSON
+        if (!response.ok) {
+            // Try to get error message from response
+            let errorMessage = `Server error: ${response.status} ${response.statusText}`;
+            let shouldReload = false;
+            
+            try {
+                const errorData = await response.json();
+                
+                // Extract error message from various possible locations
+                // Backend returns: { success: false, error: userMessage, status: {...}, details: ... }
+                errorMessage = errorData.error || 
+                              errorData.message || 
+                              (errorData.status && errorData.status.error) ||
+                              (errorData.status && errorData.status.message) ||
+                              errorData.details || 
+                              errorMessage;
+                
+                // If error is still an object, try to stringify it for display
+                if (typeof errorMessage === 'object' && errorMessage !== null) {
+                    errorMessage = JSON.stringify(errorMessage);
+                }
+                
+                // Ensure errorMessage is a string
+                errorMessage = String(errorMessage || 'Unknown error');
+                
+                // Check if it's a job not found error (404)
+                if (response.status === 404 && (errorData.code === 'JOB_NOT_FOUND' || errorMessage.includes('Job not found'))) {
+                    errorMessage = 'Job expired (server was restarted). Please upload your file again.';
+                    shouldReload = true;
+                }
+                
+                console.error(`[${asin}] Backend error response:`, errorData);
+                console.error(`[${asin}] Extracted error message:`, errorMessage);
+            } catch (e) {
+                // If JSON parsing fails, try to get text
+                try {
+                    const errorText = await response.text();
+                    errorMessage = errorText || errorMessage;
+                    console.error(`[${asin}] Backend error (text):`, errorText);
+                } catch (textError) {
+                    console.error(`[${asin}] Failed to parse error response:`, e, textError);
+                }
+            }
+            
+            // Update the row with error status
+            updateAsinRow(asin, {
+                status: 'error',
+                error: errorMessage,
+                message: errorMessage
+            });
+            
+            // Show error toast for visibility
+            if (errorMessage.includes('Not enough uses') || 
+                errorMessage.includes('no remaining uses') || 
+                errorMessage.includes('subscription') ||
+                errorMessage.includes('payment method')) {
+                showToast('⚠️ Helium 10 subscription issue: ' + errorMessage, 'error');
+            } else {
+                showToast(`Failed to process ${asin}: ${errorMessage}`, 'error');
+            }
+            
+            // If job not found, show a toast suggesting to re-upload
+            if (shouldReload) {
+                showToast('Job expired. Please upload your file again.', 'error');
+                // Optionally clear the current job
+                currentJobId = null;
+                asins = [];
+            }
+            
+            return;
+        }
+
         const data = await response.json();
 
         if (data.success) {
             updateAsinRow(asin, data.status);
         } else {
+            const errorMsg = data.error || 'Unknown error';
             updateAsinRow(asin, {
                 status: 'error',
-                error: data.error || 'Unknown error'
+                error: errorMsg,
+                message: errorMsg
             });
+            
+            // Show error toast
+            if (errorMsg.includes('Not enough uses') || errorMsg.includes('no remaining uses') || errorMsg.includes('subscription')) {
+                showToast('⚠️ Helium 10 subscription issue: ' + errorMsg, 'error');
+            } else {
+                showToast(`Failed to process ${asin}: ${errorMsg}`, 'error');
+            }
         }
     } catch (error) {
         console.error(`Error processing ${asin}:`, error);
+        console.error('Full error object:', error);
         updateAsinRow(asin, {
             status: 'error',
-            error: error.message
+            error: error.message || 'Network or parsing error',
+            message: error.message || 'Network or parsing error'
         });
     }
 }
@@ -470,7 +578,7 @@ async function downloadAsin(asin) {
 
 async function downloadAll() {
     if (!currentJobId) {
-        showToast('No active job', 'error');
+        showToast('No active job. Please upload your file again.', 'error');
         return;
     }
 
@@ -478,9 +586,26 @@ async function downloadAll() {
         showToast('Preparing download...', 'info');
 
         const response = await fetch(`${API_BASE}/api/cerebro/job/${currentJobId}/download-all`);
-
+        
         if (!response.ok) {
-            throw new Error('Download failed');
+            if (response.status === 404) {
+                let errorMessage = 'Job not found';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.error || errorData.message || errorMessage;
+                } catch (e) {
+                    errorMessage = await response.text() || errorMessage;
+                }
+                showToast('Job expired (server was restarted). Please upload your file again.', 'error');
+                // Clear the job
+                currentJobId = null;
+                asins = [];
+                // Hide processing section and show upload section
+                elements.processingSection.style.display = 'none';
+                elements.uploadSection.style.display = 'block';
+                return;
+            }
+            throw new Error(`Download failed: ${response.status} ${response.statusText}`);
         }
 
         // Get the blob and create download link
@@ -497,7 +622,7 @@ async function downloadAll() {
         showToast('Download started!', 'success');
     } catch (error) {
         console.error('Download error:', error);
-        showToast('Download failed', 'error');
+        showToast(error.message || 'Download failed', 'error');
     }
 }
 
@@ -522,11 +647,14 @@ function showToast(message, type = 'info') {
 
     elements.toastContainer.appendChild(toast);
 
-    // Remove after 4 seconds
+    // Keep subscription errors visible longer (8 seconds instead of 4)
+    const duration = (type === 'error' && (message.includes('subscription') || message.includes('Not enough uses'))) ? 8000 : 4000;
+
+    // Remove after duration
     setTimeout(() => {
         toast.style.animation = 'slideIn 0.3s ease reverse';
         setTimeout(() => toast.remove(), 300);
-    }, 4000);
+    }, duration);
 }
 
 function sleep(ms) {

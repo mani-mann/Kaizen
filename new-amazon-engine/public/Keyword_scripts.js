@@ -465,10 +465,10 @@ class AmazonDashboard {
                 return '';
             }
             
-            // If on Live Server (port 5500) or other ports, connect to backend on port 5000
-            return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+            // If on frontend static ports, connect to backend on port 5001
+            return window.location.origin.includes('localhost') ? 'http://localhost:5001' : '';
         } catch (_) {
-            return window.location.origin.includes('localhost') ? 'http://localhost:5000' : '';
+            return window.location.origin.includes('localhost') ? 'http://localhost:5001' : '';
         }
     }
     
@@ -579,6 +579,27 @@ class AmazonDashboard {
             // Store min/max dates for calendar bounds
             this.dataMinDate = minDate;
             this.dataMaxDate = latest;
+
+            // If an existing selected range is stale/outside backend data window,
+            // auto-correct it so chart filters don't produce empty data.
+            if (this.dateRange && this.dateRange.start && this.dateRange.end) {
+                const currentStart = this.stripTime(this.dateRange.start);
+                const currentEnd = this.stripTime(this.dateRange.end);
+                const minBound = this.stripTime(minDate);
+                const maxBound = this.stripTime(latest);
+                const hasOverlap = currentEnd >= minBound && currentStart <= maxBound;
+
+                if (!hasOverlap) {
+                    this.dateRange = {
+                        start: new Date(minBound),
+                        end: new Date(maxBound),
+                        startStr: this.toInputDate(minBound),
+                        endStr: this.toInputDate(maxBound)
+                    };
+                    this.hasManualDateSelection = false;
+                    this.updateDateDisplay();
+                }
+            }
             
             // Only set as default range if explicitly requested (e.g., for "Lifetime" preset)
             if (setAsDefaultRange) {
@@ -612,11 +633,11 @@ class AmazonDashboard {
             if (this.stripTime(s) < min) s = new Date(min);
         }
         
-        // Set maximum date to current date (not database max date)
-        const today = new Date();
-        today.setHours(23, 59, 59, 999);
-        if (this.stripTime(e) > today) {
-            e = new Date(today);
+        // Set maximum date to available data max date when known; otherwise today.
+        const maxBound = this.dataMaxDate ? new Date(this.dataMaxDate) : new Date();
+        maxBound.setHours(23, 59, 59, 999);
+        if (this.stripTime(e) > this.stripTime(maxBound)) {
+            e = new Date(maxBound);
         }
         
         if (s > e) { const tmp = s; s = e; e = tmp; }
@@ -946,7 +967,13 @@ class AmazonDashboard {
 
     // Quick presets (Today, Yesterday, Last 7 days, etc.)
     async applyPreset(key) {
-        const now = new Date();
+        if (!this.dataMinDate || !this.dataMaxDate) {
+            await this.resolveDefaultRangeFromBackend(false);
+        }
+
+        // Anchor presets to latest available data date (not real current date),
+        // otherwise presets like "last 7 days" can point to empty future windows.
+        const now = this.dataMaxDate ? new Date(this.dataMaxDate) : new Date();
         const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999);
 
@@ -1011,6 +1038,10 @@ class AmazonDashboard {
             default:
                 break;
         }
+
+        const clamped = this.clampRangeToData(start, end);
+        start = clamped.start;
+        end = clamped.end;
 
         const startStr = this.toInputDate(start);
         const endStr = this.toInputDate(end);
@@ -1098,9 +1129,9 @@ class AmazonDashboard {
         }
         
         this.bindEvents();
-        // Resolve data bounds from backend (for calendar limits) but keep current month as default
-        // This sets dataMinDate and dataMaxDate for calendar bounds, but doesn't override dateRange
-        this.resolveDefaultRangeFromBackend(false).then(() => this.loadData());
+        // Resolve data bounds from backend and, when user has not manually chosen a range,
+        // initialize default range from available backend data to avoid empty future ranges.
+        this.resolveDefaultRangeFromBackend(!this.hasManualDateSelection).then(() => this.loadData());
         this.startAutoRefresh();
         this.updateLastUpdateTime();
         this.initializeDatePicker();
@@ -4434,6 +4465,42 @@ class AmazonDashboard {
         if (isMobile && (period === 'daily' || period === 'weekly') && this.mobileWeekPeriods && this.mobileWeekPeriods.length > 0 && this.mobileWeekPeriods[this.mobileWeekIndex]) {
             chartDataToProcess = this.getMobileWeekData(this.mobileWeekPeriods[this.mobileWeekIndex]);
         }
+
+        // Self-heal: if selected range produces no points but chartData exists,
+        // fallback to available data range so chart does not go blank.
+        if ((period === 'daily' || period === 'weekly') && chartDataToProcess.length === 0 && this.chartData.length > 0) {
+            const allDates = this.chartData
+                .map(item => {
+                    if (!item || !item.date) return null;
+                    if (typeof item.date === 'string') {
+                        if (item.date.includes('T')) return item.date.split('T')[0];
+                        return item.date.slice(0, 10);
+                    }
+                    if (item.date instanceof Date && !isNaN(item.date.getTime())) {
+                        return this.toInputDate(item.date);
+                    }
+                    const parsed = new Date(item.date);
+                    return isNaN(parsed.getTime()) ? null : this.toInputDate(parsed);
+                })
+                .filter(Boolean)
+                .sort();
+
+            if (allDates.length > 0) {
+                const fallbackStart = new Date(allDates[0]);
+                const fallbackEnd = new Date(allDates[allDates.length - 1]);
+                fallbackStart.setHours(0, 0, 0, 0);
+                fallbackEnd.setHours(23, 59, 59, 999);
+
+                this.dateRange = {
+                    start: fallbackStart,
+                    end: fallbackEnd,
+                    startStr: this.toInputDate(fallbackStart),
+                    endStr: this.toInputDate(fallbackEnd)
+                };
+                this.updateDateDisplay();
+                chartDataToProcess = this.chartData;
+            }
+        }
         
         // Debug: Check chart data structure and date coverage
         if (chartDataToProcess.length > 0) {
@@ -4460,7 +4527,7 @@ class AmazonDashboard {
                 }
             });
         } else {
-            console.warn('⚠️ No chart data to process!', {
+            console.warn('⚠️ No chart data to process after fallback!', {
                 chartDataLength: this.chartData.length,
                 requestedRange: {
                     start: start.toISOString().split('T')[0],
