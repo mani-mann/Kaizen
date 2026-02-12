@@ -2,3 +2,11 @@ new-amazon-engine/**/node_modules/
 
 # Local task plan
 TASKS.md
+
+# Environment and local secret files
+**/.env
+**/.env.*
+*.local
+
+# Local archives
+*.zip
