@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ blog.main.title }}</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    margin: 2rem;
+    line-height: 1.6;
+    color: #333;
+    padding-top: 60px;
+}
+h1, h2, h3 { color: #1a73e8; }
+h2 { margin-top: 2rem; }
+h3 { margin-top: 1.5rem; }
+
+textarea {
+    width: 100%;
+    min-height: 80px;
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    font-family: inherit;
+    font-size: 1rem;
+    line-height: 1.5;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    resize: none;
+    transition: height 0.2s ease;
+}
+
+.section { margin-bottom: 2rem; }
+
+.product, .faq {
+    border: 1px solid #eee;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 5px;
+    position: relative;
+}
+
+.product a { color: #1a73e8; text-decoration: none; }
+.product a:hover { text-decoration: underline; }
+
+.static-text { font-weight: bold; margin-bottom: 0.5rem; }
+.textarea-container { position: relative; margin-bottom: 2rem; }
+
+.controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.save-btn, .regenerate-btn, .expand-btn, .undo-btn {
+    background: #34a853;
+    color: #fff;
+    border: none;
+    padding: 4px 10px;
+    font-size: 0.9rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.save-btn:hover { background: #2c8e45; }
+
+.regenerate-btn { background: #fbbc05; color: #000; }
+.regenerate-btn:hover { background: #e0a800; }
+
+.expand-btn { background: #1a73e8; color: #fff; }
+.expand-btn:hover { background: #1558b0; }
+
+.undo-btn { background: #ea4335; color: #fff; }
+.undo-btn:hover { background: #c5371d; }
+
+select.writer-select {
+    padding: 4px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    border: 1px solid #ccc;
+}
+
+.detection { font-weight: bold; margin-bottom: 0.3rem; }
+
+.product-image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 5px;
+    margin: 0.5rem 0 1rem 0;
+}
+
+.blog-catalog-btn {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: #f4511e;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+.blog-catalog-btn:hover { background: #d03b00; }
+
+.allied-keywords-label { font-weight: bold; margin-top: 0.5rem; margin-bottom: 0.3rem; }
+.allied-keywords-input {
+    width: 100%;
+    padding: 5px;
+    font-size: 0.95rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+}
+
+.interlink-label { font-weight: bold; margin-top: 0.5rem; margin-bottom: 0.3rem; }
+.interlink-input {
+    width: 100%;
+    padding: 5px;
+    font-size: 0.95rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+}
+
+/* ===== LOADING OVERLAY ===== */
+#loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255,255,255,0.85);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+/* Only blur page content, NOT overlay */
+body.loading #page-content {
+    filter: blur(3px);
+}
+
+/* bottom button */
+.approve-section {
+    text-align: center;
+    margin: 4rem 0 2rem 0;
+    padding-top: 2rem;
+    border-top: 1px solid #eee;
+}
+
+.approve-btn {
+    background-color: #28a745;
+    color: white;
+    padding: 15px 50px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 6px;
+    text-decoration: none;
+    display: inline-block;
+    transition: background-color 0.2s;
+    cursor: pointer;
+}
+
+.approve-btn:hover {
+    background-color: #218838;
+    color: white;
+}
+</style>
+</head>
+
+<body>
+
+<!-- EVERYTHING THAT BLURS GOES IN HERE -->
+<div id="page-content">
+
+<a href="/blogevaluator/list" class="blog-catalog-btn">Blog Catalog</a>
+
+<!-- ================= BLOG TITLE ================= -->
+<div class="section">
+    <h2>Blog Title</h2>
+    <div class="controls">
+        <button class="save-btn" onclick="submitEdit('title', null, 'title-input', null)">Save</button>
+    </div>
+
+    <input id="title-input" type="text"
+           value="{{ blog.main.title }}"
+           style="width:100%; font-size:1.3rem; font-weight:bold; padding:6px;">
+</div>
+
+<!-- ================= INTRO ================= -->
+<div class="section">
+    <h2>Intro</h2>
+
+    <div class="detection">
+        Detection: {{ blog.main.intro.current.detection }} |
+        Writer: {{ blog.main.intro.current.writer or '' }}
+    </div>
+
+    <div class="controls">
+        <button class="save-btn" onclick="submitEdit('intro', null, 'intro-text', 'intro-allied-keywords', 'intro-interlink')">Save</button>
+
+        <select id="intro-writer-select" class="writer-select">
+            {% for w in writers.intro %}
+                <option value="{{ w }}" {% if w == blog.main.intro.current.writer %}selected{% endif %}>
+                    {{ w }}
+                </option>
+            {% endfor %}
+        </select>
+
+        <button class="regenerate-btn"
+            onclick="submitGenerate('intro', null,
+            document.getElementById('intro-writer-select').value, 'intro-allied-keywords', 'intro-interlink')">
+            Regenerate
+        </button>
+
+        <button class="undo-btn" onclick="submitUndo('intro', null, 'intro-text')">Undo</button>
+        <button class="expand-btn" onclick="toggleExpand('intro-text', this)">Expand</button>
+    </div>
+
+    <div class="allied-keywords-label">Allied Keywords:</div>
+    <input id="intro-allied-keywords" class="allied-keywords-input"
+           value="{{ blog.main.intro.current.alliedkeywords or '' }}">
+
+    <div class="interlink-label">Interlink:</div>
+    <input id="intro-interlink" class="interlink-input"
+           value="{{ blog.main.intro.current.interlink or '' }}">
+
+    <textarea id="intro-text">{{ blog.main.intro.current.text }}</textarea>
+</div>
+
+<!-- ================= PRODUCTS ================= -->
+{% if blog.main.products %}
+<div class="section">
+<h2>Products & Resources</h2>
+
+{% for p in blog.main.products %}
+<div class="product">
+
+<div class="static-text">Product Title:</div>
+
+<div class="controls">
+    <button class="save-btn"
+        onclick="submitEdit('producttitle', {{ loop.index0 }}, 'product-title-input-{{ loop.index0 }}', null)">
+        Save
+    </button>
+</div>
+
+<input id="product-title-input-{{ loop.index0 }}"
+       type="text"
+       value="{{ p.title }}"
+       style="width:100%; font-size:1.1rem; font-weight:bold; padding:5px;">
+
+{% if p.imagelink %}
+    <div class="static-text">Product Image:</div>
+    <img src="{{ p.imagelink }}"
+         class="product-image"
+         alt="{{ p.title }}">
+{% endif %}
+
+<div class="static-text">Product URL:</div>
+<p><a href="{{ p.productlink }}">{{ p.productlink }}</a></p>
+
+<div class="detection">
+    Detection: {{ p.description.current.detection }} |
+    Writer: {{ p.description.current.writer or '' }}
+</div>
+
+<div class="controls">
+
+    <button class="save-btn"
+        onclick="submitEdit('productdescription', {{ loop.index0 }}, 'product-text-{{ loop.index0 }}', 'product-allied-keywords-{{ loop.index0 }}', 'product-interlink-{{ loop.index0 }}')">
+        Save
+    </button>
+
+    <select id="product-writer-{{ loop.index0 }}" class="writer-select">
+        {% for w in writers.productdescription %}
+        <option value="{{ w }}" {% if w == p.description.current.writer %}selected{% endif %}>{{ w }}</option>
+        {% endfor %}
+    </select>
+
+    <button class="regenerate-btn"
+        onclick="submitGenerate('productdescription', {{ loop.index0 }},
+        document.getElementById('product-writer-{{ loop.index0 }}').value,
+        'product-allied-keywords-{{ loop.index0 }}', 'product-interlink-{{ loop.index0 }}')">
+        Regenerate
+    </button>
+
+    <button class="undo-btn"
+        onclick="submitUndo('productdescription', {{ loop.index0 }}, 'product-text-{{ loop.index0 }}')">
+        Undo
+    </button>
+
+    <button class="expand-btn" onclick="toggleExpand('product-text-{{ loop.index0 }}', this)">
+        Expand
+    </button>
+</div>
+
+<div class="allied-keywords-label">Allied Keywords:</div>
+<input id="product-allied-keywords-{{ loop.index0 }}"
+       class="allied-keywords-input"
+       value="{{ p.description.current.alliedkeywords or '' }}">
+
+<div class="interlink-label">Interlink:</div>
+<input id="product-interlink-{{ loop.index0 }}"
+       class="interlink-input"
+       value="{{ p.description.current.interlink or '' }}">
+
+<textarea id="product-text-{{ loop.index0 }}">{{ p.description.current.text }}</textarea>
+
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+<!-- ================= CONCLUSION ================= -->
+<div class="section">
+<h2>Conclusion</h2>
+
+<div class="static-text">Conclusion Title:</div>
+
+<div class="controls">
+    <button class="save-btn"
+        onclick="submitEdit('conclusiontitle', null, 'conclusion-title-input', null)">
+        Save
+    </button>
+</div>
+
+<input id="conclusion-title-input"
+       type="text"
+       value="{{ blog.main.conclusion.title }}"
+       style="width:100%; font-size:1.1rem; font-weight:bold; padding:5px;">
+
+<div class="detection">
+    Detection: {{ blog.main.conclusion.content.current.detection }} |
+    Writer: {{ blog.main.conclusion.content.current.writer or '' }}
+</div>
+
+<div class="controls">
+    <button class="save-btn"
+        onclick="submitEdit('conclusioncontent', null, 'conclusion-text', 'conclusion-allied-keywords', 'conclusion-interlink')">
+        Save
+    </button>
+
+    <select id="conclusion-writer-select" class="writer-select">
+        {% for w in writers.conclusioncontent %}
+        <option value="{{ w }}" {% if w == blog.main.conclusion.content.current.writer %}selected{% endif %}>{{ w }}</option>
+        {% endfor %}
+    </select>
+
+    <button class="regenerate-btn"
+        onclick="submitGenerate('conclusioncontent', null,
+        document.getElementById('conclusion-writer-select').value,
+        'conclusion-allied-keywords', 'conclusion-interlink')">
+        Regenerate
+    </button>
+
+    <button class="undo-btn"
+        onclick="submitUndo('conclusioncontent', null, 'conclusion-text')">
+        Undo
+    </button>
+
+    <button class="expand-btn"
+        onclick="toggleExpand('conclusion-text', this)">
+        Expand
+    </button>
+</div>
+
+<div class="allied-keywords-label">Allied Keywords:</div>
+<input id="conclusion-allied-keywords"
+       class="allied-keywords-input"
+       value="{{ blog.main.conclusion.content.current.alliedkeywords or '' }}">
+
+<div class="interlink-label">Interlink:</div>
+<input id="conclusion-interlink"
+       class="interlink-input"
+       value="{{ blog.main.conclusion.content.current.interlink or '' }}">
+
+<textarea id="conclusion-text">{{ blog.main.conclusion.content.current.text }}</textarea>
+
+</div>
+
+<!-- ================= FAQ ================= -->
+{% if blog.main.faqs %}
+<div class="section">
+<h2>FAQs</h2>
+
+<div class="static-text">FAQ Section Title:</div>
+
+<div class="controls">
+    <button class="save-btn"
+        onclick="submitEdit('faqstitle', null, 'faqs-title-input', null)">
+        Save
+    </button>
+</div>
+
+<input id="faqs-title-input"
+       type="text"
+       value="{{ blog.main.faqs.title }}"
+       style="width:100%; font-size:1.1rem; font-weight:bold; padding:5px; margin-bottom:1.5rem;">
+
+{% for f in blog.main.faqs.list %}
+<div class="faq">
+
+<div class="static-text">Question:</div>
+
+<div class="controls">
+<button class="save-btn"
+onclick="submitEdit('faqquestion', {{ loop.index0 }}, 'faq-question-input-{{ loop.index0 }}', null)">
+Save
+</button>
+</div>
+
+<input id="faq-question-input-{{ loop.index0 }}"
+       type="text"
+       value="{{ f.question }}"
+       style="width:100%; font-size:1.1rem; padding:5px;">
+
+<div class="detection">
+Detection: {{ f.answer.current.detection }} |
+Writer: {{ f.answer.current.writer or '' }}
+</div>
+
+<div class="controls">
+<button class="save-btn"
+onclick="submitEdit('faqanswer', {{ loop.index0 }}, 'faq-text-{{ loop.index0 }}', 'faq-allied-keywords-{{ loop.index0 }}', 'faq-interlink-{{ loop.index0 }}')">
+Save
+</button>
+
+<select id="faq-writer-{{ loop.index0 }}" class="writer-select">
+{% for w in writers.faqanswer %}
+<option value="{{ w }}" {% if w == f.answer.current.writer %}selected{% endif %}>{{ w }}</option>
+{% endfor %}
+</select>
+
+<button class="regenerate-btn"
+onclick="submitGenerate('faqanswer', {{ loop.index0 }},
+document.getElementById('faq-writer-{{ loop.index0 }}').value,
+'faq-allied-keywords-{{ loop.index0 }}', 'faq-interlink-{{ loop.index0 }}')">
+Regenerate
+</button>
+
+<button class="undo-btn"
+onclick="submitUndo('faqanswer', {{ loop.index0 }}, 'faq-text-{{ loop.index0 }}')">
+Undo
+</button>
+
+<button class="expand-btn"
+onclick="toggleExpand('faq-text-{{ loop.index0 }}', this)">
+Expand
+</button>
+</div>
+
+<div class="allied-keywords-label">Allied Keywords:</div>
+<input id="faq-allied-keywords-{{ loop.index0 }}"
+       class="allied-keywords-input"
+       value="{{ f.answer.current.alliedkeywords or '' }}">
+
+<div class="interlink-label">Interlink:</div>
+<input id="faq-interlink-{{ loop.index0 }}"
+       class="interlink-input"
+       value="{{ f.answer.current.interlink or '' }}">
+
+<textarea id="faq-text-{{ loop.index0 }}">{{ f.answer.current.text }}</textarea>
+
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+<form id="editForm" method="POST" style="display:none;">
+<input type="hidden" name="request">
+</form>
+
+<div class="approve-section">
+    <button type="button"
+            class="approve-btn"
+            style="background-color:#1a73e8; margin-right:20px;"
+            onclick="submitSaveAll()">
+        Save All
+    </button>
+    <a href="/blogevaluator/blog/approve/{{ jobid }}"
+       class="approve-btn"
+       onclick="showLoading()">
+        Approve Blog
+    </a>
+</div>
+
+</div> <!-- END PAGE CONTENT -->
+
+<!-- ===== OVERLAY OUTSIDE BLUR AREA ===== -->
+<div id="loading-overlay">
+    <img src="{{ url_for('static', filename='throbbercircleblack.gif') }}" alt="Loading">
+</div>
+
+<script>
+
+// ===== HELPER =====
+function getValueOrNull(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return null;
+    const val = el.value.trim();
+    return val === "" ? null : val;
+}
+
+// ===== LOADING =====
+function showLoading() {
+    document.body.classList.add("loading");
+    document.getElementById("loading-overlay").style.display = "flex";
+}
+
+// ===== SAVE (single section) =====
+function submitEdit(part, index, elementId, alliedKeywordsId, interlinkId) {
+    const el = document.getElementById(elementId);
+    const jobid = "{{ jobid }}";
+
+    let alliedKeywords = '';
+    if (alliedKeywordsId) {
+        const k = document.getElementById(alliedKeywordsId);
+        if (k) alliedKeywords = k.value;
+    }
+
+    let interlink = '';
+    if (interlinkId) {
+        const i = document.getElementById(interlinkId);
+        if (i) interlink = i.value;
+    }
+
+    sessionStorage.setItem('scrollToId', elementId);
+
+    const req = {
+        task: 'edit',
+        part: part,
+        index: index,
+        text: el.value,
+        jobid: jobid,
+        alliedkeywords: alliedKeywords,
+        interlink: interlink
+    };
+
+    const form = document.getElementById('editForm');
+    form.querySelector('input[name="request"]').value = JSON.stringify(req);
+
+    showLoading();
+    form.submit();
+}
+
+// ===== REGENERATE =====
+function submitGenerate(part, index, writer, alliedKeywordsId, interlinkId) {
+    const jobid = "{{ jobid }}";
+
+    let alliedKeywords = '';
+    if (alliedKeywordsId) {
+        const k = document.getElementById(alliedKeywordsId);
+        if (k) alliedKeywords = k.value;
+    }
+
+    let interlink = '';
+    if (interlinkId) {
+        const i = document.getElementById(interlinkId);
+        if (i) interlink = i.value;
+    }
+
+    let elementId = '';
+    if (part === 'intro') elementId = 'intro-text';
+    else if (part === 'productdescription') elementId = 'product-text-' + index;
+    else if (part === 'conclusioncontent') elementId = 'conclusion-text';
+    else if (part === 'faqanswer') elementId = 'faq-text-' + index;
+
+    sessionStorage.setItem('scrollToId', elementId);
+
+    const req = {
+        task: 'generate',
+        part: part,
+        index: index,
+        writer: writer,
+        jobid: jobid,
+        alliedkeywords: alliedKeywords,
+        interlink: interlink
+    };
+
+    const form = document.getElementById('editForm');
+    form.querySelector('input[name="request"]').value = JSON.stringify(req);
+
+    showLoading();
+    form.submit();
+}
+
+// ===== UNDO =====
+function submitUndo(part, index, elementId) {
+    const jobid = "{{ jobid }}";
+
+    sessionStorage.setItem('scrollToId', elementId);
+
+    const req = {
+        task: 'undo',
+        part: part,
+        index: index,
+        jobid: jobid
+    };
+
+    const form = document.getElementById('editForm');
+    form.querySelector('input[name="request"]').value = JSON.stringify(req);
+
+    showLoading();
+    form.submit();
+}
+
+// ===== EXPAND / SHRINK =====
+function toggleExpand(textareaId, btn) {
+    const textarea = document.getElementById(textareaId);
+    if (btn.textContent === "Expand") {
+        textarea.style.height = "auto";
+        textarea.style.height = textarea.scrollHeight + "px";
+        btn.textContent = "Shrink";
+    } else {
+        textarea.style.height = "80px";
+        btn.textContent = "Expand";
+    }
+}
+
+// ===== SCROLL RESTORE =====
+window.addEventListener("load", function () {
+    const scrollId = sessionStorage.getItem('scrollToId');
+    if (scrollId) {
+        const el = document.getElementById(scrollId);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        sessionStorage.removeItem('scrollToId');
+    }
+});
+
+// ===== SAVE ALL =====
+function submitSaveAll() {
+    const jobid = "{{ jobid }}";
+    const data = {};
+
+    // Title
+    data.title = getValueOrNull("title-input") || "";
+
+    // Intro
+    data.intro = {
+        text: getValueOrNull("intro-text") || "",
+        alliedkeywords: getValueOrNull("intro-allied-keywords"),
+        interlink: getValueOrNull("intro-interlink")
+    };
+
+    // Products
+    data.products = [];
+    document.querySelectorAll("[id^='product-title-input-']").forEach((el) => {
+        const index = el.id.split("-").pop();
+        data.products.push({
+            index: parseInt(index),
+            title: el.value || "",
+            description: getValueOrNull("product-text-" + index) || "",
+            alliedkeywords: getValueOrNull("product-allied-keywords-" + index),
+            interlink: getValueOrNull("product-interlink-" + index)
+        });
+    });
+
+    // Conclusion
+    data.conclusion = {
+        title: getValueOrNull("conclusion-title-input") || "",
+        text: getValueOrNull("conclusion-text") || "",
+        alliedkeywords: getValueOrNull("conclusion-allied-keywords"),
+        interlink: getValueOrNull("conclusion-interlink")
+    };
+
+    // FAQs
+    data.faqs = {
+        title: getValueOrNull("faqs-title-input"),
+        list: []
+    };
+
+    document.querySelectorAll("[id^='faq-question-input-']").forEach((el) => {
+        const index = el.id.split("-").pop();
+        data.faqs.list.push({
+            index: parseInt(index),
+            question: getValueOrNull("faq-question-input-" + index),
+            answer: getValueOrNull("faq-text-" + index),
+            alliedkeywords: getValueOrNull("faq-allied-keywords-" + index),
+            interlink: getValueOrNull("faq-interlink-" + index)
+        });
+    });
+
+    const req = {
+        task: "saveall",
+        jobid: jobid,
+        data: data
+    };
+
+    const form = document.getElementById("editForm");
+    form.querySelector("input[name='request']").value = JSON.stringify(req);
+
+    showLoading();
+    form.submit();
+}
+
+</script>
+
+</body>
+</html>

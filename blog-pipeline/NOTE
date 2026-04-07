@@ -1,0 +1,13 @@
+the meat of description is diluted by the less valuable slides. the prompt tells to briefly describe all of them equally, then all of them are combined.
+
+no slide can be skipped either, because it risks skipping all
+
+there is one thing tho - only an x (4-5) amount of slides can be stuffed into main pd, regardless of how many useful slides are there in the deck
+
+claude says - if more than 20 images are uploaded, then the resolution limit is 2000x2000
+
+---------------
+
+there is gettile function that uses raw description to make title. even so, must use those prompts for title generation of all products from now on
+
+also fix the single slide carousel problem for analyst

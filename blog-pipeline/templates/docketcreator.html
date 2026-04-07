@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docket Creator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 20px;
+            padding-bottom: 40px;
+        }
+        #root-home-button {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 2147483647;
+            width: 40px;
+            height: 40px;
+            background: #0d6efd;
+            color: #fff;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+            font-size: 18px;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #root-home-button:focus {
+            outline: 2px solid #fff;
+            outline-offset: 2px;
+        }
+        #root-home-button:hover {
+            transform: translateY(-1px);
+            transition: transform .12s ease;
+        }
+        .card {
+            margin-bottom: 30px;
+            border: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <a id="root-home-button" href="/" aria-label="Home" title="Home">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 11.5L12 4l9 7.5"></path>
+            <path d="M9 21V12h6v9"></path>
+        </svg>
+    </a>
+
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h1 class="mb-0">Docket Creator</h1>
+        </div>
+
+        {% if message %}
+        <div class="alert alert-info alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% endif %}
+
+        <!-- Upload Section -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Upload Final Docket</h5>
+                <form method="POST" enctype="multipart/form-data" class="row g-3 align-items-end">
+                    <div class="col-sm-8">
+                        <label for="file" class="form-label">Upload Final Docket (Excel)</label>
+                        <input class="form-control" type="file" id="file" name="file" accept=".xls,.xlsx" required>
+                    </div>
+
+                    <div class="col-sm-4 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary">Upload</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Table of Dockets -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Your Dockets</h5>
+
+                {% if mydocketdictlist %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Keyword</th>
+                                <th>Autodocket</th>
+                                <th>Final Docket</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for docket in mydocketdictlist %}
+                            <tr>
+                                <td>{{ docket.keyword }}</td>
+
+                                <!-- Autodocket -->
+                                <td>
+                                    {% if docket.isexists_autodocket %}
+                                    <form method="POST" action="/docketcreator/download" style="display:inline;">
+                                        <input type="hidden" name="jobid" value="{{ docket.jobid }}">
+                                        <input type="hidden" name="type" value="auto">
+                                        <button type="submit" class="btn btn-sm btn-secondary">Download</button>
+                                    </form>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Generating</span>
+                                    {% endif %}
+                                </td>
+
+                                <!-- Final Docket -->
+                                <td>
+                                    {% if docket.isexists_finaldocket %}
+                                    <form method="POST" action="/docketcreator/download" style="display:inline;">
+                                        <input type="hidden" name="jobid" value="{{ docket.jobid }}">
+                                        <input type="hidden" name="type" value="final">
+                                        <button type="submit" class="btn btn-sm btn-secondary">Download</button>
+                                    </form>
+                                    {% else %}
+                                    <span class="badge bg-danger">To Be Uploaded</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No dockets found.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

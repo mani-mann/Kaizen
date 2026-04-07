@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Accounts</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            min-height: 100vh;
+            background-color: #f8f9fa;
+            padding-top: 80px;
+            padding-bottom: 40px;
+        }
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background-color: #fff;
+            padding: 1.5rem 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        .content-wrapper {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 15px;
+        }
+        .card {
+            margin-bottom: 30px;
+            border: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .table {
+            background-color: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .table thead {
+            background-color: #34495e;
+            color: white;
+        }
+        .table tbody tr:hover {
+            background-color: #e8f0fe;
+        }
+        .btn-delete {
+            background-color: #e74c3c;
+            border: none;
+            color: white;
+        }
+        .btn-delete:hover {
+            background-color: #c0392b;
+            color: white;
+        }
+    </style>
+    <script>
+        function confirmDelete(form) {
+            if (confirm("Are you sure you want to delete this account?")) {
+                form.submit();
+            }
+        }
+    </script>
+</head>
+<body>
+    <header class="header">
+        <div class="container position-relative">
+            <a href="/" class="position-absolute start-0 top-50 translate-middle-y text-dark" style="font-size: 1.5rem; text-decoration: none;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-house-fill" viewBox="0 0 16 16">
+                    <path d="M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L8 2.207l6.646 6.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.707 1.5Z"/>
+                    <path d="m8 3.293 6 6V13.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5V9.293l6-6Z"/>
+                </svg>
+            </a>
+            <h1 class="text-center mb-0">Admin Panel - Accounts</h1>
+        </div>
+    </header>
+
+	<br/>
+	<br/>
+
+    <div class="content-wrapper">
+        {% if message %}
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% endif %}
+
+
+        <div class="card">
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="mode" value="upsert">
+
+                    <div class="mb-3">
+                        <label for="email" class="form-label fw-bold">Email:</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Roles:</label>
+                        <div class="roles-group">
+                            {% for role in roleoptions %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="roles" value="{{ role }}" id="role-{{ loop.index }}">
+                                <label class="form-check-label" for="role-{{ loop.index }}">
+                                    {{ role }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </form>
+            </div>
+        </div>
+
+        <h2 class="mb-3 mt-5">Existing Accounts</h2>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Email</th>
+                    <th>Roles</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for email, roles in accountrolesdict.items() %}
+                <tr>
+                    <td>{{ email }}</td>
+                    <td>{{ roles }}</td>
+                    <td>
+                        <form method="POST" onsubmit="event.preventDefault(); confirmDelete(this);">
+                            <input type="hidden" name="mode" value="delete">
+                            <input type="hidden" name="email" value="{{ email }}">
+                            <button type="submit" class="btn btn-delete btn-sm">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+
+
+preference in autowriters table is actually json comprising preset values for writing different sectoins of blogs as well as modes and strategies of other tasks
+
+blog generation starts only when autowriter email is assigned to it
+
+
+requiremetns:
+psycopg2
+flask
+pandas

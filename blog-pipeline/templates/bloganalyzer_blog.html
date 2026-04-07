@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ blog.title }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Bootstrap CSS (layout only) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .blog-container {
+            max-width: 900px;
+        }
+        .blog-title {
+            line-height: 1.3;
+        }
+        .blog-intro {
+            white-space: pre-line;
+            font-size: 1.05rem;
+            line-height: 1.7;
+        }
+
+        /* PRODUCT SECTION */
+        .product-section {
+            margin-bottom: 3rem;
+        }
+        .product-title {
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+        .product-description {
+            color: #6c757d;
+            margin-bottom: 1rem;
+        }
+
+        /* IMAGE — intentionally unboxed */
+        .product-image {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 1rem 0;
+            border: none;
+            outline: none;
+            box-shadow: none;
+            background: none;
+        }
+
+        .download-link {
+            display: inline-block;
+            margin-top: 0.5rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .faq-question {
+            font-weight: 600;
+            font-size: 1.05rem;
+        }
+        .faq-question {
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+        .faq-answer {
+            margin-left: 0.25rem;
+            margin-bottom: 1.75rem;
+            color: #6c757d;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container my-5 blog-container">
+
+    <!-- Blog Title -->
+    <h1 class="blog-title fw-bold mb-4">
+        {{ blog.title }}
+    </h1>
+
+    <!-- Intro -->
+    <section class="mb-5">
+        <div class="blog-intro text-dark">
+            {{ blog.intro }}
+        </div>
+    </section>
+
+    <!-- Products -->
+    <section class="mb-5">
+        {% for product in blog.products %}
+        <div class="product-section">
+
+            <!-- Title -->
+            <h3 class="product-title">
+                {{ product.title }}
+            </h3>
+
+            <!-- Description -->
+            <div class="product-description">
+                {{ product.description | safe }}
+            </div>
+
+            <!-- Image (NO WRAPPER, NO CARD) -->
+            <img
+                src="{{ product.imagelink }}"
+                alt="{{ product.title }}"
+                class="product-image">
+
+            <!-- Download CTA -->
+            <div class="text-center">
+                <a href="{{ product.productlink }}"
+                   class="download-link link-primary"
+                   target="_blank" rel="noopener">
+			<b>Download this PowerPoint Template</b>
+                </a>
+            </div>
+
+        </div>
+        {% endfor %}
+    </section>
+
+    <!-- Conclusion -->
+    <section class="mb-5">
+        <h2 class="fw-bold mb-3">
+            {{ blog.conclusion.title }}
+        </h2>
+        <p class="text-muted fs-6">
+            {{ blog.conclusion.content }}
+        </p>
+    </section>
+
+    <!-- FAQs -->
+    <section class="mb-5">
+        <h2 class="fw-bold mb-4">
+            {{ blog.faqs.title }}
+        </h2>
+
+        {% for faq in blog.faqs.list %}
+            <div class="mb-3">
+                <div class="faq-question">
+		<h3 class="fw-bold mb-3">
+                    {{ faq.question }}
+		</h3>
+                </div>
+                <div class="faq-answer">
+                    {{ faq.answer }}
+                </div>
+            </div>
+        {% endfor %}
+    </section>
+
+</div>
+
+</body>
+</html>
+
